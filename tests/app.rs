@@ -871,6 +871,8 @@ async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     assert!(body.contains("as Neo / Thomas Anderson"));
     assert!(body.contains("· 1 episode"));
     assert!(body.contains(r#"<a href="/movie/777">Man of Tai Chi</a>"#));
+    assert!(body.contains(r#"<img class="poster thumb" src="https://img.test/t/p/w92/matrix.jpg" alt="" loading="lazy""#));
+    assert!(body.contains(r#"<span class="poster thumb missing">No artwork</span>"#));
     let acting = body.find(r#"id="dept-acting""#).unwrap();
     let directing = body.find(r#"id="dept-directing""#).unwrap();
     assert!(acting < directing, "known-for department first");

@@ -91,7 +91,10 @@ header.site { display: flex; justify-content: space-between; align-items: baseli
 .credit-list li { break-inside: avoid; padding: .2rem 0; }
 
 .filmography { list-style: none; padding: 0; margin: 0 0 1.5rem; }
-.filmography li { display: grid; grid-template-columns: 3.5rem 1fr; gap: .5rem; padding: .35rem 0; border-bottom: 1px solid var(--line); }
+.filmography li { display: grid; grid-template-columns: 3.5rem 46px 1fr; align-items: center; gap: .5rem .75rem; padding: .35rem 0; border-bottom: 1px solid var(--line); }
+.filmography > li > a { display: block; line-height: 0; text-decoration: none; }
+.poster.thumb { width: 46px; height: 69px; }
+.poster.thumb.missing { font-size: .65rem; line-height: 1.2; padding: 0 2px; }
 .filmography .year { font-variant-numeric: tabular-nums; }
 .filmography .badge { margin-left: .25rem; }
 .biography { margin: 0 0 .75rem; }

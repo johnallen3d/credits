@@ -25,6 +25,8 @@ const POSTER_SIZE: &str = "w342";
 const BACKDROP_SIZE: &str = "w1280";
 const PROFILE_SIZE: &str = "w185";
 const STILL_SIZE: &str = "w300";
+/// Small posters beside title references in lists, e.g. a filmography.
+const THUMB_SIZE: &str = "w92";
 const PROVIDER: &str = "tmdb";
 /// Cast members shown on a title page; the rest are on its credits page.
 const TOP_CAST: usize = 12;
@@ -275,7 +277,7 @@ impl Catalog {
                     year: year(date.as_deref()),
                     role,
                     episode_count: c.episode_count.filter(|n| *n > 0),
-                    poster_url: self.image(POSTER_SIZE, c.poster_path),
+                    poster_url: self.image(THUMB_SIZE, c.poster_path),
                 };
                 Some((
                     (department.clone(), kind, c.id),
