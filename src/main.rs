@@ -19,6 +19,20 @@ async fn main() -> ExitCode {
         }
     };
 
+    if config.omdb_api_key.is_none() {
+        tracing::warn!("OMDB_API_KEY is not set; ratings will show as unavailable");
+    }
+    let catalog = match Catalog::new(&config).await {
+        Ok(catalog) => catalog,
+        Err(e) => {
+            eprintln!(
+                "credits: cannot open cache database {:?}: {e}",
+                config.database_path
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
     let listener = match tokio::net::TcpListener::bind(config.bind).await {
         Ok(listener) => listener,
         Err(e) => {
@@ -28,7 +42,7 @@ async fn main() -> ExitCode {
     };
     tracing::info!("listening on http://{}", config.bind);
 
-    if let Err(e) = axum::serve(listener, app(Catalog::new(&config))).await {
+    if let Err(e) = axum::serve(listener, app(catalog)).await {
         eprintln!("credits: server error: {e}");
         return ExitCode::FAILURE;
     }

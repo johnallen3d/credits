@@ -1,8 +1,14 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 
 pub const TOKEN_VAR: &str = "TMDB_API_TOKEN";
+pub const OMDB_KEY_VAR: &str = "OMDB_API_KEY";
 pub const BIND_VAR: &str = "CREDITS_BIND";
+pub const DB_VAR: &str = "CREDITS_DB";
 const DEFAULT_BIND: &str = "127.0.0.1:3000";
+const DEFAULT_DB: &str = "credits.db";
+/// How long fetched ratings count as fresh before OMDb is asked again.
+const RATINGS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const PLACEHOLDER: &str = "REPLACE_ME";
 
 #[derive(Clone, Debug)]
@@ -10,6 +16,12 @@ pub struct Config {
     pub tmdb_token: String,
     pub tmdb_api_base: String,
     pub tmdb_image_base: String,
+    /// Ratings are optional: without a key every title reports them as unavailable.
+    pub omdb_api_key: Option<String>,
+    pub omdb_api_base: String,
+    pub ratings_ttl: Duration,
+    /// SQLite file for the provider cache, or `cache::IN_MEMORY`.
+    pub database_path: String,
     pub bind: SocketAddr,
 }
 
@@ -65,10 +77,23 @@ impl Config {
             return Err(ConfigError::NonLoopbackBind(bind));
         }
 
+        let omdb_api_key = lookup(OMDB_KEY_VAR)
+            .map(|k| k.trim().to_owned())
+            .filter(|k| !k.is_empty() && k != PLACEHOLDER);
+
+        let database_path = lookup(DB_VAR)
+            .map(|p| p.trim().to_owned())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| DEFAULT_DB.to_owned());
+
         Ok(Self {
             tmdb_token: token,
             tmdb_api_base: "https://api.themoviedb.org/3".to_owned(),
             tmdb_image_base: "https://image.tmdb.org/t/p".to_owned(),
+            omdb_api_key,
+            omdb_api_base: "https://www.omdbapi.com".to_owned(),
+            ratings_ttl: RATINGS_TTL,
+            database_path,
             bind,
         })
     }
@@ -119,5 +144,35 @@ mod tests {
             config(&[(TOKEN_VAR, "eyJ.token.sig"), (BIND_VAR, "nope")]),
             Err(ConfigError::InvalidBind(_))
         ));
+    }
+
+    #[test]
+    fn omdb_key_is_optional_and_placeholder_means_unset() {
+        let token = (TOKEN_VAR, "eyJ.token.sig");
+        assert_eq!(config(&[token]).unwrap().omdb_api_key, None);
+        assert_eq!(
+            config(&[token, (OMDB_KEY_VAR, "REPLACE_ME")])
+                .unwrap()
+                .omdb_api_key,
+            None
+        );
+        assert_eq!(
+            config(&[token, (OMDB_KEY_VAR, " abc123 ")])
+                .unwrap()
+                .omdb_api_key,
+            Some("abc123".to_owned())
+        );
+    }
+
+    #[test]
+    fn database_defaults_to_a_local_file() {
+        let token = (TOKEN_VAR, "eyJ.token.sig");
+        assert_eq!(config(&[token]).unwrap().database_path, DEFAULT_DB);
+        assert_eq!(
+            config(&[token, (DB_VAR, "/tmp/x.db")])
+                .unwrap()
+                .database_path,
+            "/tmp/x.db"
+        );
     }
 }

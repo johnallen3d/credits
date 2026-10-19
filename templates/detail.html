@@ -16,6 +16,23 @@
       <h1>{{ d.title }}{% if let Some(year) = d.year %} <span class="year">({{ year }})</span>{% endif %}</h1>
       {% if let Some(original) = d.original_title %}<p class="original">{{ original }}</p>{% endif %}
       {% if let Some(tagline) = d.tagline %}<p class="tagline">{{ tagline }}</p>{% endif %}
+      <section class="ratings" aria-label="Ratings">
+        {% if d.ratings.is_unavailable() %}
+        <p class="rating muted">{{ d.ratings.unavailable_message() }}</p>
+        {% else %}
+        {% if let Some(r) = d.ratings.preferred %}
+        <p class="rating preferred"><span class="rating-source">{{ r.source.label() }}</span> <strong>{{ r.display() }}</strong>{% if let Some(votes) = r.votes_display() %} <span class="muted">({{ votes }} votes)</span>{% endif %}</p>
+        {% else %}
+        <p class="rating preferred muted">No {{ d.ratings.preferred_source.label() }} score</p>
+        {% endif %}
+        {% for r in d.ratings.others %}
+        <p class="rating other"><span class="rating-source">{{ r.source.label() }}</span> {{ r.display() }}</p>
+        {% endfor %}
+        {% if d.ratings.is_stale() %}
+        <p class="rating-stale">Couldn't refresh ratings{% if let Some(day) = d.ratings.fetched_on() %}; showing scores from {{ day }}{% endif %}.</p>
+        {% endif %}
+        {% endif %}
+      </section>
       <dl class="facts">
         {% if !d.genres.is_empty() %}<dt>Genres</dt><dd>{{ d.genres|join(", ") }}</dd>{% endif %}
         {% if let Some(minutes) = d.runtime_minutes %}<dt>Runtime</dt><dd>{{ minutes }} min</dd>{% endif %}

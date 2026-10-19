@@ -38,11 +38,19 @@ impl TmdbClient {
     }
 
     pub async fn movie(&self, id: u64) -> Result<Movie, CatalogError> {
-        self.get(&format!("/movie/{id}"), &[]).await
+        self.get(
+            &format!("/movie/{id}"),
+            &[("append_to_response", "external_ids")],
+        )
+        .await
     }
 
     pub async fn tv(&self, id: u64) -> Result<Tv, CatalogError> {
-        self.get(&format!("/tv/{id}"), &[]).await
+        self.get(
+            &format!("/tv/{id}"),
+            &[("append_to_response", "external_ids")],
+        )
+        .await
     }
 
     async fn get<T: DeserializeOwned>(
@@ -104,6 +112,11 @@ pub struct TvSummary {
     pub poster_path: Option<String>,
 }
 
+#[derive(Deserialize, Default)]
+pub struct ExternalIds {
+    pub imdb_id: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub struct Genre {
     pub name: String,
@@ -123,6 +136,8 @@ pub struct Movie {
     pub runtime: Option<u32>,
     pub poster_path: Option<String>,
     pub backdrop_path: Option<String>,
+    #[serde(default)]
+    pub external_ids: ExternalIds,
 }
 
 #[derive(Deserialize)]
@@ -140,4 +155,6 @@ pub struct Tv {
     pub number_of_episodes: Option<u32>,
     pub poster_path: Option<String>,
     pub backdrop_path: Option<String>,
+    #[serde(default)]
+    pub external_ids: ExternalIds,
 }

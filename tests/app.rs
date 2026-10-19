@@ -1,4 +1,4 @@
-//! End-to-end tests against a local fake TMDB server.
+//! End-to-end tests against local fake TMDB and OMDb servers.
 
 use axum::{
     Json, Router,
@@ -7,13 +7,17 @@ use axum::{
     http::{HeaderMap, Request, StatusCode},
     routing::get,
 };
-use credits::{Catalog, Config, app};
+use credits::{Catalog, Config, app, cache::IN_MEMORY};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 use tower::ServiceExt;
 
 const TOKEN: &str = "test.token.value";
+const OMDB_KEY: &str = "omdb-key";
 
 fn authorized(headers: &HeaderMap) -> bool {
     headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer test.token.value")
@@ -50,17 +54,21 @@ async fn fake_tmdb() -> String {
         .route(
             "/3/movie/{id}",
             get(|Path(id): Path<u64>| async move {
-                if id != 603 {
-                    return (StatusCode::NOT_FOUND, Json(json!({ "status_code": 34 })));
-                }
+                let imdb_id = match id {
+                    603 => "tt0133093",
+                    // Listed on OMDb with an IMDb score but no Rotten Tomatoes score.
+                    6060 => "tt6060000",
+                    _ => return (StatusCode::NOT_FOUND, Json(json!({ "status_code": 34 }))),
+                };
                 (
                     StatusCode::OK,
                     Json(json!({
-                        "id": 603, "title": "The Matrix", "original_title": "The Matrix",
+                        "id": id, "title": "The Matrix", "original_title": "The Matrix",
                         "tagline": "Welcome to the Real World.", "overview": "A hacker learns the truth.",
                         "release_date": "1999-03-31", "status": "Released", "runtime": 136,
                         "genres": [{ "id": 28, "name": "Action" }, { "id": 878, "name": "Science Fiction" }],
-                        "poster_path": "/matrix.jpg", "backdrop_path": null
+                        "poster_path": "/matrix.jpg", "backdrop_path": null,
+                        "external_ids": { "imdb_id": imdb_id }
                     })),
                 )
             }),
@@ -71,6 +79,12 @@ async fn fake_tmdb() -> String {
                 if id == 500 {
                     return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})));
                 }
+                let imdb_id = match id {
+                    1396 => json!("tt0903747"),
+                    // OMDb answers with its quota error for this one.
+                    5150 => json!("tt5150000"),
+                    _ => Value::Null,
+                };
                 (
                     StatusCode::OK,
                     Json(json!({
@@ -79,7 +93,8 @@ async fn fake_tmdb() -> String {
                         "first_air_date": "2008-01-20", "status": "Ended",
                         "number_of_seasons": 5, "number_of_episodes": 62,
                         "genres": [{ "id": 18, "name": "Drama" }],
-                        "poster_path": null, "backdrop_path": "/bb-back.jpg"
+                        "poster_path": null, "backdrop_path": "/bb-back.jpg",
+                        "external_ids": { "imdb_id": imdb_id }
                     })),
                 )
             }),
@@ -91,15 +106,110 @@ async fn fake_tmdb() -> String {
     format!("http://{addr}/3")
 }
 
-async fn test_app_with_token(token: &str) -> Router {
+#[derive(Clone, Default)]
+struct FakeOmdb {
+    calls: Arc<AtomicUsize>,
+    down: Arc<AtomicBool>,
+}
+
+impl FakeOmdb {
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    fn set_down(&self, down: bool) {
+        self.down.store(down, Ordering::SeqCst);
+    }
+
+    async fn start(&self) -> String {
+        let state = self.clone();
+        let fake = Router::new().route(
+            "/",
+            get(move |Query(q): Query<HashMap<String, String>>| {
+                let state = state.clone();
+                async move {
+                    state.calls.fetch_add(1, Ordering::SeqCst);
+                    if state.down.load(Ordering::SeqCst) {
+                        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({})));
+                    }
+                    if q.get("apikey").map(String::as_str) != Some(OMDB_KEY) {
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            Json(json!({ "Response": "False", "Error": "Invalid API key!" })),
+                        );
+                    }
+                    let body = match q.get("i").map(String::as_str) {
+                        Some("tt0133093") => json!({
+                            "Response": "True", "imdbID": "tt0133093",
+                            "imdbRating": "8.7", "imdbVotes": "2,123,456",
+                            "Ratings": [
+                                { "Source": "Internet Movie Database", "Value": "8.7/10" },
+                                { "Source": "Rotten Tomatoes", "Value": "83%" },
+                                { "Source": "Metacritic", "Value": "73/100" }
+                            ]
+                        }),
+                        Some("tt0903747") => json!({
+                            "Response": "True", "imdbID": "tt0903747",
+                            "imdbRating": "9.5", "imdbVotes": "2,300,000",
+                            "Ratings": [{ "Source": "Internet Movie Database", "Value": "9.5/10" }]
+                        }),
+                        Some("tt6060000") => json!({
+                            "Response": "True", "imdbID": "tt6060000",
+                            "imdbRating": "6.1", "imdbVotes": "N/A", "Ratings": []
+                        }),
+                        Some("tt5150000") => {
+                            return (
+                                StatusCode::UNAUTHORIZED,
+                                Json(json!({ "Response": "False", "Error": "Request limit reached!" })),
+                            );
+                        }
+                        _ => json!({ "Response": "False", "Error": "Incorrect IMDb ID." }),
+                    };
+                    (StatusCode::OK, Json(body))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+        format!("http://{addr}")
+    }
+}
+
+struct TestApp {
+    router: Router,
+    omdb: FakeOmdb,
+}
+
+impl TestApp {
+    fn app(&self) -> Router {
+        self.router.clone()
+    }
+}
+
+async fn build(token: &str, omdb_key: Option<&str>, ratings_ttl: Duration) -> TestApp {
     let mut config = Config::from_lookup(|key| match key {
         "TMDB_API_TOKEN" => Some(token.to_owned()),
+        "OMDB_API_KEY" => omdb_key.map(str::to_owned),
+        "CREDITS_DB" => Some(IN_MEMORY.to_owned()),
         _ => None,
     })
     .unwrap();
+    let omdb = FakeOmdb::default();
     config.tmdb_api_base = fake_tmdb().await;
     config.tmdb_image_base = "https://img.test/t/p".to_owned();
-    app(Catalog::new(&config))
+    config.omdb_api_base = omdb.start().await;
+    config.ratings_ttl = ratings_ttl;
+    TestApp {
+        router: app(Catalog::new(&config).await.unwrap()),
+        omdb,
+    }
+}
+
+async fn test_app_with_token(token: &str) -> Router {
+    build(token, Some(OMDB_KEY), Duration::from_secs(3600))
+        .await
+        .router
 }
 
 async fn test_app() -> Router {
@@ -261,4 +371,120 @@ async fn static_assets_are_served() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers["content-type"], "text/javascript");
     assert!(body.starts_with("var htmx="));
+}
+
+#[tokio::test]
+async fn movie_prefers_rotten_tomatoes_and_tv_prefers_imdb() {
+    let (_, _, body) = get_page(test_app().await, "/movie/603", false).await;
+    assert!(body.contains(
+        r#"<p class="rating preferred"><span class="rating-source">Rotten Tomatoes</span> <strong>83%</strong></p>"#
+    ));
+    assert!(body.contains(r#"<span class="rating-source">IMDb</span> 8.7/10"#));
+    assert!(!body.contains("73/100"), "unsupported sources are dropped");
+    assert!(body.contains("OMDb API"));
+
+    let (_, _, body) = get_page(test_app().await, "/tv/1396", false).await;
+    assert!(body.contains(
+        r#"<span class="rating-source">IMDb</span> <strong>9.5/10</strong> <span class="muted">(2,300,000 votes)</span>"#
+    ));
+}
+
+#[tokio::test]
+async fn missing_preferred_score_is_unavailable_not_substituted() {
+    let (_, _, body) = get_page(test_app().await, "/movie/6060", false).await;
+    assert!(body.contains("No Rotten Tomatoes score"));
+    assert!(
+        body.contains(
+            r#"<p class="rating other"><span class="rating-source">IMDb</span> 6.1/10</p>"#
+        )
+    );
+
+    let (status, json) = get_json(test_app().await, "/api/movie/6060").await;
+    assert_eq!(status, StatusCode::OK);
+    let ratings = &json["ratings"];
+    assert_eq!(ratings["state"], "fresh");
+    assert_eq!(ratings["preferred_source"], "rotten_tomatoes");
+    assert_eq!(ratings["preferred"], Value::Null);
+    assert_eq!(ratings["others"][0]["source"], "imdb");
+    assert_eq!(ratings["others"][0]["votes"], Value::Null);
+}
+
+#[tokio::test]
+async fn json_ratings_carry_source_scale_and_provenance() {
+    let (_, json) = get_json(test_app().await, "/api/movie/603").await;
+    let ratings = &json["ratings"];
+    assert_eq!(ratings["provider"], "omdb");
+    assert_eq!(ratings["imdb_id"], "tt0133093");
+    assert_eq!(
+        ratings["preferred"],
+        json!({ "source": "rotten_tomatoes", "score": 83.0, "scale": 100, "votes": null })
+    );
+    assert_eq!(ratings["others"][0]["scale"], 10);
+    assert!(ratings["fetched_at"].as_str().unwrap().ends_with('Z'));
+}
+
+#[tokio::test]
+async fn ratings_are_cached_between_requests() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    get_page(t.app(), "/movie/603", false).await;
+    get_page(t.app(), "/movie/603", false).await;
+    get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(t.omdb.calls(), 1);
+}
+
+#[tokio::test]
+async fn expired_ratings_are_refetched_and_served_stale_when_omdb_fails() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::ZERO).await;
+    get_page(t.app(), "/tv/1396", false).await;
+    get_page(t.app(), "/tv/1396", false).await;
+    assert_eq!(t.omdb.calls(), 2, "expired entries are refreshed");
+
+    t.omdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/tv/1396", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("<strong>9.5/10</strong>"));
+    assert!(body.contains("Couldn't refresh ratings; showing scores from "));
+
+    let (_, json) = get_json(t.app(), "/api/tv/1396").await;
+    assert_eq!(json["ratings"]["state"], "stale");
+    assert!(json["ratings"]["fetched_at"].is_string());
+}
+
+#[tokio::test]
+async fn provider_problems_never_break_the_page() {
+    // Quota exhausted, nothing cached.
+    let (status, _, body) = get_page(test_app().await, "/tv/5150", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Ratings couldn&#39;t be loaded right now."));
+
+    // OMDb down, nothing cached.
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    t.omdb.set_down(true);
+    let (status, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ratings"]["state"], "unavailable");
+    assert_eq!(json["ratings"]["unavailable_reason"], "provider_error");
+
+    // Rejected key.
+    let t = build(TOKEN, Some("wrong"), Duration::from_secs(3600)).await;
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json["ratings"]["unavailable_reason"], "provider_error");
+
+    // No IMDb identifier: OMDb is never asked.
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (status, json) = get_json(t.app(), "/api/tv/4242").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ratings"]["unavailable_reason"], "no_imdb_id");
+    assert_eq!(t.omdb.calls(), 0);
+}
+
+#[tokio::test]
+async fn missing_omdb_key_reports_ratings_as_not_configured() {
+    let t = build(TOKEN, None, Duration::from_secs(3600)).await;
+    let (status, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("configured on this server"));
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json["ratings"]["unavailable_reason"], "not_configured");
+    assert_eq!(t.omdb.calls(), 0);
 }

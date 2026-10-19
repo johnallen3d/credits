@@ -1,7 +1,10 @@
 //! Application service: turns provider responses into `model` types.
 
+use crate::cache::ProviderCache;
 use crate::config::Config;
-use crate::model::{MediaKind, SearchHit, TitleDetail};
+use crate::model::{MediaKind, Ratings, SearchHit, TitleDetail};
+use crate::omdb::OmdbClient;
+use crate::ratings::RatingsService;
 use crate::tmdb::{self, MultiResult, TmdbClient};
 
 const POSTER_SIZE: &str = "w342";
@@ -21,14 +24,22 @@ pub enum CatalogError {
 pub struct Catalog {
     tmdb: TmdbClient,
     image_base: String,
+    ratings: RatingsService,
 }
 
 impl Catalog {
-    pub fn new(config: &Config) -> Self {
-        Self {
+    /// Opens the provider cache database, so this fails if it can't be created or migrated.
+    pub async fn new(config: &Config) -> Result<Self, sqlx::Error> {
+        let cache = ProviderCache::open(&config.database_path).await?;
+        let omdb = config
+            .omdb_api_key
+            .as_deref()
+            .map(|key| OmdbClient::new(&config.omdb_api_base, key));
+        Ok(Self {
             tmdb: TmdbClient::new(&config.tmdb_api_base, &config.tmdb_token),
             image_base: config.tmdb_image_base.trim_end_matches('/').to_owned(),
-        }
+            ratings: RatingsService::new(omdb, cache, config.ratings_ttl),
+        })
     }
 
     /// Movies and TV shows matching `query`; people and other result types are dropped.
@@ -61,12 +72,26 @@ impl Catalog {
 
     pub async fn title(&self, kind: MediaKind, id: u64) -> Result<TitleDetail, CatalogError> {
         match kind {
-            MediaKind::Movie => self.tmdb.movie(id).await.map(|m| self.movie(m)),
-            MediaKind::Tv => self.tmdb.tv(id).await.map(|t| self.tv(t)),
+            MediaKind::Movie => {
+                let m = self.tmdb.movie(id).await?;
+                let ratings = self
+                    .ratings
+                    .for_title(kind, m.external_ids.imdb_id.clone())
+                    .await;
+                Ok(self.movie(m, ratings))
+            }
+            MediaKind::Tv => {
+                let t = self.tmdb.tv(id).await?;
+                let ratings = self
+                    .ratings
+                    .for_title(kind, t.external_ids.imdb_id.clone())
+                    .await;
+                Ok(self.tv(t, ratings))
+            }
         }
     }
 
-    fn movie(&self, m: tmdb::Movie) -> TitleDetail {
+    fn movie(&self, m: tmdb::Movie, ratings: Ratings) -> TitleDetail {
         TitleDetail {
             kind: MediaKind::Movie,
             id: m.id,
@@ -83,10 +108,11 @@ impl Catalog {
             poster_url: self.image(POSTER_SIZE, m.poster_path),
             backdrop_url: self.image(BACKDROP_SIZE, m.backdrop_path),
             tmdb_url: format!("https://www.themoviedb.org/movie/{}", m.id),
+            ratings,
         }
     }
 
-    fn tv(&self, t: tmdb::Tv) -> TitleDetail {
+    fn tv(&self, t: tmdb::Tv, ratings: Ratings) -> TitleDetail {
         TitleDetail {
             kind: MediaKind::Tv,
             id: t.id,
@@ -103,6 +129,7 @@ impl Catalog {
             poster_url: self.image(POSTER_SIZE, t.poster_path),
             backdrop_url: self.image(BACKDROP_SIZE, t.backdrop_path),
             tmdb_url: format!("https://www.themoviedb.org/tv/{}", t.id),
+            ratings,
         }
     }
 
