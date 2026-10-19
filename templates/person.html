@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} · credits{% endblock %}
+{% block content %}
+{% let metadata = p.metadata %}{% include "_stale.html" %}
+<article class="detail">
+  <div class="detail-body">
+    {% if let Some(url) = p.profile_url %}
+    <img class="poster large" src="{{ url }}" alt="{{ p.name }}" width="228" height="342">
+    {% else %}
+    <div class="poster large missing" role="img" aria-label="No photo available">No photo</div>
+    {% endif %}
+    <div class="meta">
+      {% if let Some(dept) = p.known_for %}<span class="badge">Known for {{ dept }}</span>{% endif %}
+      <h1>{{ p.name }}</h1>
+      <dl class="facts">
+        {% if let Some(day) = p.birthday_display() %}<dt>Born</dt><dd>{{ day }}{% if let Some(place) = p.place_of_birth %} in {{ place }}{% endif %}</dd>
+        {% else %}{% if let Some(place) = p.place_of_birth %}<dt>Born</dt><dd>{{ place }}</dd>{% endif %}{% endif %}
+        {% if let Some(day) = p.deathday_display() %}<dt>Died</dt><dd>{{ day }}</dd>{% endif %}
+      </dl>
+      {% for paragraph in p.biography_paragraphs() %}
+      <p class="biography">{{ paragraph }}</p>
+      {% else %}
+      <p class="muted">No biography available.</p>
+      {% endfor %}
+      <p><a href="{{ p.tmdb_url }}" rel="noopener">View on TMDB</a></p>
+    </div>
+  </div>
+  <section class="section" aria-labelledby="filmography-heading">
+    <h2 id="filmography-heading">Filmography</h2>
+    {% if p.filmography.is_empty() %}
+    <p class="muted">TMDB has no credits listed for this person.</p>
+    {% else %}
+    <nav class="jump" aria-label="Departments">
+      {% for g in p.filmography %}<a href="#{{ g.anchor() }}">{{ g.department }} <span class="muted">{{ g.entries.len() }}</span></a>{% endfor %}
+    </nav>
+    {% for g in p.filmography %}
+    <section id="{{ g.anchor() }}">
+      <h3>{{ g.department }}</h3>
+      <ul class="filmography">
+        {% for e in g.entries %}
+        <li>
+          <span class="year">{% if let Some(year) = e.year %}{{ year }}{% else %}TBA{% endif %}</span>
+          <span><a href="{{ e.path() }}">{{ e.title }}</a> <span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if let Some(role) = e.role %} <span class="muted">{% if g.is_acting() %}as {% endif %}{{ role }}</span>{% endif %}{% if let Some(eps) = e.episodes_label() %} <span class="muted">· {{ eps }}</span>{% endif %}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+    {% endif %}
+  </section>
+</article>
+{% endblock %}

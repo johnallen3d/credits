@@ -37,9 +37,26 @@ server; JSON responses include each score's `source`, `scale`, the
 | `/?q=…` (full page, or results fragment for HTMX) | `/api/search?q=…` |
 | `/movie/{id}` | `/api/movie/{id}` |
 | `/tv/{id}` | `/api/tv/{id}` |
+| `/movie/{id}/credits`, `/tv/{id}/credits` | `/api/movie/{id}/credits`, `/api/tv/{id}/credits` |
+| `/tv/{id}/season/{n}` | `/api/tv/{id}/season/{n}` |
+| `/person/{id}` | `/api/person/{id}` |
 
 Both sides use `Catalog` (`src/catalog.rs`) and the types in `src/model.rs`.
-Detail responses include a `ratings` object.
+Detail responses include a `ratings` object, key crew (directors and writers
+for movies; creators and most frequent directors for TV), the top-billed cast,
+cast/crew totals and, for TV, the season list. Credits responses carry the full
+cast and the crew grouped by department. Person responses carry the
+filmography grouped by department, the person's main department first.
+
+## TMDB cache
+
+Title, season and person responses from TMDB go through the same SQLite cache
+as ratings and stay fresh for 24 hours, so a title page, its credits page and
+their JSON counterparts share one upstream request. If TMDB fails after that,
+the expired copy is served with a notice giving the date it was saved; "not
+found" and token errors are never masked. JSON responses carry the same
+information as `metadata` (`state`: `fresh` / `stale`, and `fetched_at`).
+Search is not cached.
 
 ## Test
 

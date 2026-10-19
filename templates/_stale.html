@@ -1,0 +1,3 @@
+{% if metadata.is_stale() %}
+<p class="stale-notice" role="status">TMDB isn't responding, so this page shows details saved on {{ metadata.fetched_on() }}. They may be out of date.</p>
+{% endif %}

@@ -1,0 +1,1 @@
+<li><a href="{{ p.person_path() }}">{{ p.name }}</a>{% if let Some(role) = p.role %} <span class="muted">{{ prefix }}{{ role }}</span>{% endif %}{% if let Some(eps) = p.episodes_label() %} <span class="muted">· {{ eps }}</span>{% endif %}</li>

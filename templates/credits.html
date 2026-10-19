@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Cast &amp; crew · {{ c.title }} · credits{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{{ c.title_path() }}">← {{ c.title }}{% if let Some(year) = c.year %} ({{ year }}){% endif %}</a></nav>
+{% let metadata = c.metadata %}{% include "_stale.html" %}
+<h1>Full cast &amp; crew</h1>
+<nav class="jump" aria-label="Departments">
+  <a href="#cast">Cast <span class="muted">{{ c.cast.len() }}</span></a>
+  {% for d in c.crew %}<a href="#{{ d.anchor() }}">{{ d.name }} <span class="muted">{{ d.people.len() }}</span></a>{% endfor %}
+</nav>
+<section class="section" id="cast">
+  <h2>Cast</h2>
+  {% if c.cast.is_empty() %}
+  <p class="muted">TMDB has no cast listed for this title.</p>
+  {% else %}
+  <ul class="credit-list">
+    {% for p in c.cast %}{% let prefix = "as " %}{% include "_credit.html" %}{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% for d in c.crew %}
+<section class="section" id="{{ d.anchor() }}">
+  <h2>{{ d.name }}</h2>
+  <ul class="credit-list">
+    {% for p in d.people %}{% let prefix = "" %}{% include "_credit.html" %}{% endfor %}
+  </ul>
+</section>
+{% endfor %}
+{% if c.crew.is_empty() %}
+<p class="muted">TMDB has no crew listed for this title.</p>
+{% endif %}
+{% endblock %}

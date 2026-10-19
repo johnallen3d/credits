@@ -3,7 +3,7 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MediaKind {
     Movie,
@@ -38,8 +38,91 @@ pub struct SearchHit {
 
 impl SearchHit {
     pub fn detail_path(&self) -> String {
-        format!("/{}/{}", self.kind.slug(), self.id)
+        title_path(self.kind, self.id)
     }
+}
+
+pub fn title_path(kind: MediaKind, id: u64) -> String {
+    format!("/{}/{id}", kind.slug())
+}
+
+pub fn person_path(id: u64) -> String {
+    format!("/person/{id}")
+}
+
+/// A timestamp as a local calendar day, e.g. "Oct 19, 2026".
+fn local_day(t: Timestamp) -> String {
+    t.to_zoned(jiff::tz::TimeZone::system())
+        .strftime("%b %-d, %Y")
+        .to_string()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetadataState {
+    /// Within the freshness window.
+    Fresh,
+    /// An expired cached copy, served because TMDB could not be reached.
+    Stale,
+}
+
+/// How current the TMDB data behind a response is.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct Metadata {
+    pub state: MetadataState,
+    pub fetched_at: Timestamp,
+}
+
+impl Metadata {
+    pub fn fresh(fetched_at: Timestamp) -> Self {
+        Self {
+            state: MetadataState::Fresh,
+            fetched_at,
+        }
+    }
+
+    pub fn stale(fetched_at: Timestamp) -> Self {
+        Self {
+            state: MetadataState::Stale,
+            fetched_at,
+        }
+    }
+
+    /// For a response built from two TMDB payloads: as current as the older one.
+    pub fn combine(self, other: Self) -> Self {
+        Self {
+            state: if self.is_stale() || other.is_stale() {
+                MetadataState::Stale
+            } else {
+                MetadataState::Fresh
+            },
+            fetched_at: self.fetched_at.min(other.fetched_at),
+        }
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.state == MetadataState::Stale
+    }
+
+    pub fn fetched_on(&self) -> String {
+        local_day(self.fetched_at)
+    }
+}
+
+/// "1 episode", "62 episodes".
+pub fn episodes_label(count: u32) -> String {
+    if count == 1 {
+        "1 episode".to_owned()
+    } else {
+        format!("{count} episodes")
+    }
+}
+
+/// "2008-01-20" as "Jan 20, 2008"; anything unparseable is passed through.
+pub fn display_date(date: &str) -> String {
+    date.parse::<jiff::civil::Date>()
+        .map(|d| d.strftime("%b %-d, %Y").to_string())
+        .unwrap_or_else(|_| date.to_owned())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -63,6 +146,253 @@ pub struct TitleDetail {
     pub backdrop_url: Option<String>,
     pub tmdb_url: String,
     pub ratings: Ratings,
+    /// Directors and writers (movies), creators and principal directors (TV).
+    pub key_crew: Vec<KeyCrew>,
+    /// Top-billed cast only; the full list is in `TitleCredits`.
+    pub cast: Vec<PersonCredit>,
+    pub cast_total: usize,
+    pub crew_total: usize,
+    /// TV only, regular seasons first and specials (season 0) last.
+    pub season_list: Vec<SeasonSummary>,
+    pub metadata: Metadata,
+}
+
+impl TitleDetail {
+    pub fn path(&self) -> String {
+        title_path(self.kind, self.id)
+    }
+
+    pub fn has_more_credits(&self) -> bool {
+        self.cast_total > self.cast.len() || self.crew_total > 0
+    }
+}
+
+/// A person's part in one title: a character for cast, job titles for crew.
+#[derive(Clone, Debug, Serialize)]
+pub struct PersonCredit {
+    pub person_id: u64,
+    pub name: String,
+    pub role: Option<String>,
+    /// TV only: episodes this person is credited on.
+    pub episode_count: Option<u32>,
+    pub profile_url: Option<String>,
+}
+
+impl PersonCredit {
+    pub fn person_path(&self) -> String {
+        person_path(self.person_id)
+    }
+
+    pub fn episodes_label(&self) -> Option<String> {
+        self.episode_count.map(episodes_label)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyRole {
+    Creator,
+    Director,
+    Writer,
+}
+
+impl KeyRole {
+    pub fn label(self) -> &'static str {
+        match self {
+            KeyRole::Creator => "Created by",
+            KeyRole::Director => "Directed by",
+            KeyRole::Writer => "Written by",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KeyCrew {
+    pub role: KeyRole,
+    pub people: Vec<PersonCredit>,
+}
+
+/// Everyone credited on a title, crew grouped by department.
+#[derive(Clone, Debug, Serialize)]
+pub struct TitleCredits {
+    pub kind: MediaKind,
+    pub id: u64,
+    pub title: String,
+    pub year: Option<String>,
+    pub cast: Vec<PersonCredit>,
+    pub crew: Vec<Department>,
+    pub metadata: Metadata,
+}
+
+impl TitleCredits {
+    pub fn title_path(&self) -> String {
+        title_path(self.kind, self.id)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Department {
+    pub name: String,
+    pub people: Vec<PersonCredit>,
+}
+
+impl Department {
+    /// Fragment identifier for in-page navigation, e.g. "dept-visual-effects".
+    pub fn anchor(&self) -> String {
+        anchor(&self.name)
+    }
+}
+
+fn anchor(name: &str) -> String {
+    let slug: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let slug = slug
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    format!("dept-{}", slug.join("-"))
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SeasonSummary {
+    pub number: u32,
+    pub name: String,
+    pub year: Option<String>,
+    pub episode_count: Option<u32>,
+    pub poster_url: Option<String>,
+}
+
+impl SeasonSummary {
+    pub fn episodes_label(&self) -> Option<String> {
+        self.episode_count.map(episodes_label)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SeasonDetail {
+    pub show_id: u64,
+    pub show_title: String,
+    pub number: u32,
+    pub name: String,
+    pub overview: Option<String>,
+    pub air_date: Option<String>,
+    pub poster_url: Option<String>,
+    pub episodes: Vec<Episode>,
+    /// Neighbouring seasons in the show's season order, for navigation.
+    pub previous: Option<SeasonSummary>,
+    pub next: Option<SeasonSummary>,
+    pub metadata: Metadata,
+}
+
+impl SeasonDetail {
+    pub fn show_path(&self) -> String {
+        title_path(MediaKind::Tv, self.show_id)
+    }
+
+    pub fn season_path(&self, season: &SeasonSummary) -> String {
+        format!("/tv/{}/season/{}", self.show_id, season.number)
+    }
+
+    pub fn air_date_display(&self) -> Option<String> {
+        self.air_date.as_deref().map(display_date)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Episode {
+    pub number: u32,
+    /// TMDB's name, or "Episode N" when it has none.
+    pub title: String,
+    pub air_date: Option<String>,
+    pub overview: Option<String>,
+    pub runtime_minutes: Option<u32>,
+    pub still_url: Option<String>,
+}
+
+impl Episode {
+    pub fn air_date_display(&self) -> Option<String> {
+        self.air_date.as_deref().map(display_date)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PersonDetail {
+    pub id: u64,
+    pub name: String,
+    pub known_for: Option<String>,
+    pub biography: Option<String>,
+    pub birthday: Option<String>,
+    pub deathday: Option<String>,
+    pub place_of_birth: Option<String>,
+    pub profile_url: Option<String>,
+    pub tmdb_url: String,
+    /// Grouped by department, the person's main department first.
+    pub filmography: Vec<FilmographyGroup>,
+    pub metadata: Metadata,
+}
+
+impl PersonDetail {
+    pub fn biography_paragraphs(&self) -> Vec<&str> {
+        self.biography
+            .as_deref()
+            .map(|b| b.lines().map(str::trim).filter(|l| !l.is_empty()).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn birthday_display(&self) -> Option<String> {
+        self.birthday.as_deref().map(display_date)
+    }
+
+    pub fn deathday_display(&self) -> Option<String> {
+        self.deathday.as_deref().map(display_date)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FilmographyGroup {
+    pub department: String,
+    /// Newest first; undated (usually unreleased) entries lead.
+    pub entries: Vec<FilmographyEntry>,
+}
+
+impl FilmographyGroup {
+    pub fn anchor(&self) -> String {
+        anchor(&self.department)
+    }
+
+    pub fn is_acting(&self) -> bool {
+        self.department == "Acting"
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FilmographyEntry {
+    pub kind: MediaKind,
+    pub id: u64,
+    pub title: String,
+    pub year: Option<String>,
+    /// Characters for acting credits, job titles otherwise.
+    pub role: Option<String>,
+    pub episode_count: Option<u32>,
+    pub poster_url: Option<String>,
+}
+
+impl FilmographyEntry {
+    pub fn path(&self) -> String {
+        title_path(self.kind, self.id)
+    }
+
+    pub fn episodes_label(&self) -> Option<String> {
+        self.episode_count.map(episodes_label)
+    }
 }
 
 /// Where a score comes from. Each source has its own scale; never compare
@@ -210,11 +540,7 @@ impl Ratings {
 
     /// Short human description of `fetched_at`, e.g. "Oct 19, 2026".
     pub fn fetched_on(&self) -> Option<String> {
-        self.fetched_at.map(|t| {
-            t.to_zoned(jiff::tz::TimeZone::system())
-                .strftime("%b %-d, %Y")
-                .to_string()
-        })
+        self.fetched_at.map(local_day)
     }
 
     pub fn unavailable_message(&self) -> &'static str {

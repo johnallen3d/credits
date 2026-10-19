@@ -9,11 +9,11 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::get,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::catalog::{Catalog, CatalogError};
-use crate::model::{MediaKind, SearchHit, TitleDetail};
+use crate::model::{MediaKind, PersonDetail, SearchHit, SeasonDetail, TitleCredits, TitleDetail};
 
 pub fn app(catalog: Catalog) -> Router {
     Router::new()
@@ -23,12 +23,32 @@ pub fn app(catalog: Catalog) -> Router {
             get(|s, p| detail_page(s, p, MediaKind::Movie)),
         )
         .route("/tv/{id}", get(|s, p| detail_page(s, p, MediaKind::Tv)))
+        .route(
+            "/movie/{id}/credits",
+            get(|s, p| credits_page(s, p, MediaKind::Movie)),
+        )
+        .route(
+            "/tv/{id}/credits",
+            get(|s, p| credits_page(s, p, MediaKind::Tv)),
+        )
+        .route("/tv/{id}/season/{number}", get(season_page))
+        .route("/person/{id}", get(person_page))
         .route("/api/search", get(api_search))
         .route(
             "/api/movie/{id}",
             get(|s, p| api_detail(s, p, MediaKind::Movie)),
         )
         .route("/api/tv/{id}", get(|s, p| api_detail(s, p, MediaKind::Tv)))
+        .route(
+            "/api/movie/{id}/credits",
+            get(|s, p| api_credits(s, p, MediaKind::Movie)),
+        )
+        .route(
+            "/api/tv/{id}/credits",
+            get(|s, p| api_credits(s, p, MediaKind::Tv)),
+        )
+        .route("/api/tv/{id}/season/{number}", get(api_season))
+        .route("/api/person/{id}", get(api_person))
         .route(
             "/static/htmx.min.js",
             get(|| asset("text/javascript", include_str!("../static/htmx.min.js"))),
@@ -76,6 +96,24 @@ struct ResultsPartial {
 #[template(path = "detail.html")]
 struct DetailPage {
     d: TitleDetail,
+}
+
+#[derive(Template)]
+#[template(path = "credits.html")]
+struct CreditsPage {
+    c: TitleCredits,
+}
+
+#[derive(Template)]
+#[template(path = "season.html")]
+struct SeasonPage {
+    s: SeasonDetail,
+}
+
+#[derive(Template)]
+#[template(path = "person.html")]
+struct PersonPage {
+    p: PersonDetail,
 }
 
 #[derive(Template)]
@@ -130,14 +168,43 @@ async fn detail_page(
     let Ok(id) = id.parse::<u64>() else {
         return not_found_title(kind);
     };
-    match catalog.title(kind, id).await {
-        Ok(d) => html(StatusCode::OK, DetailPage { d }.render()),
-        Err(CatalogError::NotFound) => not_found_title(kind),
-        Err(e) => {
-            tracing::warn!(error = %e, ?kind, id, "title lookup failed");
-            error_page(status_for(&e), "Couldn't load this title", user_message(&e))
-        }
-    }
+    let result = catalog.title(kind, id).await.map(|d| DetailPage { d });
+    page(result, || not_found_title(kind), "Couldn't load this title")
+}
+
+async fn credits_page(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    kind: MediaKind,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return not_found_title(kind);
+    };
+    let result = catalog.credits(kind, id).await.map(|c| CreditsPage { c });
+    page(
+        result,
+        || not_found_title(kind),
+        "Couldn't load these credits",
+    )
+}
+
+async fn season_page(
+    State(catalog): State<Catalog>,
+    Path((id, number)): Path<(String, String)>,
+) -> Response {
+    let (Ok(id), Ok(number)) = (id.parse::<u64>(), number.parse::<u32>()) else {
+        return not_found_season();
+    };
+    let result = catalog.season(id, number).await.map(|s| SeasonPage { s });
+    page(result, not_found_season, "Couldn't load this season")
+}
+
+async fn person_page(State(catalog): State<Catalog>, Path(id): Path<String>) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return not_found_person();
+    };
+    let result = catalog.person(id).await.map(|p| PersonPage { p });
+    page(result, not_found_person, "Couldn't load this person")
 }
 
 async fn api_search(
@@ -163,16 +230,68 @@ async fn api_detail(
     kind: MediaKind,
 ) -> Response {
     let Ok(id) = id.parse::<u64>() else {
-        return api_error(StatusCode::NOT_FOUND, "not found");
+        return api_not_found();
     };
-    match catalog.title(kind, id).await {
-        Ok(detail) => Json(detail).into_response(),
-        Err(CatalogError::NotFound) => api_error(StatusCode::NOT_FOUND, "not found"),
+    api_result(catalog.title(kind, id).await, "title")
+}
+
+async fn api_credits(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    kind: MediaKind,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return api_not_found();
+    };
+    api_result(catalog.credits(kind, id).await, "credits")
+}
+
+async fn api_season(
+    State(catalog): State<Catalog>,
+    Path((id, number)): Path<(String, String)>,
+) -> Response {
+    let (Ok(id), Ok(number)) = (id.parse::<u64>(), number.parse::<u32>()) else {
+        return api_not_found();
+    };
+    api_result(catalog.season(id, number).await, "season")
+}
+
+async fn api_person(State(catalog): State<Catalog>, Path(id): Path<String>) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return api_not_found();
+    };
+    api_result(catalog.person(id).await, "person")
+}
+
+/// Renders a page, or the matching error page when the catalog lookup failed.
+fn page(
+    result: Result<impl Template, CatalogError>,
+    not_found: impl FnOnce() -> Response,
+    failure_heading: &'static str,
+) -> Response {
+    match result {
+        Ok(template) => html(StatusCode::OK, template.render()),
+        Err(CatalogError::NotFound) => not_found(),
         Err(e) => {
-            tracing::warn!(error = %e, ?kind, id, "api title lookup failed");
+            tracing::warn!(error = %e, failure_heading, "page lookup failed");
+            error_page(status_for(&e), failure_heading, user_message(&e))
+        }
+    }
+}
+
+fn api_result(result: Result<impl Serialize, CatalogError>, what: &'static str) -> Response {
+    match result {
+        Ok(value) => Json(value).into_response(),
+        Err(CatalogError::NotFound) => api_not_found(),
+        Err(e) => {
+            tracing::warn!(error = %e, what, "api lookup failed");
             api_error(status_for(&e), user_message(&e))
         }
     }
+}
+
+fn api_not_found() -> Response {
+    api_error(StatusCode::NOT_FOUND, "not found")
 }
 
 fn is_htmx_fragment(headers: &HeaderMap) -> bool {
@@ -205,6 +324,22 @@ fn not_found_title(kind: MediaKind) -> Response {
         MediaKind::Tv => "TMDB has no TV show with that ID.",
     };
     error_page(StatusCode::NOT_FOUND, "Title not found", message)
+}
+
+fn not_found_season() -> Response {
+    error_page(
+        StatusCode::NOT_FOUND,
+        "Season not found",
+        "TMDB has no such season for that TV show.",
+    )
+}
+
+fn not_found_person() -> Response {
+    error_page(
+        StatusCode::NOT_FOUND,
+        "Person not found",
+        "TMDB has no person with that ID.",
+    )
 }
 
 fn error_page(status: StatusCode, heading: &'static str, message: &'static str) -> Response {

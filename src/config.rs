@@ -9,6 +9,8 @@ const DEFAULT_BIND: &str = "127.0.0.1:3000";
 const DEFAULT_DB: &str = "credits.db";
 /// How long fetched ratings count as fresh before OMDb is asked again.
 const RATINGS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+/// How long TMDB title, season and person data counts as fresh.
+const METADATA_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const PLACEHOLDER: &str = "REPLACE_ME";
 
 #[derive(Clone, Debug)]
@@ -20,6 +22,7 @@ pub struct Config {
     pub omdb_api_key: Option<String>,
     pub omdb_api_base: String,
     pub ratings_ttl: Duration,
+    pub metadata_ttl: Duration,
     /// SQLite file for the provider cache, or `cache::IN_MEMORY`.
     pub database_path: String,
     pub bind: SocketAddr,
@@ -93,6 +96,7 @@ impl Config {
             omdb_api_key,
             omdb_api_base: "https://www.omdbapi.com".to_owned(),
             ratings_ttl: RATINGS_TTL,
+            metadata_ttl: METADATA_TTL,
             database_path,
             bind,
         })

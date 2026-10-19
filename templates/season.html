@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ s.name }} · {{ s.show_title }} · credits{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{{ s.show_path() }}">← {{ s.show_title }}</a></nav>
+{% let metadata = s.metadata %}{% include "_stale.html" %}
+<article class="detail">
+  <div class="detail-body">
+    {% if let Some(url) = s.poster_url %}
+    <img class="poster large" src="{{ url }}" alt="{{ s.name }} poster" width="228" height="342">
+    {% else %}
+    <div class="poster large missing" role="img" aria-label="No artwork available">No artwork</div>
+    {% endif %}
+    <div class="meta">
+      <span class="badge badge-tv">TV season</span>
+      <h1>{{ s.name }}</h1>
+      <dl class="facts">
+        {% if let Some(day) = s.air_date_display() %}<dt>First aired</dt><dd>{{ day }}</dd>{% endif %}
+        <dt>Episodes</dt><dd>{{ s.episodes.len() }}</dd>
+      </dl>
+      {% if let Some(overview) = s.overview %}<p class="overview">{{ overview }}</p>{% endif %}
+      <nav class="pager" aria-label="Seasons">
+        {% if let Some(prev) = s.previous %}<a href="{{ s.season_path(prev) }}">← {{ prev.name }}</a>{% endif %}
+        {% if let Some(next) = s.next %}<a href="{{ s.season_path(next) }}">{{ next.name }} →</a>{% endif %}
+      </nav>
+    </div>
+  </div>
+  <section class="section" aria-labelledby="episodes-heading">
+    <h2 id="episodes-heading">Episodes</h2>
+    {% if s.episodes.is_empty() %}
+    <p class="muted">TMDB has no episodes listed for this season yet.</p>
+    {% else %}
+    <ol class="episodes">
+      {% for e in s.episodes %}
+      <li class="episode" id="episode-{{ e.number }}">
+        {% if let Some(url) = e.still_url %}
+        <img class="still" src="{{ url }}" alt="" loading="lazy" width="200" height="113">
+        {% else %}
+        <div class="still missing" aria-hidden="true">No image</div>
+        {% endif %}
+        <div>
+          <h3><span class="muted">{{ e.number }}.</span> {{ e.title }}</h3>
+          <p class="muted episode-facts">{% if let Some(day) = e.air_date_display() %}{{ day }}{% else %}Air date not announced{% endif %}{% if let Some(minutes) = e.runtime_minutes %} · {{ minutes }} min{% endif %}</p>
+          {% if let Some(overview) = e.overview %}
+          <p class="overview">{{ overview }}</p>
+          {% else %}
+          <p class="overview muted">No summary available.</p>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+  </section>
+</article>
+{% endblock %}

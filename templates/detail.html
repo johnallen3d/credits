@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ d.title }} · credits{% endblock %}
 {% block content %}
+{% let metadata = d.metadata %}{% include "_stale.html" %}
 <article class="detail">
   {% if let Some(url) = d.backdrop_url %}
   <img class="backdrop" src="{{ url }}" alt="">
@@ -34,6 +35,9 @@
         {% endif %}
       </section>
       <dl class="facts">
+        {% for k in d.key_crew %}
+        <dt>{{ k.role.label() }}</dt><dd>{% for p in k.people %}<a href="{{ p.person_path() }}">{{ p.name }}</a>{% if !loop.last %}, {% endif %}{% endfor %}</dd>
+        {% endfor %}
         {% if !d.genres.is_empty() %}<dt>Genres</dt><dd>{{ d.genres|join(", ") }}</dd>{% endif %}
         {% if let Some(minutes) = d.runtime_minutes %}<dt>Runtime</dt><dd>{{ minutes }} min</dd>{% endif %}
         {% if let Some(seasons) = d.seasons %}<dt>Seasons</dt><dd>{{ seasons }}</dd>{% endif %}
@@ -48,5 +52,47 @@
       <p><a href="{{ d.tmdb_url }}" rel="noopener">View on TMDB</a></p>
     </div>
   </div>
+  {% if !d.season_list.is_empty() %}
+  <section class="section" aria-labelledby="seasons-heading">
+    <h2 id="seasons-heading">Seasons</h2>
+    <ul class="tiles">
+      {% for s in d.season_list %}
+      <li><a href="/tv/{{ d.id }}/season/{{ s.number }}">
+        {% if let Some(url) = s.poster_url %}
+        <img class="poster" src="{{ url }}" alt="" loading="lazy" width="92" height="138">
+        {% else %}
+        <div class="poster missing" aria-hidden="true">No artwork</div>
+        {% endif %}
+        <span class="name">{{ s.name }}</span>
+        <span class="role">{% if let Some(year) = s.year %}{{ year }}{% endif %}{% if s.year.is_some() && s.episode_count.is_some() %} · {% endif %}{% if let Some(eps) = s.episodes_label() %}{{ eps }}{% endif %}</span>
+      </a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+  <section class="section" aria-labelledby="cast-heading">
+    <h2 id="cast-heading">Top cast</h2>
+    {% if d.cast.is_empty() %}
+    <p class="muted">TMDB has no cast listed for this title.</p>
+    {% else %}
+    <ul class="tiles">
+      {% for p in d.cast %}
+      <li><a href="{{ p.person_path() }}">
+        {% if let Some(url) = p.profile_url %}
+        <img class="poster" src="{{ url }}" alt="" loading="lazy" width="92" height="138">
+        {% else %}
+        <div class="poster missing" aria-hidden="true">No photo</div>
+        {% endif %}
+        <span class="name">{{ p.name }}</span>
+        {% if let Some(role) = p.role %}<span class="role">{{ role }}</span>{% endif %}
+        {% if let Some(eps) = p.episodes_label() %}<span class="role">{{ eps }}</span>{% endif %}
+      </a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if d.has_more_credits() %}
+    <p><a href="{{ d.path() }}/credits">Full cast &amp; crew</a> <span class="muted">({{ d.cast_total }} cast, {{ d.crew_total }} crew)</span></p>
+    {% endif %}
+  </section>
 </article>
 {% endblock %}
