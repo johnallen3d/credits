@@ -406,14 +406,16 @@ async fn get_json(app: Router, uri: &str) -> (StatusCode, Value) {
 }
 
 #[tokio::test]
-async fn home_page_renders_search_form_and_site_nav() {
+async fn home_page_renders_search_form_and_footer_nav() {
     let (status, _, body) = get_page(test_app().await, "/", false).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(r#"<form class="search" action="/" method="get""#));
     assert!(body.contains("Search TMDB for a movie, TV show or person."));
-    assert!(body.contains(r#"<nav class="site-nav" aria-label="Site">"#));
-    assert!(body.contains(r#"<a href="/">Search</a>"#));
-    assert!(body.contains(r#"<a href="/about">About</a>"#));
+    assert!(body.contains(r#"<a class="brand" href="/">credits</a>"#));
+    assert!(!body.contains(r#"<a href="/">Search</a>"#), "the logo links home");
+    let footer = &body[body.find(r#"<footer class="site">"#).expect("site footer")..];
+    assert!(footer.contains(r#"<nav class="site-nav" aria-label="Site">"#));
+    assert!(footer.contains(r#"<a href="/about">About</a>"#));
     assert!(
         !body.contains("not endorsed or certified"),
         "attribution lives on /about"
