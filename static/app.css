@@ -19,8 +19,9 @@ a { color: var(--accent); }
 header.site, main { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
 header.site { display: flex; justify-content: space-between; align-items: baseline; padding-top: 1.25rem; padding-bottom: 1.25rem; }
 .brand { font-weight: 700; font-size: 1.25rem; color: var(--fg); text-decoration: none; }
-.about-link { color: var(--muted); font-size: .9rem; text-decoration: none; }
-.about-link:hover, .about-link:focus-visible { color: var(--accent); }
+.site-nav { display: flex; gap: 1.25rem; }
+.site-nav a { color: var(--muted); font-size: .9rem; text-decoration: none; padding: .25rem 0; }
+.site-nav a:hover, .site-nav a:focus-visible { color: var(--accent); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 .search { display: flex; gap: .5rem; align-items: center; margin-bottom: 1.5rem; }
