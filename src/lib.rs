@@ -4,6 +4,7 @@ pub mod config;
 pub mod model;
 mod omdb;
 mod ratings;
+pub mod recent;
 mod tmdb;
 pub mod web;
 

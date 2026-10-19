@@ -149,6 +149,88 @@ pub fn person_path(id: u64) -> String {
     format!("/person/{id}")
 }
 
+/// Which kind of page a recently viewed entry links to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecentKind {
+    Title(MediaKind),
+    Person,
+}
+
+impl RecentKind {
+    pub fn slug(self) -> &'static str {
+        match self {
+            RecentKind::Title(kind) => kind.slug(),
+            RecentKind::Person => "person",
+        }
+    }
+
+    pub fn from_slug(slug: &str) -> Option<Self> {
+        match slug {
+            "movie" => Some(RecentKind::Title(MediaKind::Movie)),
+            "tv" => Some(RecentKind::Title(MediaKind::Tv)),
+            "person" => Some(RecentKind::Person),
+            _ => None,
+        }
+    }
+}
+
+/// A title or person page as listed under "Recently viewed" on the home page.
+#[derive(Clone, Debug)]
+pub struct RecentView {
+    pub kind: RecentKind,
+    pub id: u64,
+    pub name: String,
+    pub year: Option<String>,
+    pub image_url: Option<String>,
+}
+
+impl RecentView {
+    pub fn of_title(d: &TitleDetail) -> Self {
+        Self {
+            kind: RecentKind::Title(d.kind),
+            id: d.id,
+            name: d.title.clone(),
+            year: d.year.clone(),
+            image_url: d.poster_url.clone(),
+        }
+    }
+
+    pub fn of_person(p: &PersonDetail) -> Self {
+        Self {
+            kind: RecentKind::Person,
+            id: p.id,
+            name: p.name.clone(),
+            year: None,
+            image_url: p.profile_url.clone(),
+        }
+    }
+
+    pub fn path(&self) -> String {
+        match self.kind {
+            RecentKind::Title(kind) => title_path(kind, self.id),
+            RecentKind::Person => person_path(self.id),
+        }
+    }
+
+    pub fn slug(&self) -> &'static str {
+        self.kind.slug()
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self.kind {
+            RecentKind::Title(kind) => kind.label(),
+            RecentKind::Person => "Person",
+        }
+    }
+
+    pub fn missing_image_label(&self) -> &'static str {
+        match self.kind {
+            RecentKind::Title(_) => "No artwork",
+            RecentKind::Person => "No photo",
+        }
+    }
+}
+
 /// A timestamp as a local calendar day, e.g. "Oct 19, 2026".
 fn local_day(t: Timestamp) -> String {
     t.to_zoned(jiff::tz::TimeZone::system())

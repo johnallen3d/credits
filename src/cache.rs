@@ -53,6 +53,11 @@ impl ProviderCache {
         Ok(Self { pool })
     }
 
+    /// The underlying database, for other tables kept alongside the cache.
+    pub fn pool(&self) -> SqlitePool {
+        self.pool.clone()
+    }
+
     /// The cached value regardless of expiry; callers decide what stale data is good for.
     pub async fn get<T: DeserializeOwned>(
         &self,

@@ -421,6 +421,48 @@ async fn home_page_renders_search_form_and_site_nav() {
 }
 
 #[tokio::test]
+async fn home_page_lists_recently_viewed_titles_and_people() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (_, _, body) = get_page(t.app(), "/", false).await;
+    assert!(body.contains("Pages you open will be listed here."));
+    assert!(!body.contains("Recently viewed"));
+
+    get_page(t.app(), "/movie/603", false).await;
+    get_page(t.app(), "/tv/1396", false).await;
+    get_page(t.app(), "/person/6384", false).await;
+    get_page(t.app(), "/movie/603", false).await;
+    // Not recorded: failed lookups, sub-pages and the JSON API.
+    get_page(t.app(), "/movie/404", false).await;
+    get_page(t.app(), "/movie/603/credits", false).await;
+    get_json(t.app(), "/api/person/1").await;
+
+    let (status, _, body) = get_page(t.app(), "/", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"<h2 id="recent-heading">Recently viewed</h2>"#));
+    assert!(!body.contains("Pages you open will be listed here."));
+    let matrix = body.find(r#"<a href="/movie/603">"#).unwrap();
+    let keanu = body.find(r#"<a href="/person/6384">"#).unwrap();
+    let breaking_bad = body.find(r#"<a href="/tv/1396">"#).unwrap();
+    assert!(matrix < keanu && keanu < breaking_bad, "most recent first");
+    assert_eq!(body.matches(r#"<a href="/movie/603">"#).count(), 1);
+    assert!(!body.contains("/movie/404") && !body.contains("/person/1\""));
+    assert!(body.contains("https://img.test/t/p/w342/matrix.jpg"));
+    assert!(body.contains("https://img.test/t/p/w185/keanu.jpg"));
+    assert!(body.contains(
+        r#"<span class="role"><span class="badge badge-movie">Movie</span> · 1999</span>"#
+    ));
+    assert!(body.contains(r#"<span class="badge badge-tv">TV show</span>"#));
+    assert!(body.contains(r#"<span class="badge badge-person">Person</span></span>"#));
+
+    let (_, _, fragment) = get_page(t.app(), "/?q=", true).await;
+    assert!(!fragment.contains("<html"));
+    assert!(
+        fragment.contains("Recently viewed"),
+        "clearing the search shows recents"
+    );
+}
+
+#[tokio::test]
 async fn about_page_carries_tmdb_and_omdb_attribution() {
     let (status, _, body) = get_page(test_app().await, "/about", false).await;
     assert_eq!(status, StatusCode::OK);

@@ -1,6 +1,25 @@
 {% match results %}
-{% when Results::Idle %}
-<p class="hint">Search TMDB for a movie, TV show or person.</p>
+{% when Results::Idle(recent) %}
+{% if recent.is_empty() %}
+<p class="hint">Search TMDB for a movie, TV show or person. Pages you open will be listed here.</p>
+{% else %}
+<section class="recent" aria-labelledby="recent-heading">
+  <h2 id="recent-heading">Recently viewed</h2>
+  <ul class="tiles">
+    {% for r in recent %}
+    <li><a href="{{ r.path() }}">
+      {% if let Some(url) = r.image_url %}
+      <img class="poster" src="{{ url }}" alt="" loading="lazy" width="92" height="138">
+      {% else %}
+      <div class="poster missing" aria-hidden="true">{{ r.missing_image_label() }}</div>
+      {% endif %}
+      <span class="name">{{ r.name }}</span>
+      <span class="role"><span class="badge badge-{{ r.slug() }}">{{ r.label() }}</span>{% if let Some(year) = r.year %} · {{ year }}{% endif %}</span>
+    </a></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 {% when Results::Empty %}
 <p class="empty">No movies, TV shows or people match “{{ query }}”.</p>
 {% when Results::Failed(message) %}

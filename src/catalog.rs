@@ -13,11 +13,12 @@ use crate::cache::ProviderCache;
 use crate::config::Config;
 use crate::model::{
     Department, Episode, FilmographyEntry, FilmographyGroup, KeyCrew, KeyRole, KnownFor, MediaKind,
-    Metadata, PersonCredit, PersonDetail, PersonHit, Ratings, SearchHit, SeasonDetail,
+    Metadata, PersonCredit, PersonDetail, PersonHit, Ratings, RecentView, SearchHit, SeasonDetail,
     SeasonSummary, TitleCredits, TitleDetail, TitleHit,
 };
 use crate::omdb::OmdbClient;
 use crate::ratings::RatingsService;
+use crate::recent::RecentlyViewed;
 use crate::tmdb::{self, MultiResult, TmdbClient};
 
 const POSTER_SIZE: &str = "w342";
@@ -51,6 +52,7 @@ pub struct Catalog {
     image_base: String,
     ratings: RatingsService,
     cache: ProviderCache,
+    recent: RecentlyViewed,
     metadata_ttl: Duration,
 }
 
@@ -76,8 +78,26 @@ impl Catalog {
             tmdb: TmdbClient::new(&config.tmdb_api_base, &config.tmdb_token),
             image_base: config.tmdb_image_base.trim_end_matches('/').to_owned(),
             ratings: RatingsService::new(omdb, cache.clone(), config.ratings_ttl),
+            recent: RecentlyViewed::new(cache.pool()),
             cache,
             metadata_ttl: config.metadata_ttl,
+        })
+    }
+
+    /// Remembers that a title or person page was opened. Failures are logged,
+    /// never shown: the page itself already loaded.
+    pub async fn record_view(&self, view: RecentView) {
+        if let Err(e) = self.recent.record(&view, Timestamp::now()).await {
+            tracing::warn!(error = %e, path = view.path(), "recording recent view failed");
+        }
+    }
+
+    /// Recently opened title and person pages, most recent first; empty if
+    /// they can't be read.
+    pub async fn recently_viewed(&self) -> Vec<RecentView> {
+        self.recent.list().await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "reading recent views failed");
+            Vec::new()
         })
     }
 

@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::catalog::{Catalog, CatalogError};
-use crate::model::{MediaKind, PersonDetail, SearchHit, SeasonDetail, TitleCredits, TitleDetail};
+use crate::model::{
+    MediaKind, PersonDetail, RecentView, SearchHit, SeasonDetail, TitleCredits, TitleDetail,
+};
 
 pub fn app(catalog: Catalog) -> Router {
     Router::new()
@@ -88,7 +90,8 @@ pub fn app(catalog: Catalog) -> Router {
 }
 
 pub enum Results {
-    Idle,
+    /// No query yet: recently viewed pages, if any.
+    Idle(Vec<RecentView>),
     Empty,
     Hits(Vec<SearchHit>),
     Failed(&'static str),
@@ -155,7 +158,10 @@ async fn search_page(
 ) -> Response {
     let query = params.q.unwrap_or_default().trim().to_owned();
     let (status, results) = if query.is_empty() {
-        (StatusCode::OK, Results::Idle)
+        (
+            StatusCode::OK,
+            Results::Idle(catalog.recently_viewed().await),
+        )
     } else {
         match catalog.search(&query).await {
             Ok(hits) if hits.is_empty() => (StatusCode::OK, Results::Empty),
@@ -188,8 +194,15 @@ async fn detail_page(
     let Ok(id) = id.parse::<u64>() else {
         return not_found_title(kind);
     };
-    let result = catalog.title(kind, id).await.map(|d| DetailPage { d });
-    page(result, || not_found_title(kind), "Couldn't load this title")
+    let result = catalog.title(kind, id).await;
+    if let Ok(d) = &result {
+        catalog.record_view(RecentView::of_title(d)).await;
+    }
+    page(
+        result.map(|d| DetailPage { d }),
+        || not_found_title(kind),
+        "Couldn't load this title",
+    )
 }
 
 async fn credits_page(
@@ -223,8 +236,15 @@ async fn person_page(State(catalog): State<Catalog>, Path(id): Path<String>) -> 
     let Ok(id) = id.parse::<u64>() else {
         return not_found_person();
     };
-    let result = catalog.person(id).await.map(|p| PersonPage { p });
-    page(result, not_found_person, "Couldn't load this person")
+    let result = catalog.person(id).await;
+    if let Ok(p) = &result {
+        catalog.record_view(RecentView::of_person(p)).await;
+    }
+    page(
+        result.map(|p| PersonPage { p }),
+        not_found_person,
+        "Couldn't load this person",
+    )
 }
 
 async fn api_search(
