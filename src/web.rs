@@ -61,6 +61,18 @@ pub fn app(catalog: Catalog) -> Router {
             "/static/tmdb-logo.svg",
             get(|| asset("image/svg+xml", include_str!("../static/tmdb-logo.svg"))),
         )
+        .route(
+            "/static/imdb.svg",
+            get(|| asset("image/svg+xml", include_str!("../static/imdb.svg"))),
+        )
+        .route(
+            "/static/rt-fresh.svg",
+            get(|| asset("image/svg+xml", include_str!("../static/rt-fresh.svg"))),
+        )
+        .route(
+            "/static/rt-rotten.svg",
+            get(|| asset("image/svg+xml", include_str!("../static/rt-rotten.svg"))),
+        )
         .fallback(|| async {
             error_page(
                 StatusCode::NOT_FOUND,

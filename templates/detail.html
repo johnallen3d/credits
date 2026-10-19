@@ -22,12 +22,12 @@
         <p class="rating muted">{{ d.ratings.unavailable_message() }}</p>
         {% else %}
         {% if let Some(r) = d.ratings.preferred %}
-        <p class="rating preferred"><span class="rating-source">{{ r.source.label() }}</span> <strong>{{ r.display() }}</strong>{% if let Some(votes) = r.votes_display() %} <span class="muted">({{ votes }} votes)</span>{% endif %}</p>
+        <p class="rating preferred"><strong class="rating-score">{{ r.display() }}</strong><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}">{% if let Some(votes) = r.votes_display() %} <span class="muted">({{ votes }} votes)</span>{% endif %}</p>
         {% else %}
         <p class="rating preferred muted">No {{ d.ratings.preferred_source.label() }} score</p>
         {% endif %}
         {% for r in d.ratings.others %}
-        <p class="rating other"><span class="rating-source">{{ r.source.label() }}</span> {{ r.display() }}</p>
+        <p class="rating other"><span class="rating-score">{{ r.display() }}</span><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"></p>
         {% endfor %}
         {% if d.ratings.is_stale() %}
         <p class="rating-stale">Couldn't refresh ratings{% if let Some(day) = d.ratings.fetched_on() %}; showing scores from {{ day }}{% endif %}.</p>

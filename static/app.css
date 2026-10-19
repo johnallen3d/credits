@@ -55,7 +55,8 @@ header.site { padding-top: 1.25rem; padding-bottom: 1.25rem; }
 .rating { margin: 0; }
 .rating.preferred { font-size: 1.15rem; }
 .rating.other { font-size: .9rem; color: var(--muted); }
-.rating-source { color: var(--muted); }
+.rating-score { display: inline-block; min-width: 4.5rem; font-variant-numeric: tabular-nums; }
+.rating-source { width: 2.4rem; height: 1.1rem; object-fit: contain; object-position: left center; vertical-align: -.2rem; }
 .rating-stale { margin: .25rem 0 0; font-size: .85rem; color: var(--error-fg); }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; }
 .facts dt { color: var(--muted); }

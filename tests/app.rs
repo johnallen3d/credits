@@ -573,15 +573,15 @@ async fn static_assets_are_served() {
 async fn movie_prefers_rotten_tomatoes_and_tv_prefers_imdb() {
     let (_, _, body) = get_page(test_app().await, "/movie/603", false).await;
     assert!(body.contains(
-        r#"<p class="rating preferred"><span class="rating-source">Rotten Tomatoes</span> <strong>83%</strong></p>"#
+        r#"<p class="rating preferred"><strong class="rating-score">83%</strong><img class="rating-source" src="/static/rt-fresh.svg" alt="Rotten Tomatoes: Fresh" title="Rotten Tomatoes: Fresh"></p>"#
     ));
-    assert!(body.contains(r#"<span class="rating-source">IMDb</span> 8.7/10"#));
+    assert!(body.contains(r#"<span class="rating-score">8.7/10</span><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb">"#));
     assert!(!body.contains("73/100"), "unsupported sources are dropped");
     assert!(body.contains("OMDb API"));
 
     let (_, _, body) = get_page(test_app().await, "/tv/1396", false).await;
     assert!(body.contains(
-        r#"<span class="rating-source">IMDb</span> <strong>9.5/10</strong> <span class="muted">(2,300,000 votes)</span>"#
+        r#"<strong class="rating-score">9.5/10</strong><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb"> <span class="muted">(2,300,000 votes)</span>"#
     ));
 }
 
@@ -591,7 +591,7 @@ async fn missing_preferred_score_is_unavailable_not_substituted() {
     assert!(body.contains("No Rotten Tomatoes score"));
     assert!(
         body.contains(
-            r#"<p class="rating other"><span class="rating-source">IMDb</span> 6.1/10</p>"#
+            r#"<p class="rating other"><span class="rating-score">6.1/10</span><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb"></p>"#
         )
     );
 
@@ -638,7 +638,7 @@ async fn expired_ratings_are_refetched_and_served_stale_when_omdb_fails() {
     t.omdb.set_down(true);
     let (status, _, body) = get_page(t.app(), "/tv/1396", false).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("<strong>9.5/10</strong>"));
+    assert!(body.contains(r#"<strong class="rating-score">9.5/10</strong>"#));
     assert!(body.contains("Couldn't refresh ratings; showing scores from "));
 
     let (_, json) = get_json(t.app(), "/api/tv/1396").await;

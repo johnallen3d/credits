@@ -537,6 +537,30 @@ impl Rating {
         }
     }
 
+    /// Rotten Tomatoes calls a Tomatometer of 60% or more "Fresh".
+    fn is_fresh(&self) -> bool {
+        self.score >= 60.0
+    }
+
+    /// Path of the icon shown in place of the source's label. Rotten Tomatoes
+    /// scores get the fresh tomato or the rotten splat, as on the site.
+    pub fn icon(&self) -> &'static str {
+        match self.source {
+            RatingSource::Imdb => "/static/imdb.svg",
+            RatingSource::RottenTomatoes if self.is_fresh() => "/static/rt-fresh.svg",
+            RatingSource::RottenTomatoes => "/static/rt-rotten.svg",
+        }
+    }
+
+    /// Accessible name for `icon`.
+    pub fn icon_label(&self) -> &'static str {
+        match self.source {
+            RatingSource::Imdb => "IMDb",
+            RatingSource::RottenTomatoes if self.is_fresh() => "Rotten Tomatoes: Fresh",
+            RatingSource::RottenTomatoes => "Rotten Tomatoes: Rotten",
+        }
+    }
+
     /// Vote count with thousands separators, e.g. "2,123,456".
     pub fn votes_display(&self) -> Option<String> {
         let digits = self.votes?.to_string();
@@ -650,5 +674,26 @@ impl Ratings {
                 "Ratings couldn't be loaded right now."
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rt(score: f64) -> Rating {
+        Rating {
+            source: RatingSource::RottenTomatoes,
+            score,
+            scale: 100,
+            votes: None,
+        }
+    }
+
+    #[test]
+    fn rotten_tomatoes_icon_follows_the_fresh_threshold() {
+        assert_eq!(rt(60.0).icon(), "/static/rt-fresh.svg");
+        assert_eq!(rt(59.0).icon(), "/static/rt-rotten.svg");
+        assert_eq!(rt(59.0).icon_label(), "Rotten Tomatoes: Rotten");
     }
 }
