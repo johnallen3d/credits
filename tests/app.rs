@@ -59,7 +59,17 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                                 { "media_type": "movie", "id": 603, "title": "The Matrix",
                                   "release_date": "1999-03-31", "overview": "A hacker learns the truth.",
                                   "poster_path": "/matrix.jpg" },
-                                { "media_type": "person", "id": 6384, "name": "Keanu Reeves" },
+                                { "media_type": "person", "id": 6384, "name": "Keanu Reeves",
+                                  "known_for_department": "Acting", "profile_path": "/keanu.jpg",
+                                  "known_for": [
+                                    { "media_type": "movie", "id": 603, "title": "The Matrix",
+                                      "release_date": "1999-03-31" },
+                                    { "media_type": "tv", "id": 9999, "name": "Swedish Dicks",
+                                      "first_air_date": "" }
+                                  ] },
+                                { "media_type": "person", "id": 7777, "name": "Unknown Extra",
+                                  "known_for_department": "", "profile_path": null },
+                                { "media_type": "collection", "id": 2344, "name": "The Matrix Collection" },
                                 { "media_type": "tv", "id": 1396, "name": "Breaking Bad",
                                   "first_air_date": "2008-01-20", "overview": "",
                                   "poster_path": null }
@@ -400,7 +410,7 @@ async fn home_page_renders_search_form_and_attribution() {
     let (status, _, body) = get_page(test_app().await, "/", false).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(r#"<form class="search" action="/" method="get""#));
-    assert!(body.contains("Search TMDB for a movie or TV show."));
+    assert!(body.contains("Search TMDB for a movie, TV show or person."));
     assert!(
         body.contains("This product uses the TMDB API but is not endorsed or certified by TMDB.")
     );
@@ -408,7 +418,7 @@ async fn home_page_renders_search_form_and_attribution() {
 }
 
 #[tokio::test]
-async fn full_page_search_distinguishes_movies_and_tv_and_links_to_detail() {
+async fn full_page_search_distinguishes_movies_tv_and_people_and_links_to_detail() {
     let (status, headers, body) = get_page(test_app().await, "/?q=matrix", false).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers["vary"], "HX-Request");
@@ -417,7 +427,18 @@ async fn full_page_search_distinguishes_movies_and_tv_and_links_to_detail() {
     assert!(body.contains(r#"href="/tv/1396""#));
     assert!(body.contains(r#"<span class="badge badge-movie">Movie</span>"#));
     assert!(body.contains(r#"<span class="badge badge-tv">TV show</span>"#));
-    assert!(!body.contains("Keanu"), "people are filtered out");
+    assert!(body.contains(r#"href="/person/6384""#));
+    assert!(body.contains(r#"<span class="badge badge-person">Person</span>"#));
+    assert!(body.contains("Acting · known for The Matrix (1999), Swedish Dicks"));
+    assert!(body.contains("https://img.test/t/p/w185/keanu.jpg"));
+    assert!(
+        body.contains("No photo"),
+        "missing profile has a placeholder"
+    );
+    assert!(
+        !body.contains("Collection"),
+        "other result types are dropped"
+    );
     assert!(body.contains("https://img.test/t/p/w342/matrix.jpg"));
     assert!(
         body.contains("No artwork"),
@@ -437,7 +458,7 @@ async fn htmx_search_returns_only_the_results_fragment() {
 async fn empty_results_and_provider_failure_have_clear_states() {
     let (status, _, body) = get_page(test_app().await, "/?q=nothing", true).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("No movies or TV shows match “nothing”."));
+    assert!(body.contains("No movies, TV shows or people match “nothing”."));
 
     let (status, _, body) = get_page(test_app().await, "/?q=boom", false).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
@@ -505,11 +526,27 @@ async fn json_api_reuses_the_same_models() {
     let (status, json) = get_json(test_app().await, "/api/search?q=matrix").await;
     assert_eq!(status, StatusCode::OK);
     let results = json["results"].as_array().unwrap();
-    assert_eq!(results.len(), 2);
+    assert_eq!(results.len(), 4);
     assert_eq!(results[0]["kind"], "movie");
     assert_eq!(results[0]["year"], "1999");
-    assert_eq!(results[1]["kind"], "tv");
-    assert_eq!(results[1]["overview"], Value::Null);
+    assert_eq!(results[1]["kind"], "person");
+    assert_eq!(results[1]["name"], "Keanu Reeves");
+    assert_eq!(results[1]["known_for_department"], "Acting");
+    assert_eq!(
+        results[1]["known_for"],
+        json!([
+            { "kind": "movie", "id": 603, "title": "The Matrix", "year": "1999" },
+            { "kind": "tv", "id": 9999, "title": "Swedish Dicks", "year": null }
+        ])
+    );
+    assert_eq!(
+        results[1]["profile_url"],
+        "https://img.test/t/p/w185/keanu.jpg"
+    );
+    assert_eq!(results[2]["known_for_department"], Value::Null);
+    assert_eq!(results[2]["known_for"], json!([]));
+    assert_eq!(results[3]["kind"], "tv");
+    assert_eq!(results[3]["overview"], Value::Null);
 
     let (status, json) = get_json(test_app().await, "/api/tv/1396").await;
     assert_eq!(status, StatusCode::OK);

@@ -103,6 +103,7 @@ pub struct Paged<T> {
 pub enum MultiResult {
     Movie(MovieSummary),
     Tv(TvSummary),
+    Person(PersonSummary),
     #[serde(other)]
     Other,
 }
@@ -123,6 +124,17 @@ pub struct TvSummary {
     pub first_air_date: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct PersonSummary {
+    pub id: u64,
+    pub name: String,
+    pub known_for_department: Option<String>,
+    pub profile_path: Option<String>,
+    /// Movies and TV shows; TMDB lists the person's most notable few.
+    #[serde(default)]
+    pub known_for: Vec<MultiResult>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

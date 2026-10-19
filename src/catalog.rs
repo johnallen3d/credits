@@ -12,9 +12,9 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::cache::ProviderCache;
 use crate::config::Config;
 use crate::model::{
-    Department, Episode, FilmographyEntry, FilmographyGroup, KeyCrew, KeyRole, MediaKind, Metadata,
-    PersonCredit, PersonDetail, Ratings, SearchHit, SeasonDetail, SeasonSummary, TitleCredits,
-    TitleDetail,
+    Department, Episode, FilmographyEntry, FilmographyGroup, KeyCrew, KeyRole, KnownFor, MediaKind,
+    Metadata, PersonCredit, PersonDetail, PersonHit, Ratings, SearchHit, SeasonDetail,
+    SeasonSummary, TitleCredits, TitleDetail, TitleHit,
 };
 use crate::omdb::OmdbClient;
 use crate::ratings::RatingsService;
@@ -81,29 +81,35 @@ impl Catalog {
         })
     }
 
-    /// Movies and TV shows matching `query`; people and other result types are dropped.
+    /// Movies, TV shows and people matching `query`, in TMDB's order; other
+    /// result types are dropped.
     pub async fn search(&self, query: &str) -> Result<Vec<SearchHit>, CatalogError> {
         let page = self.tmdb.search_multi(query).await?;
         Ok(page
             .results
             .into_iter()
             .filter_map(|result| match result {
-                MultiResult::Movie(m) => Some(SearchHit {
-                    kind: MediaKind::Movie,
+                MultiResult::Movie(m) => Some(SearchHit::Movie(TitleHit {
                     id: m.id,
                     title: m.title,
                     year: year(m.release_date.as_deref()),
                     overview: non_empty(m.overview),
                     poster_url: self.image(POSTER_SIZE, m.poster_path),
-                }),
-                MultiResult::Tv(t) => Some(SearchHit {
-                    kind: MediaKind::Tv,
+                })),
+                MultiResult::Tv(t) => Some(SearchHit::Tv(TitleHit {
                     id: t.id,
                     title: t.name,
                     year: year(t.first_air_date.as_deref()),
                     overview: non_empty(t.overview),
                     poster_url: self.image(POSTER_SIZE, t.poster_path),
-                }),
+                })),
+                MultiResult::Person(p) => Some(SearchHit::Person(PersonHit {
+                    id: p.id,
+                    name: p.name,
+                    known_for_department: non_empty(p.known_for_department),
+                    known_for: p.known_for.into_iter().filter_map(known_for).collect(),
+                    profile_url: self.image(PROFILE_SIZE, p.profile_path),
+                })),
                 MultiResult::Other => None,
             })
             .collect())
@@ -717,6 +723,24 @@ fn season_name(number: u32) -> String {
         "Specials".to_owned()
     } else {
         format!("Season {number}")
+    }
+}
+
+fn known_for(result: MultiResult) -> Option<KnownFor> {
+    match result {
+        MultiResult::Movie(m) => Some(KnownFor {
+            kind: MediaKind::Movie,
+            id: m.id,
+            title: m.title,
+            year: year(m.release_date.as_deref()),
+        }),
+        MultiResult::Tv(t) => Some(KnownFor {
+            kind: MediaKind::Tv,
+            id: t.id,
+            title: t.name,
+            year: year(t.first_air_date.as_deref()),
+        }),
+        MultiResult::Person(_) | MultiResult::Other => None,
     }
 }
 

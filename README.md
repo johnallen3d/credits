@@ -1,6 +1,6 @@
 # credits
 
-Search TMDB for a movie or TV show and open its detail page, with ratings from
+Search TMDB for a movie, TV show or person and open its detail page, with ratings from
 OMDb. Rust (Axum + Tokio), Askama templates, HTMX (vendored in `static/`, no
 Node build), SQLite (SQLx) for the provider cache.
 

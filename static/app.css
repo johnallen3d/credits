@@ -1,13 +1,13 @@
 :root {
   --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --line: #e7e5e4;
-  --card: #ffffff; --accent: #0d6efd; --movie: #9a3412; --tv: #1d4ed8;
+  --card: #ffffff; --accent: #0d6efd; --movie: #9a3412; --tv: #1d4ed8; --person: #047857;
   --error-bg: #fef2f2; --error-fg: #991b1b;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1c1917; --fg: #f5f5f4; --muted: #a8a29e; --line: #44403c;
-    --card: #292524; --accent: #6ea8fe; --movie: #fdba74; --tv: #93c5fd;
+    --card: #292524; --accent: #6ea8fe; --movie: #fdba74; --tv: #93c5fd; --person: #6ee7b7;
     --error-bg: #450a0a; --error-fg: #fecaca;
   }
 }
@@ -44,6 +44,7 @@ header.site { padding-top: 1.25rem; padding-bottom: 1.25rem; }
 .badge { display: inline-block; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .badge-movie { color: var(--movie); }
 .badge-tv { color: var(--tv); }
+.badge-person { color: var(--person); }
 
 .backdrop { display: block; width: 100%; max-height: 360px; object-fit: cover; border-radius: 8px; margin-bottom: 1.5rem; }
 .detail-body { display: flex; gap: 2rem; align-items: flex-start; }

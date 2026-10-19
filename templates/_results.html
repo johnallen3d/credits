@@ -1,8 +1,8 @@
 {% match results %}
 {% when Results::Idle %}
-<p class="hint">Search TMDB for a movie or TV show.</p>
+<p class="hint">Search TMDB for a movie, TV show or person.</p>
 {% when Results::Empty %}
-<p class="empty">No movies or TV shows match “{{ query }}”.</p>
+<p class="empty">No movies, TV shows or people match “{{ query }}”.</p>
 {% when Results::Failed(message) %}
 <div class="error" role="alert"><strong>Search failed.</strong> {{ message }}</div>
 {% when Results::Hits(hits) %}
@@ -10,15 +10,15 @@
   {% for hit in hits %}
   <li class="result">
     <a href="{{ hit.detail_path() }}">
-      {% if let Some(url) = hit.poster_url %}
+      {% if let Some(url) = hit.image_url() %}
       <img class="poster" src="{{ url }}" alt="" loading="lazy" width="92" height="138">
       {% else %}
-      <div class="poster missing" aria-hidden="true">No artwork</div>
+      <div class="poster missing" aria-hidden="true">{{ hit.missing_image_label() }}</div>
       {% endif %}
       <div class="meta">
-        <span class="badge badge-{{ hit.kind.slug() }}">{{ hit.kind.label() }}</span>
-        <h2>{{ hit.title }}{% if let Some(year) = hit.year %} <span class="year">({{ year }})</span>{% endif %}</h2>
-        {% if let Some(overview) = hit.overview %}<p class="overview">{{ overview }}</p>{% endif %}
+        <span class="badge badge-{{ hit.slug() }}">{{ hit.label() }}</span>
+        <h2>{{ hit.heading() }}{% if let Some(year) = hit.year() %} <span class="year">({{ year }})</span>{% endif %}</h2>
+        {% if let Some(summary) = hit.summary() %}<p class="overview">{{ summary }}</p>{% endif %}
       </div>
     </a>
   </li>

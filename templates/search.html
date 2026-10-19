@@ -4,8 +4,8 @@
 <form class="search" action="/" method="get" role="search"
       hx-get="/" hx-target="#results" hx-replace-url="true" hx-indicator="#loading"
       hx-trigger="submit, input changed delay:400ms from:#q">
-  <label for="q" class="visually-hidden">Search movies and TV shows</label>
-  <input id="q" name="q" type="search" value="{{ query }}" placeholder="Search movies and TV shows" autofocus autocomplete="off">
+  <label for="q" class="visually-hidden">Search movies, TV shows and people</label>
+  <input id="q" name="q" type="search" value="{{ query }}" placeholder="Search movies, TV shows and people" autofocus autocomplete="off">
   <button type="submit">Search</button>
   <span id="loading" class="htmx-indicator" role="status">Searching…</span>
 </form>

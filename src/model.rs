@@ -26,9 +26,18 @@ impl MediaKind {
     }
 }
 
+/// One search result. Serialized with a `kind` of "movie", "tv" or "person"
+/// alongside the variant's fields.
 #[derive(Clone, Debug, Serialize)]
-pub struct SearchHit {
-    pub kind: MediaKind,
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum SearchHit {
+    Movie(TitleHit),
+    Tv(TitleHit),
+    Person(PersonHit),
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TitleHit {
     pub id: u64,
     pub title: String,
     pub year: Option<String>,
@@ -36,9 +45,99 @@ pub struct SearchHit {
     pub poster_url: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct PersonHit {
+    pub id: u64,
+    pub name: String,
+    pub known_for_department: Option<String>,
+    /// The few titles TMDB associates with the person, most notable first.
+    pub known_for: Vec<KnownFor>,
+    pub profile_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KnownFor {
+    pub kind: MediaKind,
+    pub id: u64,
+    pub title: String,
+    pub year: Option<String>,
+}
+
 impl SearchHit {
     pub fn detail_path(&self) -> String {
-        title_path(self.kind, self.id)
+        match self {
+            SearchHit::Movie(t) => title_path(MediaKind::Movie, t.id),
+            SearchHit::Tv(t) => title_path(MediaKind::Tv, t.id),
+            SearchHit::Person(p) => person_path(p.id),
+        }
+    }
+
+    pub fn slug(&self) -> &'static str {
+        match self {
+            SearchHit::Movie(_) => MediaKind::Movie.slug(),
+            SearchHit::Tv(_) => MediaKind::Tv.slug(),
+            SearchHit::Person(_) => "person",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            SearchHit::Movie(_) => MediaKind::Movie.label(),
+            SearchHit::Tv(_) => MediaKind::Tv.label(),
+            SearchHit::Person(_) => "Person",
+        }
+    }
+
+    pub fn heading(&self) -> &str {
+        match self {
+            SearchHit::Movie(t) | SearchHit::Tv(t) => &t.title,
+            SearchHit::Person(p) => &p.name,
+        }
+    }
+
+    pub fn year(&self) -> Option<&str> {
+        match self {
+            SearchHit::Movie(t) | SearchHit::Tv(t) => t.year.as_deref(),
+            SearchHit::Person(_) => None,
+        }
+    }
+
+    pub fn image_url(&self) -> Option<&str> {
+        match self {
+            SearchHit::Movie(t) | SearchHit::Tv(t) => t.poster_url.as_deref(),
+            SearchHit::Person(p) => p.profile_url.as_deref(),
+        }
+    }
+
+    pub fn missing_image_label(&self) -> &'static str {
+        match self {
+            SearchHit::Person(_) => "No photo",
+            _ => "No artwork",
+        }
+    }
+
+    /// The overview of a title, or a person's department and best-known titles.
+    pub fn summary(&self) -> Option<String> {
+        match self {
+            SearchHit::Movie(t) | SearchHit::Tv(t) => t.overview.clone(),
+            SearchHit::Person(p) => {
+                let titles = p
+                    .known_for
+                    .iter()
+                    .map(|k| match &k.year {
+                        Some(year) => format!("{} ({year})", k.title),
+                        None => k.title.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                match (&p.known_for_department, titles.is_empty()) {
+                    (Some(d), false) => Some(format!("{d} · known for {titles}")),
+                    (Some(d), true) => Some(d.clone()),
+                    (None, false) => Some(format!("Known for {titles}")),
+                    (None, true) => None,
+                }
+            }
+        }
     }
 }
 
