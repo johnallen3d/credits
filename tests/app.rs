@@ -628,6 +628,20 @@ async fn static_assets_are_served() {
 }
 
 #[tokio::test]
+async fn stylesheet_url_changes_with_its_content() {
+    let (_, _, body) = get_page(test_app().await, "/", false).await;
+    let href = format!(
+        r#"href="/static/app.css?v={}""#,
+        credits::web::APP_CSS_VERSION
+    );
+    assert!(body.contains(&href), "stylesheet link is versioned");
+
+    let (status, headers, _) = get_page(test_app().await, "/static/app.css?v=1", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["content-type"], "text/css");
+}
+
+#[tokio::test]
 async fn movie_prefers_rotten_tomatoes_and_tv_prefers_imdb() {
     let (_, _, body) = get_page(test_app().await, "/movie/603", false).await;
     assert!(body.contains(

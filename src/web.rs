@@ -61,7 +61,7 @@ pub fn app(catalog: Catalog) -> Router {
         )
         .route(
             "/static/app.css",
-            get(|| asset("text/css", include_str!("../static/app.css"))),
+            get(|| asset("text/css", APP_CSS)),
         )
         .route(
             "/static/tmdb-logo.svg",
@@ -398,6 +398,23 @@ fn html(status: StatusCode, body: askama::Result<String>) -> Response {
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
         }
     }
+}
+
+const APP_CSS: &str = include_str!("../static/app.css");
+
+/// Content hash of `app.css`, used as a query string by `base.html` so a
+/// stylesheet change gets a new URL instead of a cached stale copy.
+pub const APP_CSS_VERSION: u64 = fnv1a(APP_CSS.as_bytes());
+
+const fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+        i += 1;
+    }
+    hash
 }
 
 async fn asset(content_type: &'static str, body: &'static str) -> Response {

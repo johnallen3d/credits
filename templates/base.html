@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"...","swap":true}]}'>
   <title>{% block title %}credits{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v={{ crate::web::APP_CSS_VERSION }}">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
