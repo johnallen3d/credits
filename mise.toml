@@ -1,3 +1,11 @@
 [tools]
 rust = "1.93"
 doppler = "latest"
+
+[tasks.dev]
+description = "Run the server on localhost with secrets from Doppler (credits/dev)"
+run = "doppler run --project credits --config dev -- cargo run"
+
+[tasks.test]
+description = "Run tests (no TMDB access needed)"
+run = "cargo test"
