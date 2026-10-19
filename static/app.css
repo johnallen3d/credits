@@ -12,7 +12,9 @@
   }
 }
 * { box-sizing: border-box; }
-body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); overflow-wrap: break-word; -webkit-text-size-adjust: 100%; }
+img { max-width: 100%; }
+.search input { min-width: 0; }
 a { color: var(--accent); }
 header.site, main, footer.attribution { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
 header.site { padding-top: 1.25rem; padding-bottom: 1.25rem; }
@@ -23,6 +25,9 @@ header.site { padding-top: 1.25rem; padding-bottom: 1.25rem; }
 .search input { flex: 1; font: inherit; padding: .6rem .8rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
 .search button { font: inherit; padding: .6rem 1rem; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
 .htmx-indicator { color: var(--muted); }
+/* Out of the row so the hidden indicator never widens the form. */
+.search { position: relative; }
+.search .htmx-indicator { position: absolute; left: 0; top: 100%; margin-top: .15rem; font-size: .85rem; }
 
 .hint, .empty, .muted { color: var(--muted); }
 .error { background: var(--error-bg); color: var(--error-fg); padding: 1rem 1.25rem; border-radius: 6px; }
@@ -96,8 +101,29 @@ footer.attribution p { margin: .5rem 0 0; }
 .still.missing { display: flex; align-items: center; justify-content: center; font-size: .8rem; color: var(--muted); }
 
 @media (max-width: 640px) {
-  .detail-body { flex-direction: column; }
-  .episode { flex-direction: column; }
-  .still { width: 100%; height: auto; aspect-ratio: 16 / 9; }
+  header.site, main, footer.attribution { padding-left: 1rem; padding-right: 1rem; }
+  header.site { padding-top: .9rem; padding-bottom: .9rem; }
+  .detail h1 { font-size: 1.6rem; line-height: 1.2; }
+  .backdrop { max-height: 180px; margin-bottom: 1rem; }
+  /* Poster floats beside the heading so the title and ratings stay above the fold. */
+  .detail-body { display: block; }
+  .detail-body::after { content: ""; display: table; clear: both; }
+  .poster.large { float: left; width: 110px; height: 165px; margin: 0 1rem .75rem 0; }
+  .facts { clear: both; padding-top: .25rem; }
+  .result a { gap: .75rem; padding: .6rem; }
+  .result .poster { width: 72px; height: 108px; }
+  .result h2 { font-size: 1.05rem; line-height: 1.3; }
+  .tiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: .75rem; }
+  .tiles .name { font-size: .9rem; }
+  .tiles .role { font-size: .8rem; }
+  .section { margin-top: 2rem; }
+  .jump a { padding: .4rem .75rem; }
+  .credit-list li { padding: .35rem 0; }
+  .episode { display: block; padding: .6rem; }
+  .episode::after { content: ""; display: table; clear: both; }
+  .still { float: left; width: 40%; height: auto; aspect-ratio: 16 / 9; margin: 0 .75rem .4rem 0; }
+  .episode .overview { clear: both; }
+  .pager { flex-wrap: wrap; }
+  .pager a { padding: .35rem 0; }
 }
 .stale-notice { margin: 0 0 1rem; padding: .6rem .9rem; border-radius: 6px; background: var(--error-bg); color: var(--error-fg); font-size: .9rem; }
