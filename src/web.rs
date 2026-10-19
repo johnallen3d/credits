@@ -19,6 +19,10 @@ pub fn app(catalog: Catalog) -> Router {
     Router::new()
         .route("/", get(search_page))
         .route(
+            "/about",
+            get(|| async { html(StatusCode::OK, AboutPage.render()) }),
+        )
+        .route(
             "/movie/{id}",
             get(|s, p| detail_page(s, p, MediaKind::Movie)),
         )
@@ -103,6 +107,10 @@ struct ResultsPartial {
     query: String,
     results: Results,
 }
+
+#[derive(Template)]
+#[template(path = "about.html")]
+struct AboutPage;
 
 #[derive(Template)]
 #[template(path = "detail.html")]

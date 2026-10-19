@@ -406,15 +406,27 @@ async fn get_json(app: Router, uri: &str) -> (StatusCode, Value) {
 }
 
 #[tokio::test]
-async fn home_page_renders_search_form_and_attribution() {
+async fn home_page_renders_search_form_and_links_to_about() {
     let (status, _, body) = get_page(test_app().await, "/", false).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(r#"<form class="search" action="/" method="get""#));
     assert!(body.contains("Search TMDB for a movie, TV show or person."));
+    assert!(body.contains(r#"<a class="about-link" href="/about">About</a>"#));
+    assert!(
+        !body.contains("not endorsed or certified"),
+        "attribution lives on /about"
+    );
+}
+
+#[tokio::test]
+async fn about_page_carries_tmdb_and_omdb_attribution() {
+    let (status, _, body) = get_page(test_app().await, "/about", false).await;
+    assert_eq!(status, StatusCode::OK);
     assert!(
         body.contains("This product uses the TMDB API but is not endorsed or certified by TMDB.")
     );
     assert!(body.contains("/static/tmdb-logo.svg"));
+    assert!(body.contains("OMDb API"));
 }
 
 #[tokio::test]
@@ -577,7 +589,6 @@ async fn movie_prefers_rotten_tomatoes_and_tv_prefers_imdb() {
     ));
     assert!(body.contains(r#"<span class="rating-score">8.7/10</span><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb">"#));
     assert!(!body.contains("73/100"), "unsupported sources are dropped");
-    assert!(body.contains("OMDb API"));
 
     let (_, _, body) = get_page(test_app().await, "/tv/1396", false).await;
     assert!(body.contains(
