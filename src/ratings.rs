@@ -25,6 +25,11 @@ impl RatingsService {
         Self { omdb, cache, ttl }
     }
 
+    /// Whether an OMDb key is set; without one nothing new can be fetched.
+    pub fn is_configured(&self) -> bool {
+        self.omdb.is_some()
+    }
+
     pub async fn for_title(&self, kind: MediaKind, imdb_id: Option<String>) -> Ratings {
         let Some(imdb_id) = imdb_id.filter(|id| is_imdb_title_id(id)) else {
             return Ratings::unavailable(kind, UnavailableReason::NoImdbId, None);

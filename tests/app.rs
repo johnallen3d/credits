@@ -1146,6 +1146,115 @@ async fn person_page_shows_most_voted_titles_as_known_for() {
     assert!(!body.contains("known-for-heading"));
 }
 
+fn entry_titles(group: &Value) -> Vec<&str> {
+    group["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["title"].as_str().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn filmography_sorts_by_rotten_tomatoes_then_imdb() {
+    let (status, json) = get_json(test_app().await, "/api/person/6384?sort=rating").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["sort"], "rating");
+    let acting = &json["filmography"][0];
+    // Breaking Bad has only IMDb's 9.5 (95%), The Matrix 83% on Rotten
+    // Tomatoes; unscored credits follow in date order.
+    assert_eq!(
+        entry_titles(acting),
+        [
+            "Breaking Bad",
+            "The Matrix",
+            "Untitled Project",
+            "The Tonight Show"
+        ]
+    );
+    assert_eq!(acting["entries"][0]["rating"]["source"], "imdb");
+    assert_eq!(acting["entries"][1]["rating"]["source"], "rotten_tomatoes");
+    assert_eq!(acting["entries"][1]["rating"]["score"], 83.0);
+    assert!(acting["entries"][2].get("rating").is_none());
+    assert_eq!(json["sort_ratings"]["unrated"], 3);
+    assert!(json["sort_ratings"]["unavailable_reason"].is_null());
+
+    let (_, json) = get_json(test_app().await, "/api/person/6384").await;
+    assert_eq!(json["sort"], "date");
+    assert!(json["sort_ratings"].is_null());
+    assert!(json["filmography"][0]["entries"][3].get("rating").is_none());
+
+    let (_, _, body) = get_page(test_app().await, "/person/6384?sort=rating", false).await;
+    assert!(body.contains(
+        r##"<a href="/person/6384?sort=rating#filmography-heading" aria-current="true">Rating</a>"##
+    ));
+    assert!(body.contains(r##"<a href="/person/6384#filmography-heading">Date</a>"##));
+    assert!(body.contains(r#"<img class="rating-source" src="/static/rt-fresh.svg" alt="Rotten Tomatoes: Fresh" title="Rotten Tomatoes: Fresh"> <span class="rating-score">83%</span>"#));
+    assert!(body.contains(r#"<span class="rating-score">9.5/10</span>"#));
+    assert!(body.contains("Credits without a Rotten Tomatoes or IMDb score are listed last"));
+    let filmography = &body[body.find(r#"id="filmography-heading""#).unwrap()..];
+    let bb = filmography.find(r#"<a href="/tv/1396">"#).unwrap();
+    let matrix = filmography.find(r#"<a href="/movie/603">"#).unwrap();
+    assert!(bb < matrix);
+
+    let (_, _, body) = get_page(test_app().await, "/person/6384", false).await;
+    assert!(
+        body.contains(
+            r##"<a href="/person/6384#filmography-heading" aria-current="true">Date</a>"##
+        )
+    );
+    assert!(!body.contains("credit-rating"));
+}
+
+#[tokio::test]
+async fn rating_sort_is_cached_and_survives_provider_problems() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    get_json(t.app(), "/api/person/6384").await;
+    assert_eq!(t.omdb.calls(), 0, "date order looks nothing up");
+    get_json(t.app(), "/api/person/6384?sort=rating").await;
+    let (omdb, tmdb) = (t.omdb.calls(), t.tmdb.calls());
+    get_json(t.app(), "/api/person/6384?sort=rating").await;
+    assert_eq!(t.omdb.calls(), omdb, "second sort reuses cached ratings");
+    // Only the two titles TMDB doesn't know are asked for again.
+    assert_eq!(t.tmdb.calls(), tmdb + 2);
+
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    t.omdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/person/6384?sort=rating", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Some ratings couldn&#39;t be loaded right now."));
+    let (_, json) = get_json(t.app(), "/api/person/6384?sort=rating").await;
+    assert_eq!(json["sort_ratings"]["unavailable_reason"], "provider_error");
+    assert_eq!(
+        entry_titles(&json["filmography"][0]),
+        [
+            "Untitled Project",
+            "The Tonight Show",
+            "Breaking Bad",
+            "The Matrix"
+        ],
+        "nothing scored, so date order"
+    );
+
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::ZERO).await;
+    get_page(t.app(), "/person/6384?sort=rating", false).await;
+    t.omdb.set_down(true);
+    let (_, _, body) = get_page(t.app(), "/person/6384?sort=rating", false).await;
+    assert!(body.contains("Couldn't refresh some ratings; using scores from as early as "));
+    assert!(body.contains(r#"<span class="rating-score">83%</span>"#));
+
+    let t = build(TOKEN, None, Duration::from_secs(3600)).await;
+    let (status, _, body) = get_page(t.app(), "/person/6384?sort=rating", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(
+            "Ratings aren&#39;t configured on this server, so credits stay in date order."
+        )
+    );
+    assert_eq!(t.omdb.calls(), 0);
+    assert_eq!(t.tmdb.calls(), 1, "no title lookups without a ratings key");
+}
+
 #[tokio::test]
 async fn sparse_and_unknown_people_have_clear_states() {
     let (status, _, body) = get_page(test_app().await, "/person/1", false).await;

@@ -571,10 +571,17 @@ pub struct PersonDetail {
     pub known_for_titles: Vec<FilmographyEntry>,
     /// Grouped by department, the person's main department first.
     pub filmography: Vec<FilmographyGroup>,
+    pub sort: FilmographySort,
+    /// Only when sorted by rating: how complete the scores behind the order are.
+    pub sort_ratings: Option<SortRatings>,
     pub metadata: Metadata,
 }
 
 impl PersonDetail {
+    pub fn path(&self) -> String {
+        person_path(self.id)
+    }
+
     pub fn biography_paragraphs(&self) -> Vec<&str> {
         self.biography
             .as_deref()
@@ -591,10 +598,63 @@ impl PersonDetail {
     }
 }
 
+/// How a person's filmography is ordered within each department.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilmographySort {
+    /// Newest first; undated (usually unreleased) entries lead.
+    #[default]
+    Date,
+    /// Highest `sort_score` first, then unscored entries by date.
+    Rating,
+}
+
+impl FilmographySort {
+    /// The `sort` query parameter; anything unrecognised means date.
+    pub fn from_query(value: Option<&str>) -> Self {
+        match value {
+            Some("rating") => FilmographySort::Rating,
+            _ => FilmographySort::Date,
+        }
+    }
+
+    pub fn is_rating(self) -> bool {
+        self == FilmographySort::Rating
+    }
+}
+
+/// What stood behind a by-rating order: credits without a score, and
+/// whether some scores were stale or couldn't be loaded.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SortRatings {
+    pub unrated: usize,
+    /// Oldest fetch among scores served stale because OMDb failed.
+    pub stale_since: Option<Timestamp>,
+    /// Set when ratings aren't configured or some lookups failed outright.
+    pub unavailable_reason: Option<UnavailableReason>,
+}
+
+impl SortRatings {
+    pub fn stale_on(&self) -> Option<String> {
+        self.stale_since.map(local_day)
+    }
+
+    pub fn unavailable_message(&self) -> Option<&'static str> {
+        match self.unavailable_reason? {
+            UnavailableReason::NotConfigured => {
+                Some("Ratings aren't configured on this server, so credits stay in date order.")
+            }
+            UnavailableReason::NoImdbId | UnavailableReason::ProviderError => {
+                Some("Some ratings couldn't be loaded right now.")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct FilmographyGroup {
     pub department: String,
-    /// Newest first; undated (usually unreleased) entries lead.
+    /// In the page's `FilmographySort` order.
     pub entries: Vec<FilmographyEntry>,
 }
 
@@ -618,6 +678,10 @@ pub struct FilmographyEntry {
     pub role: Option<String>,
     pub episode_count: Option<u32>,
     pub poster_url: Option<String>,
+    /// When sorted by rating: the score it was sorted by, Rotten Tomatoes if
+    /// there is one, else IMDb.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rating: Option<Rating>,
 }
 
 impl FilmographyEntry {
@@ -631,7 +695,7 @@ impl FilmographyEntry {
 }
 
 /// Where a score comes from. Each source has its own scale; never compare
-/// scores across sources.
+/// raw scores across sources (see `Rating::percent`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RatingSource {
@@ -671,6 +735,21 @@ impl Rating {
             RatingSource::RottenTomatoes => format!("{}%", self.score),
             RatingSource::Imdb => format!("{:.1}/{}", self.score, self.scale),
         }
+    }
+
+    /// The score as a share of its scale, 0–100, so a filmography can rank
+    /// a Rotten Tomatoes score against an IMDb fallback.
+    pub fn percent(&self) -> f64 {
+        self.score / f64::from(self.scale.max(1)) * 100.0
+    }
+
+    /// The score a credit is sorted by: Rotten Tomatoes, falling back to IMDb.
+    pub fn for_sorting(ratings: &Ratings) -> Option<Rating> {
+        let scores = || ratings.preferred.iter().chain(&ratings.others);
+        scores()
+            .find(|r| r.source == RatingSource::RottenTomatoes)
+            .or_else(|| scores().find(|r| r.source == RatingSource::Imdb))
+            .cloned()
     }
 
     /// Rotten Tomatoes calls a Tomatometer of 60% or more "Fresh".
@@ -880,6 +959,41 @@ mod tests {
             scale: 100,
             votes: None,
         }
+    }
+
+    #[test]
+    fn sorting_prefers_rotten_tomatoes_and_falls_back_to_imdb() {
+        let imdb = Rating {
+            source: RatingSource::Imdb,
+            score: 8.7,
+            scale: 10,
+            votes: None,
+        };
+        let tv = Ratings::from_scores(
+            MediaKind::Tv,
+            RatingsState::Fresh,
+            "tt1".into(),
+            vec![imdb.clone(), rt(91.0)],
+            Timestamp::UNIX_EPOCH,
+        );
+        assert_eq!(Rating::for_sorting(&tv), Some(rt(91.0)));
+        let movie = Ratings::from_scores(
+            MediaKind::Movie,
+            RatingsState::Fresh,
+            "tt1".into(),
+            vec![imdb.clone()],
+            Timestamp::UNIX_EPOCH,
+        );
+        assert_eq!(Rating::for_sorting(&movie), Some(imdb.clone()));
+        assert!((imdb.percent() - 87.0).abs() < 1e-9);
+        assert_eq!(
+            Rating::for_sorting(&Ratings::unavailable(
+                MediaKind::Movie,
+                UnavailableReason::NoImdbId,
+                None
+            )),
+            None
+        );
     }
 
     #[test]

@@ -30,6 +30,13 @@ reported as unavailable and the page still renders. The key never leaves the
 server; JSON responses include each score's `source`, `scale`, the
 `imdb_id`, `state` (`fresh` / `stale` / `unavailable`) and `fetched_at`.
 
+Person pages can sort each department's credits by rating (`?sort=rating`):
+the Rotten Tomatoes Tomatometer where there is one, otherwise the IMDb score
+as a percentage. Unscored credits follow in date order. Each title's IMDb ID
+comes from its cached TMDB entry, so the first rating sort of a busy
+filmography costs one TMDB and one OMDb request per title, eight at a time;
+date order, the default, looks nothing up.
+
 ## Spoilers
 
 Season pages blur episode summaries and IMDb episode scores until that season,
@@ -46,7 +53,7 @@ they can't be read, spoilers stay hidden.
 | `/tv/{id}` | `/api/tv/{id}` |
 | `/movie/{id}/credits`, `/tv/{id}/credits` | `/api/movie/{id}/credits`, `/api/tv/{id}/credits` |
 | `/tv/{id}/season/{n}` | `/api/tv/{id}/season/{n}` |
-| `/person/{id}` | `/api/person/{id}` |
+| `/person/{id}` (`?sort=rating`) | `/api/person/{id}` (`?sort=rating`) |
 | `POST /tv/{id}/watched`, `POST /tv/{id}/season/{n}/watched` (form: `watched=true\|false`) | |
 
 Both sides use `Catalog` (`src/catalog.rs`) and the types in `src/model.rs`.

@@ -1,20 +1,24 @@
 //! Application service: turns provider responses into `model` types.
 
-use std::cmp::Reverse;
-use std::collections::HashMap;
+use std::cmp::{Ordering, Reverse};
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::sync::Arc;
 use std::time::Duration;
 
 use jiff::Timestamp;
 use serde::{Serialize, de::DeserializeOwned};
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use crate::cache::ProviderCache;
 use crate::config::Config;
 use crate::model::{
-    Department, Episode, FilmographyEntry, FilmographyGroup, KeyCrew, KeyRole, KnownFor, MediaKind,
-    Metadata, PersonCredit, PersonDetail, PersonHit, Ratings, RecentView, SearchHit, SeasonDetail,
-    SeasonSummary, TitleCredits, TitleDetail, TitleHit, WatchTarget, Watched,
+    Department, Episode, FilmographyEntry, FilmographyGroup, FilmographySort, KeyCrew, KeyRole,
+    KnownFor, MediaKind, Metadata, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
+    RecentView, SearchHit, SeasonDetail, SeasonSummary, SortRatings, TitleCredits, TitleDetail,
+    TitleHit, UnavailableReason, WatchTarget, Watched,
 };
 use crate::omdb::OmdbClient;
 use crate::ratings::RatingsService;
@@ -37,6 +41,8 @@ const TV_KEY_DIRECTORS: usize = 3;
 const MAX_CHARACTERS: usize = 3;
 /// Titles in a person page's "Known for" row.
 const KNOWN_FOR_TITLES: usize = 8;
+/// Titles looked up at once when sorting a filmography by rating.
+const CONCURRENT_RATING_LOOKUPS: usize = 8;
 /// TMDB's Talk and News genres: appearing on these says little about what
 /// someone is known for.
 const TALK_AND_NEWS_GENRES: &[u32] = &[10767, 10763];
@@ -289,7 +295,11 @@ impl Catalog {
         })
     }
 
-    pub async fn person(&self, id: u64) -> Result<PersonDetail, CatalogError> {
+    pub async fn person(
+        &self,
+        id: u64,
+        sort: FilmographySort,
+    ) -> Result<PersonDetail, CatalogError> {
         let (p, metadata): (tmdb::Person, _) = self
             // v2: entries cached before vote counts were kept can't rank "Known for".
             .cached(format!("person/{id}/v2"), self.tmdb.person(id))
@@ -341,6 +351,7 @@ impl Catalog {
                     role,
                     episode_count: c.episode_count.filter(|n| *n > 0),
                     poster_url: self.image(THUMB_SIZE, c.poster_path),
+                    rating: None,
                 };
                 Some((
                     (department.clone(), kind, c.id),
@@ -366,7 +377,7 @@ impl Catalog {
                 Reverse(entries.len()),
             )
         });
-        let filmography = groups
+        let mut filmography: Vec<FilmographyGroup> = groups
             .into_iter()
             .map(|(department, mut entries)| {
                 // Undated entries are usually announced but unreleased, so they lead.
@@ -377,6 +388,10 @@ impl Catalog {
                 }
             })
             .collect();
+        let sort_ratings = match sort {
+            FilmographySort::Date => None,
+            FilmographySort::Rating => Some(self.sort_by_rating(&mut filmography).await),
+        };
 
         Ok(PersonDetail {
             id: p.id,
@@ -390,8 +405,94 @@ impl Catalog {
             place_of_birth: non_empty(p.place_of_birth),
             profile_url: self.image(PROFILE_SIZE, p.profile_path),
             filmography,
+            sort,
+            sort_ratings,
             metadata,
         })
+    }
+
+    /// Reorders each department best rated first, by Rotten Tomatoes or else
+    /// IMDb; unscored entries follow, keeping their date order.
+    async fn sort_by_rating(&self, filmography: &mut [FilmographyGroup]) -> SortRatings {
+        let entries = || filmography.iter().flat_map(|g| &g.entries);
+        if !self.ratings.is_configured() {
+            return SortRatings {
+                unrated: entries().count(),
+                stale_since: None,
+                unavailable_reason: Some(UnavailableReason::NotConfigured),
+            };
+        }
+        let ratings = self
+            .title_ratings(entries().map(|e| (e.kind, e.id)).collect())
+            .await;
+
+        let mut summary = SortRatings::default();
+        for r in ratings.values() {
+            if let (true, Some(at)) = (r.is_stale(), r.fetched_at) {
+                summary.stale_since = Some(summary.stale_since.map_or(at, |since| since.min(at)));
+            }
+            if r.unavailable_reason == Some(UnavailableReason::ProviderError) {
+                summary.unavailable_reason = Some(UnavailableReason::ProviderError);
+            }
+        }
+        for group in filmography {
+            for e in &mut group.entries {
+                e.rating = ratings.get(&(e.kind, e.id)).and_then(Rating::for_sorting);
+                summary.unrated += usize::from(e.rating.is_none());
+            }
+            group.entries.sort_by(|a, b| match (&a.rating, &b.rating) {
+                (Some(a), Some(b)) => b.percent().total_cmp(&a.percent()),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => Ordering::Equal,
+            });
+        }
+        summary
+    }
+
+    /// Each title's ratings, looked up by the IMDb ID on its cached TMDB
+    /// entry, a few at a time. A TMDB failure counts as a provider error.
+    async fn title_ratings(
+        &self,
+        titles: HashSet<(MediaKind, u64)>,
+    ) -> HashMap<(MediaKind, u64), Ratings> {
+        let permits = Arc::new(Semaphore::new(CONCURRENT_RATING_LOOKUPS));
+        let mut lookups = JoinSet::new();
+        for (kind, id) in titles {
+            let catalog = self.clone();
+            let permits = permits.clone();
+            lookups.spawn(async move {
+                let _permit = permits.acquire_owned().await;
+                let imdb_id = match kind {
+                    MediaKind::Movie => catalog
+                        .movie_raw(id)
+                        .await
+                        .map(|(m, _)| m.external_ids.imdb_id),
+                    MediaKind::Tv => catalog.tv_raw(id).await.map(|(t, _)| t.external_ids.imdb_id),
+                };
+                let ratings = match imdb_id {
+                    Ok(imdb_id) => catalog.ratings.for_title(kind, imdb_id).await,
+                    Err(CatalogError::NotFound) => {
+                        Ratings::unavailable(kind, UnavailableReason::NoImdbId, None)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, ?kind, id, "title lookup for rating sort failed");
+                        Ratings::unavailable(kind, UnavailableReason::ProviderError, None)
+                    }
+                };
+                ((kind, id), ratings)
+            });
+        }
+        let mut ratings = HashMap::new();
+        while let Some(joined) = lookups.join_next().await {
+            match joined {
+                Ok((title, r)) => {
+                    ratings.insert(title, r);
+                }
+                Err(e) => tracing::warn!(error = %e, "rating lookup task failed"),
+            }
+        }
+        ratings
     }
 
     async fn movie_raw(&self, id: u64) -> Result<(tmdb::Movie, Metadata), CatalogError> {

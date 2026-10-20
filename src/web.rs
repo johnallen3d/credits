@@ -14,8 +14,8 @@ use serde_json::json;
 
 use crate::catalog::{Catalog, CatalogError};
 use crate::model::{
-    MediaKind, PersonDetail, RecentView, SearchHit, SeasonDetail, TitleCredits, TitleDetail,
-    WatchTarget, Watched, title_path,
+    FilmographySort, MediaKind, PersonDetail, RecentView, SearchHit, SeasonDetail, TitleCredits,
+    TitleDetail, WatchTarget, Watched, title_path,
 };
 
 pub fn app(catalog: Catalog) -> Router {
@@ -160,6 +160,11 @@ struct ErrorPage {
 #[derive(Deserialize)]
 struct SearchParams {
     q: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PersonParams {
+    sort: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -344,11 +349,16 @@ fn is_show_page(path: &str, id: u64) -> bool {
     })
 }
 
-async fn person_page(State(catalog): State<Catalog>, Path(id): Path<String>) -> Response {
+async fn person_page(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    Query(params): Query<PersonParams>,
+) -> Response {
     let Ok(id) = id.parse::<u64>() else {
         return not_found_person();
     };
-    let result = catalog.person(id).await;
+    let sort = FilmographySort::from_query(params.sort.as_deref());
+    let result = catalog.person(id, sort).await;
     if let Ok(p) = &result {
         catalog.record_view(RecentView::of_person(p)).await;
     }
@@ -408,11 +418,16 @@ async fn api_season(
     api_result(catalog.season(id, number).await, "season")
 }
 
-async fn api_person(State(catalog): State<Catalog>, Path(id): Path<String>) -> Response {
+async fn api_person(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    Query(params): Query<PersonParams>,
+) -> Response {
     let Ok(id) = id.parse::<u64>() else {
         return api_not_found();
     };
-    api_result(catalog.person(id).await, "person")
+    let sort = FilmographySort::from_query(params.sort.as_deref());
+    api_result(catalog.person(id, sort).await, "person")
 }
 
 /// Renders a page, or the matching error page when the catalog lookup failed.

@@ -93,6 +93,13 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .credit-list { list-style: none; padding: 0; margin: 0; columns: 2 280px; column-gap: 2rem; }
 .credit-list li { break-inside: avoid; padding: .2rem 0; }
 
+.sort { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-bottom: .75rem; font-size: .9rem; }
+.sort a { padding: .2rem .65rem; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; }
+.sort a[aria-current] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.sort-note { margin: 0 0 .75rem; font-size: .9rem; }
+.credit-rating { white-space: nowrap; margin-left: .25rem; }
+.credit-rating .rating-source { width: 2rem; height: .95rem; vertical-align: -.15rem; }
+.credit-rating .rating-score { min-width: 0; }
 .filmography { list-style: none; padding: 0; margin: 0 0 1.5rem; }
 .filmography li { display: grid; grid-template-columns: 3.5rem 46px 1fr; align-items: center; gap: .5rem .75rem; padding: .35rem 0; border-bottom: 1px solid var(--line); }
 .filmography > li > a { display: block; line-height: 0; text-decoration: none; }
