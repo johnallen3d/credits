@@ -5,6 +5,7 @@ pub mod model;
 mod omdb;
 mod ratings;
 pub mod recent;
+mod services;
 mod tmdb;
 mod watched;
 mod watchlist;

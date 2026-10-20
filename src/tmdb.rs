@@ -58,6 +58,19 @@ impl TmdbClient {
         .await
     }
 
+    /// Every service offering movies (`kind` "movie") or TV shows ("tv") in `region`.
+    pub async fn provider_list(
+        &self,
+        kind: &str,
+        region: &str,
+    ) -> Result<ProviderList, CatalogError> {
+        self.get(
+            &format!("/watch/providers/{kind}"),
+            &[("watch_region", region)],
+        )
+        .await
+    }
+
     pub async fn season(&self, tv_id: u64, number: u32) -> Result<Season, CatalogError> {
         self.get(&format!("/tv/{tv_id}/season/{number}"), &[]).await
     }
@@ -246,6 +259,23 @@ pub struct WatchProvider {
     pub provider_name: String,
     pub logo_path: Option<String>,
     pub display_priority: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct ProviderList {
+    #[serde(default)]
+    pub results: Vec<ListedProvider>,
+}
+
+/// One service in TMDB's provider list, with its display priority per region.
+#[derive(Serialize, Deserialize)]
+pub struct ListedProvider {
+    pub provider_id: u64,
+    pub provider_name: String,
+    pub logo_path: Option<String>,
+    pub display_priority: Option<u32>,
+    #[serde(default)]
+    pub display_priorities: HashMap<String, u32>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

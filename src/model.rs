@@ -1,5 +1,7 @@
 //! Presentation-independent types shared by the HTML pages and the JSON API.
 
+use std::collections::HashSet;
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -424,6 +426,8 @@ pub struct WhereToWatch {
     /// in the region, or when unavailable.
     pub offers: Vec<OfferGroup>,
     pub fetched_at: Option<Timestamp>,
+    /// Whether `WatchProvider::mine` could be set.
+    pub my_services: ServicesState,
 }
 
 impl WhereToWatch {
@@ -434,7 +438,38 @@ impl WhereToWatch {
             link: None,
             offers: Vec::new(),
             fetched_at: None,
+            my_services: ServicesState::NotChosen,
         }
+    }
+
+    /// Marks the providers among `services` (the user's choice, or `None`
+    /// when it couldn't be read).
+    pub fn mark_services(&mut self, services: Option<&HashSet<u64>>) {
+        self.my_services = ServicesState::of(services);
+        for p in self.offers.iter_mut().flat_map(|g| &mut g.providers) {
+            p.mine = services.is_some_and(|s| s.contains(&p.id));
+        }
+    }
+
+    /// The user's services that include this title (streaming, free or with
+    /// ads; renting or buying costs extra), once each, in TMDB's order.
+    pub fn on_my_services(&self) -> Vec<&WatchProvider> {
+        let mut seen = HashSet::new();
+        self.offers
+            .iter()
+            .filter(|g| g.kind.is_included())
+            .flat_map(|g| &g.providers)
+            .filter(|p| p.mine && seen.insert(p.id))
+            .collect()
+    }
+
+    /// "Netflix, Max", for the collapsed section.
+    pub fn my_services_summary(&self) -> String {
+        self.on_my_services()
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub fn is_unavailable(&self) -> bool {
@@ -482,6 +517,11 @@ impl OfferKind {
         }
     }
 
+    /// Watchable at no extra cost: with a subscription, free, or with ads.
+    pub fn is_included(self) -> bool {
+        matches!(self, Self::Stream | Self::Free | Self::Ads)
+    }
+
     fn summary_label(self) -> &'static str {
         match self {
             Self::Stream => "to stream",
@@ -505,6 +545,155 @@ pub struct WatchProvider {
     pub id: u64,
     pub name: String,
     pub logo_url: Option<String>,
+    /// One of the user's services.
+    pub mine: bool,
+}
+
+/// Whether the user's streaming services are known.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServicesState {
+    NotChosen,
+    Chosen,
+    /// The saved choice couldn't be read, so nothing is marked as theirs.
+    Unreadable,
+}
+
+impl ServicesState {
+    pub fn of(services: Option<&HashSet<u64>>) -> Self {
+        match services {
+            None => Self::Unreadable,
+            Some(s) if s.is_empty() => Self::NotChosen,
+            Some(_) => Self::Chosen,
+        }
+    }
+
+    pub fn is_chosen(self) -> bool {
+        self == Self::Chosen
+    }
+
+    pub fn is_unreadable(self) -> bool {
+        self == Self::Unreadable
+    }
+}
+
+/// A streaming service, as TMDB lists it.
+#[derive(Clone, Debug, Serialize)]
+pub struct Service {
+    pub id: u64,
+    pub name: String,
+    pub logo_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ServiceOption {
+    #[serde(flatten)]
+    pub service: Service,
+    pub chosen: bool,
+}
+
+/// The services page: the user's choice and every service to choose from.
+#[derive(Clone, Debug, Serialize)]
+pub struct ServicesDetail {
+    pub region: String,
+    /// The saved choice, by name.
+    pub chosen: Vec<Service>,
+    /// Chosen services first, then the rest in TMDB's order for the region.
+    /// Only the chosen ones when TMDB's list is unavailable.
+    pub options: Vec<ServiceOption>,
+    /// Of TMDB's list of services.
+    pub state: WhereToWatchState,
+    /// False when only one of TMDB's movie and TV lists could be loaded.
+    pub complete: bool,
+    /// Oldest fetch behind the list.
+    pub fetched_at: Option<Timestamp>,
+}
+
+impl ServicesDetail {
+    pub fn is_unavailable(&self) -> bool {
+        self.state == WhereToWatchState::Unavailable
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.state == WhereToWatchState::Stale
+    }
+
+    pub fn fetched_on(&self) -> Option<String> {
+        self.fetched_at.map(local_day)
+    }
+}
+
+/// Which of the user's services include a title on the To watch list.
+#[derive(Clone, Debug, Serialize)]
+pub struct Availability {
+    /// Of the title's offers: stale or unavailable when TMDB couldn't be reached.
+    pub state: WhereToWatchState,
+    /// In TMDB's order; empty when unavailable.
+    pub services: Vec<Service>,
+    pub fetched_at: Option<Timestamp>,
+}
+
+impl Availability {
+    pub fn is_unavailable(&self) -> bool {
+        self.state == WhereToWatchState::Unavailable
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.state == WhereToWatchState::Stale
+    }
+
+    pub fn fetched_on(&self) -> Option<String> {
+        self.fetched_at.map(local_day)
+    }
+}
+
+/// What stood behind the To watch list's service badges.
+#[derive(Clone, Debug, Serialize)]
+pub struct ListServices {
+    pub state: ServicesState,
+    /// Titles whose offers couldn't be loaded.
+    pub unknown: usize,
+    /// Oldest fetch among offers served stale because TMDB failed.
+    pub stale_since: Option<Timestamp>,
+}
+
+impl ListServices {
+    pub fn stale_on(&self) -> Option<String> {
+        self.stale_since.map(local_day)
+    }
+}
+
+/// Whether the To watch list shows every title or only those on the user's services.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ServicesFilter {
+    #[default]
+    Any,
+    Mine,
+}
+
+impl ServicesFilter {
+    /// The `services` query parameter; anything unrecognised means any.
+    pub fn from_query(value: Option<&str>) -> Self {
+        match value {
+            Some("mine") => ServicesFilter::Mine,
+            _ => ServicesFilter::Any,
+        }
+    }
+
+    pub fn is_mine(self) -> bool {
+        self == ServicesFilter::Mine
+    }
+
+    /// Titles of unknown availability are left out of `Mine`.
+    pub fn matches(self, e: &FilmographyEntry) -> bool {
+        match self {
+            ServicesFilter::Any => true,
+            ServicesFilter::Mine => e
+                .availability
+                .as_ref()
+                .is_some_and(|a| !a.services.is_empty()),
+        }
+    }
 }
 
 /// A person's part in one title: a character for cast, job titles for crew.
@@ -859,6 +1048,9 @@ pub struct WatchlistDetail {
     pub sort: WatchlistSort,
     /// Only when sorted by rating: how complete the scores behind the order are.
     pub sort_ratings: Option<SortRatings>,
+    /// To watch only: the user's services and how complete the titles' offers are.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub services: Option<ListServices>,
 }
 
 /// How the "To watch" list is ordered.
@@ -954,6 +1146,9 @@ pub struct FilmographyEntry {
     /// there is one, else IMDb.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rating: Option<Rating>,
+    /// To watch only, once services are chosen: which of them include it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub availability: Option<Availability>,
 }
 
 impl FilmographyEntry {

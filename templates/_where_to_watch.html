@@ -9,13 +9,14 @@
   {% endif %}
   {% else %}
   <details>
-    <summary><h2 id="where-to-watch-heading">Where to watch <span class="muted region">in {{ w.region }}</span></h2> <span class="muted offer-summary">{{ w.summary() }}</span></summary>
+    {% let mine = w.my_services_summary() %}
+    <summary><h2 id="where-to-watch-heading">Where to watch <span class="muted region">in {{ w.region }}</span></h2> {% if !mine.is_empty() %}<span class="on-my-services">On your services: {{ mine }}</span> {% endif %}<span class="muted offer-summary">{{ w.summary() }}</span></summary>
     {% for group in w.offers %}
     <div class="offer-group">
       <h3>{{ group.kind.label() }}</h3>
       <ul class="providers">
         {% for p in group.providers %}
-        <li>{% if let Some(link) = w.link %}<a class="provider" href="{{ link }}" rel="noopener">{% else %}<span class="provider">{% endif %}{% if let Some(logo) = p.logo_url %}<img src="{{ logo }}" alt="" width="40" height="40" loading="lazy">{% endif %}<span class="provider-name">{{ p.name }}</span>{% if w.link.is_some() %}</a>{% else %}</span>{% endif %}</li>
+        <li>{% if let Some(link) = w.link %}<a class="provider{% if p.mine %} mine{% endif %}" href="{{ link }}" rel="noopener">{% else %}<span class="provider{% if p.mine %} mine{% endif %}">{% endif %}{% if let Some(logo) = p.logo_url %}<img src="{{ logo }}" alt="" width="40" height="40" loading="lazy">{% endif %}<span class="provider-name">{{ p.name }}</span>{% if p.mine %}<span class="mine-mark" title="One of your services"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span class="visually-hidden">(your service)</span></span>{% endif %}{% if w.link.is_some() %}</a>{% else %}</span>{% endif %}</li>
         {% endfor %}
       </ul>
     </div>
@@ -24,6 +25,10 @@
   {% endif %}
   {% if w.is_stale() %}
   <p class="rating-stale">Couldn't refresh where to watch{% if let Some(day) = w.fetched_on() %}; showing what was listed on {{ day }}{% endif %}.</p>
+  {% endif %}
+  {% if !w.offers.is_empty() %}
+  {% if w.my_services.is_unreadable() %}<p class="muted services-note">Your services couldn't be read, so none are highlighted.</p>
+  {% else if !w.my_services.is_chosen() %}<p class="muted services-note">Choose <a href="/services">your streaming services</a> to highlight them here.</p>{% endif %}
   {% endif %}
   {% if !w.is_unavailable() %}
   <p class="attribution muted">Availability from <a href="https://www.justwatch.com/" rel="noopener">JustWatch</a>{% if let Some(link) = w.link %} · <a href="{{ link }}" rel="noopener">All options on TMDB</a>{% endif %}</p>

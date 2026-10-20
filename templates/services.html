@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}My services · credits{% endblock %}
+{% block content %}
+<section class="services" aria-labelledby="services-heading">
+  <h1 id="services-heading">My services <span class="muted region">in {{ s.region }}</span></h1>
+  <p class="hint">Choose the streaming services you subscribe to. Movie and TV pages highlight them, and your <a href="/watchlist">To watch</a> list can show just the titles on them.</p>
+  {% if s.chosen.is_empty() %}
+  <p class="muted" role="status">No services chosen yet.</p>
+  {% else %}
+  <p role="status">Your services: {% for c in s.chosen %}{% if !loop.first %}, {% endif %}<strong>{{ c.name }}</strong>{% endfor %}</p>
+  {% endif %}
+  {% if s.is_unavailable() %}
+  <p class="rating-stale" role="status">TMDB's list of services couldn't be loaded right now{% if !s.chosen.is_empty() %}, so only your current services are listed. You can still remove them{% endif %}.</p>
+  {% else if s.is_stale() %}
+  <p class="rating-stale">Couldn't refresh TMDB's list of services{% if let Some(day) = s.fetched_on() %}; showing the list from {{ day }}{% endif %}.</p>
+  {% endif %}
+  {% if !s.complete && !s.is_unavailable() %}
+  <p class="muted">Only part of TMDB's list of services could be loaded, so some may be missing.</p>
+  {% endif %}
+  {% if !s.options.is_empty() %}
+  <form class="service-form" method="post" action="/services">
+    <ul class="service-options">
+      {% for o in s.options %}
+      <li><label class="service-option"><input type="checkbox" name="service" value="{{ o.service.id }}"{% if o.chosen %} checked{% endif %}>{% if let Some(logo) = o.service.logo_url %}<img src="{{ logo }}" alt="" width="32" height="32" loading="lazy">{% else %}<span class="logo missing" aria-hidden="true"></span>{% endif %}<span>{{ o.service.name }}</span></label></li>
+      {% endfor %}
+    </ul>
+    <div class="service-save"><button type="submit">Save services</button></div>
+  </form>
+  {% endif %}
+  {% if !s.is_unavailable() %}
+  <p class="attribution muted">Services from <a href="https://www.justwatch.com/" rel="noopener">JustWatch</a>, via TMDB, most popular in {{ s.region }} first.</p>
+  {% endif %}
+</section>
+{% endblock %}

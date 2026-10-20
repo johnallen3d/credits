@@ -54,6 +54,33 @@ such an entry exists, where to watch is reported as unavailable. JSON responses
 carry `where_to_watch` with `region`, `state` (`fresh` / `stale` /
 `unavailable`), `link`, `offers` and `fetched_at`.
 
+## My services
+
+Choose the streaming services you subscribe to on My services (linked from
+the header). The choices come from TMDB's lists of movie and TV services for
+`CREDITS_REGION`, most popular there first, and are cached like other TMDB
+data; the choice itself is saved in SQLite with each service's name and logo.
+Movie and TV pages then highlight your services among the offers, and the
+collapsed summary names those that include the title (streaming, free or
+free with ads; renting and buying cost extra). The To watch list adds a
+small badge per title for each of your services that includes it, and an
+On my services filter (`?services=mine`) that combines with the kind and
+sort. Each title's offers come from its cached TMDB entry, so the first
+visit after the cache expires costs one TMDB request per title, eight at a
+time. Favorites aren't filtered by service.
+
+Nothing is highlighted or filtered until you choose a service. If TMDB is
+down, expired offers and service lists are used and marked stale; a title
+whose offers can't be loaded at all is marked "Availability unknown" and
+left out of On my services, with a count above the list. If TMDB's list of
+services can't be loaded, My services shows only your current choice, which
+you can still remove. If your saved choice can't be read, pages say so
+rather than treating it as empty, and saving is refused so it isn't
+overwritten. JSON: `/api/services` carries `chosen`, `options` (each with
+`chosen`), `state`, `complete` and `fetched_at`; title offers carry `mine`
+and `where_to_watch.my_services` (`not_chosen` / `chosen` / `unreadable`);
+To watch titles carry `availability` and the list a `services` summary.
+
 ## Spoilers
 
 Season and episode pages blur episode summaries and IMDb episode scores until
@@ -101,8 +128,10 @@ reported explicitly.
 | `/tv/{id}/season/{n}` | `/api/tv/{id}/season/{n}` |
 | `/tv/{id}/season/{n}/episode/{e}` | `/api/tv/{id}/season/{n}/episode/{e}` |
 | `/person/{id}` (`?sort=rating`) | `/api/person/{id}` (`?sort=rating`) |
-| `/watchlist` (`?kind=movie\|tv`, `?sort=rating`) | `/api/watchlist` (same parameters) |
+| `/watchlist` (`?kind=movie\|tv`, `?sort=rating`, `?services=mine`) | `/api/watchlist` (same parameters) |
 | `/favorites` (`?kind=movie\|tv`, `?sort=rating`) | `/api/favorites` (same parameters) |
+| `/services` | `/api/services` |
+| `POST /services` (form: one `service={provider id}` per chosen service) | |
 | `POST /movie/{id}/favorite`, `POST /tv/{id}/favorite` (form: `listed=true\|false`) | |
 | `POST /movie/{id}/watchlist`, `POST /tv/{id}/watchlist` (form: `listed=true\|false`) | |
 | `POST /tv/{id}/watched`, `POST /tv/{id}/season/{n}/watched` (form: `watched=true\|false`) | |

@@ -108,6 +108,7 @@ impl Watchlist {
                     episode_count: None,
                     poster_url,
                     rating: None,
+                    availability: None,
                 })
             })
             .collect())
@@ -141,6 +142,7 @@ mod tests {
             episode_count: None,
             poster_url: None,
             rating: None,
+            availability: None,
         }
     }
 

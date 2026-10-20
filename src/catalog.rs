@@ -15,16 +15,17 @@ use tokio::task::JoinSet;
 use crate::cache::ProviderCache;
 use crate::config::Config;
 use crate::model::{
-    Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup, FilmographySort,
-    KeyCrew, KeyRole, KnownFor, MediaKind, Metadata, MetadataState, OfferGroup, OfferKind,
-    PersonCredit, PersonDetail, PersonHit, Rating, Ratings, RecentView, SearchHit, SeasonDetail,
-    SeasonSummary, SortRatings, TitleCredits, TitleDetail, TitleHit, UnavailableReason,
-    WatchProvider, WatchTarget, Watched, WatchlistDetail, WatchlistSort, WhereToWatch,
-    WhereToWatchState,
+    Availability, Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup,
+    FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
+    OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings, RecentView,
+    SearchHit, SeasonDetail, SeasonSummary, Service, ServiceOption, ServicesDetail, ServicesState,
+    SortRatings, TitleCredits, TitleDetail, TitleHit, UnavailableReason, WatchProvider,
+    WatchTarget, Watched, WatchlistDetail, WatchlistSort, WhereToWatch, WhereToWatchState,
 };
 use crate::omdb::OmdbClient;
 use crate::ratings::RatingsService;
 use crate::recent::RecentlyViewed;
+use crate::services::MyServices;
 use crate::tmdb::{self, MultiResult, TmdbClient};
 use crate::watched::WatchedShows;
 use crate::watchlist::Watchlist;
@@ -46,8 +47,9 @@ const TV_KEY_DIRECTORS: usize = 3;
 const MAX_CHARACTERS: usize = 3;
 /// Titles in a person page's "Known for" row.
 const KNOWN_FOR_TITLES: usize = 8;
-/// Titles looked up at once when sorting a filmography by rating.
-const CONCURRENT_RATING_LOOKUPS: usize = 8;
+/// Titles looked up at once when sorting by rating or checking which
+/// services offer them.
+const CONCURRENT_TITLE_LOOKUPS: usize = 8;
 /// TMDB's Talk and News genres: appearing on these says little about what
 /// someone is known for.
 const TALK_AND_NEWS_GENRES: &[u32] = &[10767, 10763];
@@ -65,6 +67,16 @@ pub enum CatalogError {
     Unauthorized,
     #[error("{0}")]
     Provider(String),
+}
+
+/// Why the user's services couldn't be saved.
+#[derive(Debug, thiserror::Error)]
+pub enum ServicesError {
+    /// The current choice couldn't be read, so it can't be safely replaced.
+    #[error("reading your services failed: {0}")]
+    Read(sqlx::Error),
+    #[error("saving your services failed: {0}")]
+    Write(sqlx::Error),
 }
 
 /// Why a title couldn't be added to a saved list.
@@ -86,6 +98,7 @@ pub struct Catalog {
     watched: WatchedShows,
     watchlist: Watchlist,
     favorites: Watchlist,
+    services: MyServices,
     metadata_ttl: Duration,
     watch_region: String,
 }
@@ -126,6 +139,7 @@ impl Catalog {
             watched: WatchedShows::new(cache.pool()),
             watchlist: Watchlist::new(cache.pool()),
             favorites: Watchlist::favorites(cache.pool()),
+            services: MyServices::new(cache.pool()),
             cache,
             metadata_ttl: config.metadata_ttl,
             watch_region: config.watch_region.clone(),
@@ -172,8 +186,37 @@ impl Catalog {
 
     /// The "To watch" list in `sort` order. Unlike other saved state, a
     /// failed read is an error, so the page never passes it off as empty.
+    /// Each title also says which of the user's services include it.
     pub async fn watchlist(&self, sort: WatchlistSort) -> Result<WatchlistDetail, sqlx::Error> {
-        self.saved_list(&self.watchlist, sort).await
+        let mut w = self.saved_list(&self.watchlist, sort).await?;
+        let mine = self.service_ids().await;
+        let state = ServicesState::of(mine.as_ref());
+        let mut services = ListServices {
+            state,
+            unknown: 0,
+            stale_since: None,
+        };
+        if let (true, Some(mine)) = (state.is_chosen(), mine) {
+            let titles = w.titles.iter().map(|e| (e.kind, e.id)).collect();
+            let mut availability = self.title_availability(titles, Arc::new(mine)).await;
+            for e in &mut w.titles {
+                let a = availability
+                    .remove(&(e.kind, e.id))
+                    .unwrap_or(Availability {
+                        state: WhereToWatchState::Unavailable,
+                        services: Vec::new(),
+                        fetched_at: None,
+                    });
+                services.unknown += usize::from(a.is_unavailable());
+                if let (true, Some(at)) = (a.is_stale(), a.fetched_at) {
+                    services.stale_since =
+                        Some(services.stale_since.map_or(at, |since| since.min(at)));
+                }
+                e.availability = Some(a);
+            }
+        }
+        w.services = Some(services);
+        Ok(w)
     }
 
     pub async fn favorites(&self, sort: WatchlistSort) -> Result<WatchlistDetail, sqlx::Error> {
@@ -194,6 +237,7 @@ impl Catalog {
             titles,
             sort,
             sort_ratings,
+            services: None,
         })
     }
 
@@ -257,12 +301,207 @@ impl Catalog {
             episode_count: None,
             poster_url: self.image(THUMB_SIZE, poster_path),
             rating: None,
+            availability: None,
         };
         Ok((entry, seasons))
     }
 
     pub async fn remove_from_watchlist(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {
         self.watchlist.remove(kind, id).await
+    }
+
+    /// IDs of the user's services; `None` if they can't be read.
+    async fn service_ids(&self) -> Option<HashSet<u64>> {
+        match self.services.list().await {
+            Ok(services) => Some(services.into_iter().map(|s| s.id).collect()),
+            Err(e) => {
+                tracing::warn!(error = %e, "reading your services failed");
+                None
+            }
+        }
+    }
+
+    /// The user's services and every service offered in the region. Unlike
+    /// marking titles, a failed read is an error, so the choice is never
+    /// passed off as empty (and then saved over).
+    pub async fn services(&self) -> Result<ServicesDetail, sqlx::Error> {
+        let chosen = self.services.list().await?;
+        let (listed, state, complete, fetched_at) = self.service_list().await;
+        let chosen_ids: HashSet<u64> = chosen.iter().map(|s| s.id).collect();
+        // Chosen services TMDB no longer lists stay, so they can be removed.
+        let (mut first, rest): (Vec<_>, Vec<_>) =
+            listed.into_iter().partition(|s| chosen_ids.contains(&s.id));
+        let listed_ids: HashSet<u64> = first.iter().map(|s| s.id).collect();
+        first.extend(
+            chosen
+                .iter()
+                .filter(|s| !listed_ids.contains(&s.id))
+                .cloned(),
+        );
+        let options = first
+            .into_iter()
+            .map(|service| ServiceOption {
+                service,
+                chosen: true,
+            })
+            .chain(rest.into_iter().map(|service| ServiceOption {
+                service,
+                chosen: false,
+            }))
+            .collect();
+        Ok(ServicesDetail {
+            region: self.watch_region.clone(),
+            chosen,
+            options,
+            state,
+            complete,
+            fetched_at,
+        })
+    }
+
+    /// Replaces the user's services with `ids`. Each must be in TMDB's list
+    /// for the region or already chosen; others are ignored.
+    pub async fn set_services(&self, ids: &HashSet<u64>) -> Result<(), ServicesError> {
+        let current = self.services.list().await.map_err(ServicesError::Read)?;
+        let (listed, ..) = self.service_list().await;
+        let mut seen = HashSet::new();
+        let services: Vec<Service> = listed
+            .into_iter()
+            .chain(current)
+            .filter(|s| ids.contains(&s.id) && seen.insert(s.id))
+            .collect();
+        self.services
+            .replace(&services, Timestamp::now())
+            .await
+            .map_err(ServicesError::Write)
+    }
+
+    /// TMDB's movie and TV service lists for the region, merged in display
+    /// priority order, with how fresh and complete they are.
+    async fn service_list(&self) -> (Vec<Service>, WhereToWatchState, bool, Option<Timestamp>) {
+        let region = &self.watch_region;
+        let lists = [
+            self.cached(
+                format!("watch-providers/movie/{region}"),
+                self.tmdb.provider_list("movie", region),
+            )
+            .await,
+            self.cached(
+                format!("watch-providers/tv/{region}"),
+                self.tmdb.provider_list("tv", region),
+            )
+            .await,
+        ];
+        let mut stale = false;
+        let mut fetched_at: Option<Timestamp> = None;
+        let mut loaded = 0;
+        let mut by_id: HashMap<u64, (u32, tmdb::ListedProvider)> = HashMap::new();
+        for list in lists {
+            let (list, metadata) = match list {
+                Ok(list) => list,
+                Err(e) => {
+                    tracing::warn!(error = %e, "TMDB provider list failed");
+                    continue;
+                }
+            };
+            loaded += 1;
+            stale |= metadata.is_stale();
+            fetched_at =
+                Some(fetched_at.map_or(metadata.fetched_at, |at| at.min(metadata.fetched_at)));
+            for p in list.results {
+                let priority = p
+                    .display_priorities
+                    .get(region)
+                    .copied()
+                    .or(p.display_priority)
+                    .unwrap_or(u32::MAX);
+                match by_id.entry(p.provider_id) {
+                    Entry::Occupied(mut o) => o.get_mut().0 = o.get().0.min(priority),
+                    Entry::Vacant(v) => {
+                        v.insert((priority, p));
+                    }
+                }
+            }
+        }
+        let mut listed: Vec<_> = by_id.into_values().collect();
+        listed.sort_by(|(a, pa), (b, pb)| {
+            a.cmp(b).then_with(|| {
+                pa.provider_name
+                    .to_lowercase()
+                    .cmp(&pb.provider_name.to_lowercase())
+            })
+        });
+        let services = listed
+            .into_iter()
+            .map(|(_, p)| Service {
+                id: p.provider_id,
+                name: p.provider_name.trim().to_owned(),
+                logo_url: self.image(LOGO_SIZE, p.logo_path),
+            })
+            .collect();
+        let state = match (loaded, stale) {
+            (0, _) => WhereToWatchState::Unavailable,
+            (_, true) => WhereToWatchState::Stale,
+            (_, false) => WhereToWatchState::Fresh,
+        };
+        (services, state, loaded == 2, fetched_at)
+    }
+
+    /// Which of `mine` include each title, from its cached TMDB entry, a few
+    /// titles at a time. A TMDB failure leaves that title unavailable.
+    async fn title_availability(
+        &self,
+        titles: HashSet<(MediaKind, u64)>,
+        mine: Arc<HashSet<u64>>,
+    ) -> HashMap<(MediaKind, u64), Availability> {
+        let permits = Arc::new(Semaphore::new(CONCURRENT_TITLE_LOOKUPS));
+        let mut lookups = JoinSet::new();
+        for (kind, id) in titles {
+            let catalog = self.clone();
+            let permits = permits.clone();
+            let mine = mine.clone();
+            lookups.spawn(async move {
+                let _permit = permits.acquire_owned().await;
+                let offers =
+                    match kind {
+                        MediaKind::Movie => catalog.movie_raw(id).await.map(|(m, metadata)| {
+                            catalog.where_to_watch(m.watch_providers, metadata)
+                        }),
+                        MediaKind::Tv => catalog.tv_raw(id).await.map(|(t, metadata)| {
+                            catalog.where_to_watch(t.watch_providers, metadata)
+                        }),
+                    };
+                let mut offers = offers.unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, ?kind, id, "title lookup for availability failed");
+                    WhereToWatch::unavailable(catalog.watch_region.clone())
+                });
+                offers.mark_services(Some(&mine));
+                let availability = Availability {
+                    state: offers.state,
+                    services: offers
+                        .on_my_services()
+                        .into_iter()
+                        .map(|p| Service {
+                            id: p.id,
+                            name: p.name.clone(),
+                            logo_url: p.logo_url.clone(),
+                        })
+                        .collect(),
+                    fetched_at: offers.fetched_at,
+                };
+                ((kind, id), availability)
+            });
+        }
+        let mut availability = HashMap::new();
+        while let Some(joined) = lookups.join_next().await {
+            match joined {
+                Ok((title, a)) => {
+                    availability.insert(title, a);
+                }
+                Err(e) => tracing::warn!(error = %e, "availability lookup task failed"),
+            }
+        }
+        availability
     }
 
     /// Movies, TV shows and people matching `query`, in TMDB's order; other
@@ -299,7 +538,15 @@ impl Catalog {
             .collect())
     }
 
+    /// The title with the user's services marked among its offers.
     pub async fn title(&self, kind: MediaKind, id: u64) -> Result<TitleDetail, CatalogError> {
+        let mut d = self.title_detail(kind, id).await?;
+        let mine = self.service_ids().await;
+        d.where_to_watch.mark_services(mine.as_ref());
+        Ok(d)
+    }
+
+    async fn title_detail(&self, kind: MediaKind, id: u64) -> Result<TitleDetail, CatalogError> {
         match kind {
             MediaKind::Movie => {
                 let (m, metadata) = self.movie_raw(id).await?;
@@ -530,6 +777,7 @@ impl Catalog {
                     episode_count: c.episode_count.filter(|n| *n > 0),
                     poster_url: self.image(THUMB_SIZE, c.poster_path),
                     rating: None,
+                    availability: None,
                 };
                 Some((
                     (department.clone(), kind, c.id),
@@ -638,7 +886,7 @@ impl Catalog {
         &self,
         titles: HashSet<(MediaKind, u64)>,
     ) -> HashMap<(MediaKind, u64), Ratings> {
-        let permits = Arc::new(Semaphore::new(CONCURRENT_RATING_LOOKUPS));
+        let permits = Arc::new(Semaphore::new(CONCURRENT_TITLE_LOOKUPS));
         let mut lookups = JoinSet::new();
         for (kind, id) in titles {
             let catalog = self.clone();
@@ -1038,12 +1286,14 @@ impl Catalog {
                             id: p.provider_id,
                             name: p.provider_name,
                             logo_url: self.image(LOGO_SIZE, p.logo_path),
+                            mine: false,
                         })
                         .collect(),
                 })
             })
             .collect(),
             fetched_at: Some(metadata.fetched_at),
+            my_services: ServicesState::NotChosen,
             region,
         }
     }

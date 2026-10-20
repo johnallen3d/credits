@@ -211,6 +211,32 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
             }),
         )
         .route(
+            "/3/watch/providers/{kind}",
+            get(
+                |Path(kind): Path<String>, Query(q): Query<HashMap<String, String>>| async move {
+                    if q.get("watch_region").map(String::as_str) != Some("US") {
+                        return (StatusCode::OK, Json(json!({ "results": [] })));
+                    }
+                    let mut results = vec![
+                        json!({ "provider_id": 8, "provider_name": "Netflix", "logo_path": "/netflix.jpg",
+                                "display_priority": 5, "display_priorities": { "US": 0, "GB": 3 } }),
+                        json!({ "provider_id": 1899, "provider_name": "Max", "logo_path": "/max.jpg",
+                                "display_priority": 2, "display_priorities": { "US": 4 } }),
+                        json!({ "provider_id": 2, "provider_name": "Apple TV", "logo_path": null,
+                                "display_priority": 9 }),
+                    ];
+                    if kind == "tv" {
+                        results.push(json!({ "provider_id": 300, "provider_name": "Pluto TV",
+                            "logo_path": "/pluto.jpg", "display_priorities": { "US": 6 } }));
+                        // Listed in both, ranked higher for TV.
+                        results.push(json!({ "provider_id": 1899, "provider_name": "Max",
+                            "logo_path": "/max.jpg", "display_priorities": { "US": 1 } }));
+                    }
+                    (StatusCode::OK, Json(json!({ "results": results })))
+                },
+            ),
+        )
+        .route(
             "/3/tv/{id}/season/{number}",
             get(|Path((id, number)): Path<(u64, u32)>| async move {
                 if id != 1396 || number > 2 {
@@ -2101,12 +2127,13 @@ async fn title_pages_show_where_to_watch_in_the_region() {
         json["where_to_watch"]["offers"],
         json!([
             { "kind": "stream", "providers": [
-                { "id": 1899, "name": "Max", "logo_url": "https://img.test/t/p/w92/max.jpg" },
-                { "id": 8, "name": "Netflix", "logo_url": "https://img.test/t/p/w92/netflix.jpg" }
+                { "id": 1899, "name": "Max", "logo_url": "https://img.test/t/p/w92/max.jpg", "mine": false },
+                { "id": 8, "name": "Netflix", "logo_url": "https://img.test/t/p/w92/netflix.jpg", "mine": false }
             ] },
-            { "kind": "rent", "providers": [{ "id": 2, "name": "Apple TV", "logo_url": null }] }
+            { "kind": "rent", "providers": [{ "id": 2, "name": "Apple TV", "logo_url": null, "mine": false }] }
         ])
     );
+    assert_eq!(json["where_to_watch"]["my_services"], "not_chosen");
 
     let ttl = Duration::from_secs(3600);
     let config = Config::from_lookup(|key| match key {
@@ -2174,6 +2201,294 @@ async fn where_to_watch_survives_tmdb_outages_and_older_cache_entries() {
     let (_, json) = get_json(t.app(), "/api/movie/603").await;
     assert_eq!(json["where_to_watch"]["state"], "unavailable");
     assert_eq!(json["where_to_watch"]["offers"], json!([]));
+
+    drop(t);
+    pool.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
+}
+
+fn chosen_names(json: &Value) -> Vec<&str> {
+    json["chosen"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn services_are_chosen_and_highlighted_on_title_pages() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (status, _, body) = get_page(t.app(), "/services", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(r#"<a href="/services">My services</a>"#),
+        "linked from the header"
+    );
+    assert!(body.contains("No services chosen yet."));
+    let netflix = body.find(r#"value="8">"#).unwrap();
+    let max = body.find(r#"value="1899">"#).unwrap();
+    let pluto = body.find(r#"value="300">"#).unwrap();
+    let apple = body.find(r#"value="2">"#).unwrap();
+    assert!(
+        netflix < max && max < pluto && pluto < apple,
+        "movie and TV lists merged in the region's display priority order"
+    );
+    assert_eq!(body.matches(r#"value="1899">"#).count(), 1, "listed once");
+    assert!(body.contains(r#"<img src="https://img.test/t/p/w92/netflix.jpg""#));
+
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(
+        r#"Choose <a href="/services">your streaming services</a> to highlight them here."#
+    ));
+    assert!(!body.contains("On your services"));
+
+    // Unknown IDs are ignored.
+    let (status, headers) = post_form(
+        t.app(),
+        "/services",
+        "service=8&service=300&service=99999&service=x",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/services");
+    let (_, json) = get_json(t.app(), "/api/services").await;
+    assert_eq!(chosen_names(&json), ["Netflix", "Pluto TV"]);
+    assert_eq!(json["state"], "fresh");
+    assert_eq!(json["complete"], true);
+    assert_eq!(json["options"][0]["name"], "Netflix");
+    assert_eq!(json["options"][0]["chosen"], true);
+    assert_eq!(json["options"][2]["name"], "Max");
+    assert_eq!(json["options"][2]["chosen"], false);
+    let (_, _, body) = get_page(t.app(), "/services", false).await;
+    assert!(body.contains(r#"<input type="checkbox" name="service" value="8" checked>"#));
+    assert!(body.contains(r#"<input type="checkbox" name="service" value="1899">"#));
+    assert!(body.contains("Your services: <strong>Netflix</strong>, <strong>Pluto TV</strong>"));
+
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(r#"<span class="on-my-services">On your services: Netflix</span>"#));
+    assert!(body.contains(r#"<a class="provider mine" href="#));
+    assert_eq!(
+        body.matches("provider mine").count(),
+        1,
+        "only Netflix is theirs"
+    );
+    assert!(body.contains(r#"<span class="visually-hidden">(your service)</span>"#));
+    assert!(!body.contains("to highlight them here"));
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json["where_to_watch"]["my_services"], "chosen");
+    assert_eq!(
+        json["where_to_watch"]["offers"][0]["providers"][1]["mine"],
+        true
+    );
+    assert_eq!(
+        json["where_to_watch"]["offers"][0]["providers"][0]["mine"],
+        false
+    );
+
+    let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
+    assert!(
+        body.contains("On your services: Pluto TV"),
+        "free with ads counts as included"
+    );
+
+    // An empty form clears the choice.
+    post_form(t.app(), "/services", "").await;
+    let (_, json) = get_json(t.app(), "/api/services").await;
+    assert_eq!(json["chosen"], json!([]));
+}
+
+#[tokio::test]
+async fn to_watch_filters_by_my_services_with_badges() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    for title in ["/movie/603", "/tv/1396", "/movie/6060"] {
+        post_form(t.app(), &format!("{title}/watchlist"), "listed=true").await;
+    }
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert!(body.contains(r#"Choose <a href="/services">your streaming services</a> to see which titles you can watch on them."#));
+    assert!(!body.contains("On my services"));
+    assert!(!body.contains("service-badges"));
+    let (_, _, body) = get_page(t.app(), "/favorites", false).await;
+    assert!(!body.contains("your streaming services"), "To watch only");
+
+    post_form(t.app(), "/services", "service=8&service=300").await;
+    let calls = t.tmdb.calls();
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert_eq!(t.tmdb.calls(), calls, "offers come from the cached titles");
+    assert!(body.contains(
+        r#"<a href="/watchlist?services=mine">On my services <span class="count">2</span></a>"#
+    ));
+    assert!(body.contains(
+        r#"<a href="/watchlist" aria-current="true">Anywhere <span class="count">3</span></a>"#
+    ));
+    assert!(body.contains(
+        r#"<img class="service-badge" src="https://img.test/t/p/w92/netflix.jpg" alt="Netflix""#
+    ));
+    assert!(body.contains(r#"alt="Pluto TV""#));
+    assert_eq!(body.matches(r#"<span class="service-badges">"#).count(), 2);
+
+    let (_, _, body) = get_page(t.app(), "/watchlist?services=mine", false).await;
+    assert!(body.contains("The Matrix</a>") && body.contains("Breaking Bad</a>"));
+    assert_eq!(
+        body.matches(r#"<a href="/movie/6060">"#).count(),
+        0,
+        "not on their services"
+    );
+    assert!(body.contains(
+        r#"<a href="/watchlist?kind=movie&#38;services=mine">Movies <span class="count">1</span></a>"#
+    ));
+    assert!(body.contains(r#"<a href="/watchlist?sort=rating&#38;services=mine">Rating</a>"#));
+    assert!(body.contains(r#"<input type="hidden" name="back" value="/watchlist?services=mine">"#));
+
+    post_form(t.app(), "/services", "service=1899").await;
+    let (_, _, body) = get_page(t.app(), "/watchlist?kind=tv&services=mine", false).await;
+    assert!(body.contains("None of the TV shows on your list are on your services."));
+
+    let (_, json) = get_json(t.app(), "/api/watchlist?services=mine&sort=rating").await;
+    assert_eq!(json["services"]["state"], "chosen");
+    assert_eq!(json["services"]["unknown"], 0);
+    assert_eq!(json["titles"].as_array().unwrap().len(), 1);
+    assert_eq!(json["titles"][0]["title"], "The Matrix");
+    assert_eq!(json["titles"][0]["availability"]["state"], "fresh");
+    assert_eq!(
+        json["titles"][0]["availability"]["services"][0]["name"],
+        "Max"
+    );
+
+    // Favorites never filter by service.
+    post_form(t.app(), "/movie/6060/favorite", "listed=true").await;
+    let (_, json) = get_json(t.app(), "/api/favorites?services=mine").await;
+    assert_eq!(json["titles"].as_array().unwrap().len(), 1);
+    assert!(json.get("services").is_none());
+}
+
+#[tokio::test]
+async fn my_services_degrade_when_tmdb_or_storage_fail() {
+    let database = temp_database("my-services");
+    let t = build_with_database(
+        TOKEN,
+        Some(OMDB_KEY),
+        Duration::from_secs(3600),
+        Duration::ZERO,
+        &database,
+    )
+    .await;
+    post_form(t.app(), "/services", "service=8").await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    post_form(t.app(), "/tv/1396/watchlist", "listed=true").await;
+
+    // Expired offers and service lists are served stale.
+    t.tmdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/services", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Couldn't refresh TMDB's list of services; showing the list from "));
+    assert!(body.contains(r#"value="1899">"#));
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert!(body.contains(
+        "Couldn't refresh where some titles are available; using listings from as early as "
+    ));
+    assert!(body.contains(r#"<span class="service-badges stale" title="Listed on "#));
+
+    // A title whose cached entry lacks offers is unknown, and left out of the filter.
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query(
+        r#"UPDATE provider_cache SET payload = json_remove(payload, '$."watch/providers"') WHERE key = 'movie/603'"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert!(body.contains(r#"<span class="service-badges muted">Availability unknown</span>"#));
+    assert!(body.contains("Couldn't check where 1 title is available right now."));
+    let (_, _, body) = get_page(t.app(), "/watchlist?services=mine", false).await;
+    assert!(
+        body.contains("Couldn't check where 1 title is available right now, so it's left out.")
+    );
+    assert!(!body.contains("The Matrix</a>"));
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(json["services"]["unknown"], 1);
+    assert_eq!(
+        json["titles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t["availability"]["state"] == "unavailable")
+            .count(),
+        1
+    );
+
+    // Without TMDB's list, the current choice can still be seen and removed.
+    sqlx::query("DELETE FROM provider_cache WHERE key LIKE 'watch-providers/%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _, body) = get_page(t.app(), "/services", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("TMDB's list of services couldn't be loaded right now, so only your current services are listed. You can still remove them."));
+    assert!(body.contains(r#"<input type="checkbox" name="service" value="8" checked>"#));
+    assert!(!body.contains(r#"value="1899""#));
+    assert!(!body.contains("Services from"));
+    let (_, json) = get_json(t.app(), "/api/services").await;
+    assert_eq!(json["state"], "unavailable");
+    post_form(t.app(), "/services", "service=8").await;
+    let (_, json) = get_json(t.app(), "/api/services").await;
+    assert_eq!(
+        chosen_names(&json),
+        ["Netflix"],
+        "saving unchanged keeps it"
+    );
+    post_form(t.app(), "/services", "").await;
+    let (_, _, body) = get_page(t.app(), "/services", false).await;
+    assert!(body.contains("TMDB's list of services couldn't be loaded right now."));
+    assert!(!body.contains("<form class=\"service-form\""));
+    t.tmdb.set_down(false);
+    post_form(t.app(), "/services", "service=8").await;
+
+    // Unreadable services never look like none chosen, and are never saved over.
+    sqlx::query("ALTER TABLE my_services RENAME TO my_services_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _, body) = get_page(t.app(), "/services", false).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(body.contains("Couldn&#39;t load your services"));
+    let (status, _, body) = {
+        let request = Request::post("/services")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from("service=1899"))
+            .unwrap();
+        let response = t.app().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        (status, (), String::from_utf8(body.to_vec()).unwrap())
+    };
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(body.contains("Your current services couldn&#39;t be read, so nothing was changed."));
+    let (status, _) = get_json(t.app(), "/api/services").await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains("Your services couldn't be read, so none are highlighted."));
+    assert!(!body.contains("provider mine"));
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json["where_to_watch"]["my_services"], "unreadable");
+    let (_, _, body) = get_page(t.app(), "/watchlist?services=mine", false).await;
+    assert!(body.contains("Your services couldn't be read, so titles can't be filtered by them."));
+    assert!(body.contains("The Matrix</a>"), "unfiltered");
+    sqlx::query("ALTER TABLE my_services_unavailable RENAME TO my_services")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, json) = get_json(t.app(), "/api/services").await;
+    assert_eq!(
+        chosen_names(&json),
+        ["Netflix"],
+        "unchanged by the failed save"
+    );
 
     drop(t);
     pool.close().await;

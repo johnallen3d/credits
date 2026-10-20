@@ -14,11 +14,11 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::catalog::{Catalog, CatalogError, WatchlistError};
+use crate::catalog::{Catalog, CatalogError, ServicesError, WatchlistError};
 use crate::model::{
     EpisodeDetail, FilmographyEntry, FilmographyGroup, FilmographySort, KindFilter, MediaKind,
-    PersonDetail, RecentView, SearchHit, SeasonDetail, TitleCredits, TitleDetail, WatchTarget,
-    Watched, WatchlistDetail, WatchlistSort, title_path,
+    PersonDetail, RecentView, SearchHit, SeasonDetail, ServicesDetail, ServicesFilter,
+    TitleCredits, TitleDetail, WatchTarget, Watched, WatchlistDetail, WatchlistSort, title_path,
 };
 
 pub fn app(catalog: Catalog) -> Router {
@@ -70,6 +70,7 @@ pub fn app(catalog: Catalog) -> Router {
         )
         .route("/watchlist", get(|s, q| watchlist_page(s, q, false)))
         .route("/favorites", get(|s, q| watchlist_page(s, q, true)))
+        .route("/services", get(services_page).post(save_services))
         .route("/person/{id}", get(person_page))
         .route("/api/search", get(api_search))
         .route(
@@ -93,6 +94,7 @@ pub fn app(catalog: Catalog) -> Router {
         .route("/api/person/{id}", get(api_person))
         .route("/api/watchlist", get(|s, q| api_watchlist(s, q, false)))
         .route("/api/favorites", get(|s, q| api_watchlist(s, q, true)))
+        .route("/api/services", get(api_services))
         .route(
             "/static/htmx.min.js",
             get(|| asset("text/javascript", include_str!("../static/htmx.min.js"))),
@@ -339,7 +341,9 @@ impl PersonPage {
 struct WatchlistPage {
     w: WatchlistDetail,
     kind: KindFilter,
-    /// The titles of `kind`, in the list's order.
+    /// To watch only; always `Any` for Favorites.
+    services: ServicesFilter,
+    /// The titles of `kind` and `services`, in the list's order.
     shown: Vec<FilmographyEntry>,
     favorites: bool,
     listed: HashSet<(MediaKind, u64)>,
@@ -350,19 +354,27 @@ impl WatchlistPage {
     fn new(
         w: WatchlistDetail,
         kind: KindFilter,
+        services: ServicesFilter,
         favorites: bool,
         listed: HashSet<(MediaKind, u64)>,
         favorited: Option<HashSet<(MediaKind, u64)>>,
     ) -> Self {
+        // Without chosen services there's nothing to filter by.
+        let services = if w.services.as_ref().is_some_and(|s| s.state.is_chosen()) {
+            services
+        } else {
+            ServicesFilter::Any
+        };
         let shown = w
             .titles
             .iter()
-            .filter(|e| kind.matches(e.kind))
+            .filter(|e| kind.matches(e.kind) && services.matches(e))
             .cloned()
             .collect();
         WatchlistPage {
             w,
             kind,
+            services,
             shown,
             favorites,
             listed,
@@ -388,29 +400,48 @@ impl WatchlistPage {
             .map(|titles| titles.contains(&(e.kind, e.id)))
     }
 
+    /// Titles of `kind` within the current services filter.
     fn kind_count(&self, kind: &KindFilter) -> usize {
         self.w
             .titles
             .iter()
-            .filter(|e| kind.matches(e.kind))
+            .filter(|e| kind.matches(e.kind) && self.services.matches(e))
+            .count()
+    }
+
+    /// Titles of the current kind within `services`.
+    fn services_count(&self, services: ServicesFilter) -> usize {
+        self.w
+            .titles
+            .iter()
+            .filter(|e| self.kind.matches(e.kind) && services.matches(e))
             .count()
     }
 
     fn kind_href(&self, kind: &KindFilter) -> String {
-        watchlist_href(self.w.sort, *kind, self.favorites)
+        watchlist_href(self.w.sort, *kind, self.services, self.favorites)
     }
 
     fn sort_href(&self, sort: WatchlistSort) -> String {
-        watchlist_href(sort, self.kind, self.favorites)
+        watchlist_href(sort, self.kind, self.services, self.favorites)
+    }
+
+    fn services_href(&self, services: ServicesFilter) -> String {
+        watchlist_href(self.w.sort, self.kind, services, self.favorites)
     }
 
     /// Where a removal returns to: this page as it is.
     fn back(&self) -> String {
-        watchlist_href(self.w.sort, self.kind, self.favorites)
+        watchlist_href(self.w.sort, self.kind, self.services, self.favorites)
     }
 }
 
-fn watchlist_href(sort: WatchlistSort, kind: KindFilter, favorites: bool) -> String {
+fn watchlist_href(
+    sort: WatchlistSort,
+    kind: KindFilter,
+    services: ServicesFilter,
+    favorites: bool,
+) -> String {
     let path = if favorites {
         "/favorites"
     } else {
@@ -422,6 +453,9 @@ fn watchlist_href(sort: WatchlistSort, kind: KindFilter, favorites: bool) -> Str
     }
     if let Some(kind) = kind.query() {
         query.push(format!("kind={kind}"));
+    }
+    if services.is_mine() {
+        query.push("services=mine".to_owned());
     }
     if query.is_empty() {
         path.to_owned()
@@ -469,6 +503,12 @@ async fn favorite_titles(catalog: &Catalog) -> Option<HashSet<(MediaKind, u64)>>
 }
 
 #[derive(Template)]
+#[template(path = "services.html")]
+struct ServicesPage {
+    s: ServicesDetail,
+}
+
+#[derive(Template)]
 #[template(path = "error.html")]
 struct ErrorPage {
     heading: &'static str,
@@ -493,6 +533,8 @@ struct PersonParams {
 struct WatchlistParams {
     sort: Option<String>,
     kind: Option<String>,
+    /// To watch only: "mine" shows titles on the user's services.
+    services: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -836,6 +878,7 @@ async fn watchlist_page(
 ) -> Response {
     let sort = WatchlistSort::from_query(params.sort.as_deref());
     let kind = KindFilter::from_query(params.kind.as_deref());
+    let services = ServicesFilter::from_query(params.services.as_deref());
     let result = if favorites {
         catalog.favorites(sort).await
     } else {
@@ -847,7 +890,7 @@ async fn watchlist_page(
             let favorited = favorite_titles(&catalog).await;
             html(
                 StatusCode::OK,
-                WatchlistPage::new(w, kind, favorites, listed, favorited).render(),
+                WatchlistPage::new(w, kind, services, favorites, listed, favorited).render(),
             )
         }
         Err(e) => {
@@ -872,6 +915,7 @@ async fn api_watchlist(
 ) -> Response {
     let sort = WatchlistSort::from_query(params.sort.as_deref());
     let kind = KindFilter::from_query(params.kind.as_deref());
+    let services = ServicesFilter::from_query(params.services.as_deref());
     let result = if favorites {
         catalog.favorites(sort).await
     } else {
@@ -879,7 +923,9 @@ async fn api_watchlist(
     };
     match result {
         Ok(mut w) => {
-            w.titles.retain(|e| kind.matches(e.kind));
+            let chosen = w.services.as_ref().is_some_and(|s| s.state.is_chosen());
+            w.titles
+                .retain(|e| kind.matches(e.kind) && (!chosen || services.matches(e)));
             Json(w).into_response()
         }
         Err(e) => {
@@ -891,6 +937,63 @@ async fn api_watchlist(
                 } else {
                     "the watchlist couldn't be read"
                 },
+            )
+        }
+    }
+}
+
+async fn services_page(State(catalog): State<Catalog>) -> Response {
+    match catalog.services().await {
+        Ok(s) => html(StatusCode::OK, ServicesPage { s }.render()),
+        Err(e) => {
+            tracing::warn!(error = %e, "reading your services failed");
+            error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't load your services",
+                "The database couldn't be read. Please try again.",
+            )
+        }
+    }
+}
+
+/// Replaces the user's services with the checked `service` boxes.
+async fn save_services(
+    State(catalog): State<Catalog>,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Response {
+    let ids = form
+        .iter()
+        .filter(|(key, _)| key == "service")
+        .filter_map(|(_, id)| id.parse().ok())
+        .collect();
+    match catalog.set_services(&ids).await {
+        Ok(()) => Redirect::to("/services").into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "saving your services failed");
+            error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save your services",
+                match e {
+                    ServicesError::Read(_) => {
+                        "Your current services couldn't be read, so nothing was changed. Please try again."
+                    }
+                    ServicesError::Write(_) => {
+                        "The database couldn't be updated. Please try again."
+                    }
+                },
+            )
+        }
+    }
+}
+
+async fn api_services(State(catalog): State<Catalog>) -> Response {
+    match catalog.services().await {
+        Ok(s) => Json(s).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "api services read failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "your services couldn't be read",
             )
         }
     }
