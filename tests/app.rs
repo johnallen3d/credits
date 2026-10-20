@@ -294,6 +294,19 @@ impl FakeOmdb {
                             Json(json!({ "Response": "False", "Error": "Invalid API key!" })),
                         );
                     }
+                    if let Some(season) = q.get("Season") {
+                        let body = match (q.get("i").map(String::as_str), season.as_str()) {
+                            (Some("tt0903747"), "1") => json!({
+                                "Response": "True", "Title": "Breaking Bad", "Season": "1",
+                                "Episodes": [
+                                    { "Title": "Pilot", "Episode": "1", "imdbRating": "9.0", "imdbID": "tt0959621" },
+                                    { "Title": "Episode 2", "Episode": "2", "imdbRating": "N/A", "imdbID": "tt1054724" }
+                                ]
+                            }),
+                            _ => json!({ "Response": "False", "Error": "Series or season not found!" }),
+                        };
+                        return (StatusCode::OK, Json(body));
+                    }
                     let body = match q.get("i").map(String::as_str) {
                         Some("tt0133093") => json!({
                             "Response": "True", "imdbID": "tt0133093",
@@ -412,7 +425,10 @@ async fn home_page_renders_search_form_and_footer_nav() {
     assert!(body.contains(r#"<form class="search" action="/" method="get""#));
     assert!(body.contains("Search TMDB for a movie, TV show or person."));
     assert!(body.contains(r#"<a class="brand" href="/">credits</a>"#));
-    assert!(!body.contains(r#"<a href="/">Search</a>"#), "the logo links home");
+    assert!(
+        !body.contains(r#"<a href="/">Search</a>"#),
+        "the logo links home"
+    );
     let footer = &body[body.find(r#"<footer class="site">"#).expect("site footer")..];
     assert!(footer.contains(r#"<nav class="site-nav" aria-label="Site">"#));
     assert!(footer.contains(r#"<a href="/about">About</a>"#));
@@ -871,6 +887,59 @@ async fn season_page_lists_episodes_with_fallbacks() {
     assert!(body.contains("Season not found"));
     let (status, _) = get_json(test_app().await, "/api/tv/1396/season/x").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn season_page_shows_imdb_episode_ratings() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (status, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"58 min · <span class="episode-rating"><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb"> <span class="rating-score">9.0/10</span></span>"#));
+    assert_eq!(
+        body.matches("episode-rating\"").count(),
+        1,
+        "no score, no rating for episode 2"
+    );
+    assert!(!body.contains("episode-ratings-note"));
+
+    let (_, json) = get_json(t.app(), "/api/tv/1396/season/1").await;
+    assert_eq!(json["episodes"][0]["rating"]["source"], "imdb");
+    assert_eq!(json["episodes"][0]["rating"]["score"], 9.0);
+    assert_eq!(json["episodes"][1]["rating"], Value::Null);
+    assert_eq!(json["episode_ratings"]["state"], "fresh");
+    assert_eq!(json["episode_ratings"]["imdb_id"], "tt0903747");
+    assert_eq!(t.omdb.calls(), 1, "one cached OMDb request per season");
+
+    // OMDb has no such season: fresh, just no scores.
+    let (_, json) = get_json(t.app(), "/api/tv/1396/season/2").await;
+    assert_eq!(json["episode_ratings"]["state"], "fresh");
+    assert_eq!(json["episodes"][0]["rating"], Value::Null);
+}
+
+#[tokio::test]
+async fn episode_rating_problems_never_break_the_season_page() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::ZERO).await;
+    get_page(t.app(), "/tv/1396/season/1", false).await;
+    t.omdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"<span class="rating-score">9.0/10</span>"#));
+    assert!(body.contains("Couldn't refresh episode ratings; showing scores from "));
+
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    t.omdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Episode ratings couldn&#39;t be loaded right now."));
+    assert!(!body.contains("episode-rating\""));
+
+    let t = build(TOKEN, None, Duration::from_secs(3600)).await;
+    let (_, json) = get_json(t.app(), "/api/tv/1396/season/1").await;
+    assert_eq!(
+        json["episode_ratings"]["unavailable_reason"],
+        "not_configured"
+    );
+    assert_eq!(t.omdb.calls(), 0);
 }
 
 #[tokio::test]

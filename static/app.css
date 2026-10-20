@@ -107,6 +107,10 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .episode { display: flex; gap: 1rem; padding: .75rem; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 .episode h3 { margin: 0; font-size: 1.05rem; }
 .episode-facts { margin: .15rem 0 .4rem; font-size: .9rem; }
+.episode-rating { white-space: nowrap; }
+.episode-rating .rating-source { width: 2rem; height: .95rem; vertical-align: -.15rem; }
+.episode-rating .rating-score { min-width: 0; color: var(--fg); }
+.episode-ratings-note, .section > .rating-stale { margin: 0 0 .75rem; font-size: .9rem; }
 .still { flex: none; width: 200px; height: 113px; object-fit: cover; border-radius: 4px; background: var(--line); }
 .still.missing { display: flex; align-items: center; justify-content: center; font-size: .8rem; color: var(--muted); }
 

@@ -26,6 +26,13 @@
   </div>
   <section class="section" aria-labelledby="episodes-heading">
     <h2 id="episodes-heading">Episodes</h2>
+    {% if !s.episodes.is_empty() %}
+    {% if s.episode_ratings.is_unavailable() %}
+    <p class="muted episode-ratings-note">{{ s.episode_ratings.unavailable_message() }}</p>
+    {% else if s.episode_ratings.is_stale() %}
+    <p class="rating-stale">Couldn't refresh episode ratings{% if let Some(day) = s.episode_ratings.fetched_on() %}; showing scores from {{ day }}{% endif %}.</p>
+    {% endif %}
+    {% endif %}
     {% if s.episodes.is_empty() %}
     <p class="muted">TMDB has no episodes listed for this season yet.</p>
     {% else %}
@@ -39,7 +46,7 @@
         {% endif %}
         <div>
           <h3><span class="muted">{{ e.number }}.</span> {{ e.title }}</h3>
-          <p class="muted episode-facts">{% if let Some(day) = e.air_date_display() %}{{ day }}{% else %}Air date not announced{% endif %}{% if let Some(minutes) = e.runtime_minutes %} · {{ minutes }} min{% endif %}</p>
+          <p class="muted episode-facts">{% if let Some(day) = e.air_date_display() %}{{ day }}{% else %}Air date not announced{% endif %}{% if let Some(minutes) = e.runtime_minutes %} · {{ minutes }} min{% endif %}{% if let Some(r) = e.rating %} · <span class="episode-rating"><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"> <span class="rating-score">{{ r.display() }}</span></span>{% endif %}</p>
           {% if let Some(overview) = e.overview %}
           <p class="overview">{{ overview }}</p>
           {% else %}

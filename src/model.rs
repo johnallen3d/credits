@@ -467,6 +467,8 @@ pub struct SeasonDetail {
     pub air_date: Option<String>,
     pub poster_url: Option<String>,
     pub episodes: Vec<Episode>,
+    /// Where the episodes' `rating`s came from, and why they're missing if they are.
+    pub episode_ratings: EpisodeRatings,
     /// Neighbouring seasons in the show's season order, for navigation.
     pub previous: Option<SeasonSummary>,
     pub next: Option<SeasonSummary>,
@@ -496,6 +498,8 @@ pub struct Episode {
     pub overview: Option<String>,
     pub runtime_minutes: Option<u32>,
     pub still_url: Option<String>,
+    /// IMDb's episode score; None when IMDb has none or ratings are unavailable.
+    pub rating: Option<Rating>,
 }
 
 impl Episode {
@@ -754,6 +758,62 @@ impl Ratings {
             Some(UnavailableReason::NoImdbId) => "No IMDb entry is linked to this title.",
             Some(UnavailableReason::ProviderError) | None => {
                 "Ratings couldn't be loaded right now."
+            }
+        }
+    }
+}
+
+/// Provenance of a season's per-episode IMDb ratings.
+#[derive(Clone, Debug, Serialize)]
+pub struct EpisodeRatings {
+    pub state: RatingsState,
+    pub unavailable_reason: Option<UnavailableReason>,
+    /// Always `omdb` today.
+    pub provider: &'static str,
+    /// The show's IMDb identifier, which the season was looked up by.
+    pub imdb_id: Option<String>,
+    pub fetched_at: Option<Timestamp>,
+}
+
+impl EpisodeRatings {
+    pub fn unavailable(reason: UnavailableReason, imdb_id: Option<String>) -> Self {
+        Self {
+            state: RatingsState::Unavailable,
+            unavailable_reason: Some(reason),
+            provider: "omdb",
+            imdb_id,
+            fetched_at: None,
+        }
+    }
+
+    pub fn found(state: RatingsState, imdb_id: String, fetched_at: Timestamp) -> Self {
+        Self {
+            state,
+            unavailable_reason: None,
+            provider: "omdb",
+            imdb_id: Some(imdb_id),
+            fetched_at: Some(fetched_at),
+        }
+    }
+
+    pub fn is_unavailable(&self) -> bool {
+        self.state == RatingsState::Unavailable
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.state == RatingsState::Stale
+    }
+
+    pub fn fetched_on(&self) -> Option<String> {
+        self.fetched_at.map(local_day)
+    }
+
+    pub fn unavailable_message(&self) -> &'static str {
+        match self.unavailable_reason {
+            Some(UnavailableReason::NotConfigured) => "Ratings aren't configured on this server.",
+            Some(UnavailableReason::NoImdbId) => "No IMDb entry is linked to this show.",
+            Some(UnavailableReason::ProviderError) | None => {
+                "Episode ratings couldn't be loaded right now."
             }
         }
     }

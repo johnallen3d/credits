@@ -203,6 +203,10 @@ impl Catalog {
                 self.tmdb.season(tv_id, number)
             ),
         )?;
+        let (episode_ratings, mut episode_scores) = self
+            .ratings
+            .for_season(show.external_ids.imdb_id.clone(), season.season_number)
+            .await;
         let seasons = self.season_list(&show.seasons);
         let position = seasons
             .iter()
@@ -234,8 +238,10 @@ impl Catalog {
                     overview: non_empty(e.overview),
                     runtime_minutes: e.runtime.filter(|r| *r > 0),
                     still_url: self.image(STILL_SIZE, e.still_path),
+                    rating: episode_scores.remove(&e.episode_number),
                 })
                 .collect(),
+            episode_ratings,
             previous: neighbour(-1),
             next: neighbour(1),
             metadata: show_metadata.combine(season_metadata),

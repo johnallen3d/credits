@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::model::{Rating, RatingSource};
 
@@ -21,6 +21,21 @@ pub struct OmdbTitle {
     /// False when OMDb has no entry for the identifier.
     pub listed: bool,
     pub ratings: Vec<Rating>,
+}
+
+/// IMDb ratings of one season's episodes. This is the cached payload.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OmdbSeason {
+    /// False when OMDb has no entry for the show or season.
+    pub listed: bool,
+    pub episodes: Vec<OmdbEpisode>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OmdbEpisode {
+    pub number: u32,
+    /// None when IMDb has no score yet, e.g. for an unaired episode.
+    pub rating: Option<Rating>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -49,56 +64,16 @@ impl OmdbClient {
     }
 
     pub async fn title(&self, imdb_id: &str) -> Result<OmdbTitle, OmdbError> {
-        let response = self
-            .http
-            .get(format!("{}/", self.api_base))
-            .query(&[("i", imdb_id), ("apikey", &self.key)])
-            .send()
-            .await
-            // reqwest includes the URL, and with it the key, in its errors.
-            .map_err(|e| {
-                OmdbError::Unavailable(format!("request to OMDb failed: {}", e.without_url()))
-            })?;
-
-        let status = response.status();
-        let body: Response = match response.json().await {
-            Ok(body) => body,
-            Err(_) if !status.is_success() => {
-                return Err(OmdbError::Unavailable(format!("OMDb returned {status}")));
-            }
-            Err(e) => {
-                return Err(OmdbError::Unavailable(format!(
-                    "unexpected OMDb response: {}",
-                    e.without_url()
-                )));
-            }
+        let Some(body) = self.get::<Response>(&[("i", imdb_id)]).await? else {
+            return Ok(OmdbTitle {
+                listed: false,
+                ratings: Vec::new(),
+            });
         };
 
-        if body.response != "True" {
-            let error = body.error.unwrap_or_default();
-            let lowered = error.to_ascii_lowercase();
-            return if lowered.contains("limit") {
-                Err(OmdbError::QuotaExhausted)
-            } else if status == StatusCode::UNAUTHORIZED || lowered.contains("api key") {
-                Err(OmdbError::Unauthorized)
-            } else if lowered.contains("incorrect imdb id") || lowered.contains("not found") {
-                Ok(OmdbTitle {
-                    listed: false,
-                    ratings: Vec::new(),
-                })
-            } else {
-                Err(OmdbError::Unavailable(format!("OMDb error: {error}")))
-            };
-        }
-
         let mut ratings = Vec::new();
-        if let Some(score) = body.imdb_rating.as_deref().and_then(parse_decimal) {
-            ratings.push(Rating {
-                source: RatingSource::Imdb,
-                score,
-                scale: 10,
-                votes: body.imdb_votes.as_deref().and_then(parse_count),
-            });
+        if let Some(rating) = imdb_rating(body.imdb_rating.as_deref(), body.imdb_votes.as_deref()) {
+            ratings.push(rating);
         }
         if let Some(score) = body
             .ratings
@@ -119,6 +94,125 @@ impl OmdbClient {
             ratings,
         })
     }
+
+    /// IMDb ratings of one season's episodes, looked up by the show's IMDb identifier.
+    pub async fn season(&self, show_imdb_id: &str, number: u32) -> Result<OmdbSeason, OmdbError> {
+        let number = number.to_string();
+        let Some(body) = self
+            .get::<SeasonResponse>(&[("i", show_imdb_id), ("Season", &number)])
+            .await?
+        else {
+            return Ok(OmdbSeason {
+                listed: false,
+                episodes: Vec::new(),
+            });
+        };
+        Ok(OmdbSeason {
+            listed: true,
+            episodes: body
+                .episodes
+                .into_iter()
+                .filter_map(|e| {
+                    Some(OmdbEpisode {
+                        number: e.episode.trim().parse().ok()?,
+                        rating: imdb_rating(e.imdb_rating.as_deref(), None),
+                    })
+                })
+                .collect(),
+        })
+    }
+
+    /// One OMDb request; `None` when OMDb has no entry for it.
+    async fn get<R: DeserializeOwned + Envelope>(
+        &self,
+        params: &[(&str, &str)],
+    ) -> Result<Option<R>, OmdbError> {
+        let response = self
+            .http
+            .get(format!("{}/", self.api_base))
+            .query(params)
+            .query(&[("apikey", &self.key)])
+            .send()
+            .await
+            // reqwest includes the URL, and with it the key, in its errors.
+            .map_err(|e| {
+                OmdbError::Unavailable(format!("request to OMDb failed: {}", e.without_url()))
+            })?;
+
+        let status = response.status();
+        let body: R = match response.json().await {
+            Ok(body) => body,
+            Err(_) if !status.is_success() => {
+                return Err(OmdbError::Unavailable(format!("OMDb returned {status}")));
+            }
+            Err(e) => {
+                return Err(OmdbError::Unavailable(format!(
+                    "unexpected OMDb response: {}",
+                    e.without_url()
+                )));
+            }
+        };
+
+        let (response, error) = body.status();
+        if response == "True" {
+            return Ok(Some(body));
+        }
+        let error = error.unwrap_or_default();
+        let lowered = error.to_ascii_lowercase();
+        if lowered.contains("limit") {
+            Err(OmdbError::QuotaExhausted)
+        } else if status == StatusCode::UNAUTHORIZED || lowered.contains("api key") {
+            Err(OmdbError::Unauthorized)
+        } else if lowered.contains("incorrect imdb id") || lowered.contains("not found") {
+            Ok(None)
+        } else {
+            Err(OmdbError::Unavailable(format!("OMDb error: {error}")))
+        }
+    }
+}
+
+fn imdb_rating(score: Option<&str>, votes: Option<&str>) -> Option<Rating> {
+    Some(Rating {
+        source: RatingSource::Imdb,
+        score: parse_decimal(score?)?,
+        scale: 10,
+        votes: votes.and_then(parse_count),
+    })
+}
+
+/// The status fields every OMDb response carries.
+trait Envelope {
+    fn status(&self) -> (&str, Option<String>);
+}
+
+impl Envelope for Response {
+    fn status(&self) -> (&str, Option<String>) {
+        (&self.response, self.error.clone())
+    }
+}
+
+impl Envelope for SeasonResponse {
+    fn status(&self) -> (&str, Option<String>) {
+        (&self.response, self.error.clone())
+    }
+}
+
+#[derive(Deserialize)]
+struct SeasonResponse {
+    #[serde(rename = "Response")]
+    response: String,
+    #[serde(rename = "Error")]
+    error: Option<String>,
+    #[serde(rename = "Episodes", default)]
+    episodes: Vec<SeasonEpisode>,
+}
+
+#[derive(Deserialize)]
+struct SeasonEpisode {
+    #[serde(rename = "Episode")]
+    episode: String,
+    #[serde(rename = "imdbRating")]
+    imdb_rating: Option<String>,
 }
 
 #[derive(Deserialize)]
