@@ -80,7 +80,13 @@ Heart a movie or TV show on its detail page, in search results, beside a
 filmography credit, or in either saved list. Favorites are independent of To watch and persist in
 SQLite. Open Favorites from the header; filter All / Movies / TV and sort by
 Added (newest first) or Rating, just like To watch. Unhearting removes a title
-from Favorites only. If favorite state cannot be read, hearts are disabled
+from Favorites only, keeping watched history. Favoriting a TV show also marks its
+currently aired seasons (including specials) watched; undated seasons with listed
+episodes count as current. Empty and future-dated seasons stay unwatched, and
+seasons added later are not automatically watched. These season marks and the
+favorite save together, without setting the whole-show watched flag. The show
+page refreshes its season badges immediately after favoriting. If favorite state
+cannot be read, hearts are disabled
 rather than showing an incorrect unsaved state; list and save failures are
 reported explicitly.
 

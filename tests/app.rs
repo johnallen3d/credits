@@ -424,6 +424,7 @@ impl FakeOmdb {
 
 struct TestApp {
     router: Router,
+    catalog: Catalog,
     omdb: FakeOmdb,
     tmdb: FakeTmdb,
 }
@@ -472,8 +473,10 @@ async fn build_from(mut config: Config, ratings_ttl: Duration, metadata_ttl: Dur
     config.omdb_api_base = omdb.start().await;
     config.ratings_ttl = ratings_ttl;
     config.metadata_ttl = metadata_ttl;
+    let catalog = Catalog::new(&config).await.unwrap();
     TestApp {
-        router: app(Catalog::new(&config).await.unwrap()),
+        router: app(catalog.clone()),
+        catalog,
         omdb,
         tmdb,
     }
@@ -1708,7 +1711,7 @@ async fn favorites_are_independent_filterable_and_toggle_while_browsing() {
     let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
     assert!(body.contains(r#"aria-pressed="false" aria-label="Favorite: The Matrix""#));
     assert!(body.contains(r##"hx-post="/movie/603/favorite" hx-target="#favorite-toggle" hx-select="#favorite-toggle""##));
-    assert!(body.contains("hx-on::before-swap="));
+    assert!(body.contains("hx-on::before-on-load="));
     assert!(body.contains(r#"role="alert" hidden>Couldn't update Favorites. Please try again."#));
 
     post_form(t.app(), "/movie/603/favorite", "listed=true").await;
@@ -1796,6 +1799,67 @@ async fn favorites_are_independent_filterable_and_toggle_while_browsing() {
 }
 
 #[tokio::test]
+async fn favoriting_a_show_watches_current_seasons_but_not_the_whole_show() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    post_form(t.app(), "/tv/1396/watchlist", "listed=true").await;
+    post_form(t.app(), "/movie/603/favorite", "listed=true").await;
+    assert!(t.catalog.watched(1396).await.seasons.is_empty());
+    assert!(t.catalog.watched(603).await.seasons.is_empty());
+    post_form(
+        t.app(),
+        "/tv/1396/season/2/episode/1/watched",
+        "watched=true",
+    )
+    .await;
+
+    let (status, headers) = post_form(
+        t.app(),
+        "/tv/1396/favorite",
+        "listed=true&back=%2F%3Fq%3Dbreaking%23favorite-tv-1396",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/?q=breaking#favorite-tv-1396");
+    let watched = t.catalog.watched(1396).await;
+    assert!(!watched.show, "no blanket mark covering future seasons");
+    assert_eq!(
+        watched.seasons,
+        [0, 1, 2],
+        "includes specials and undated seasons"
+    );
+    assert_eq!(watched.episodes, [(2, 1)], "keeps existing episode marks");
+    assert!(!watched.season(3), "new seasons remain unwatched");
+    let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
+    assert_eq!(body.matches("✓ Watched").count(), 3);
+    assert!(
+        body.contains(r#"hx-target="closest article" hx-select="article.detail""#),
+        "TV detail swaps the article so season badges update with the heart"
+    );
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert!(
+        !body.contains(r#"class="episode spoiler""#),
+        "watched season reveals spoilers"
+    );
+
+    post_form(t.app(), "/tv/1396/favorite", "listed=true").await;
+    assert_eq!(
+        t.catalog.watched(1396).await,
+        watched,
+        "repeated add is idempotent"
+    );
+    t.tmdb.set_down(true);
+    let (status, _) = post_form(t.app(), "/tv/1396/favorite", "listed=false").await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "removal needs no provider");
+    assert_eq!(
+        t.catalog.watched(1396).await,
+        watched,
+        "unheart keeps watched history"
+    );
+    let (_, list) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(list["titles"][0]["id"], 1396);
+}
+
+#[tokio::test]
 async fn favorite_ratings_and_provider_failures_are_explicit() {
     let t = build_with(TOKEN, Some(OMDB_KEY), Duration::ZERO, Duration::ZERO).await;
     post_form(t.app(), "/tv/1396/favorite", "listed=true").await;
@@ -1844,10 +1908,14 @@ async fn favorites_persist_and_storage_failures_never_look_empty() {
     let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, database).await;
     post_form(t.app(), "/movie/603/favorite", "listed=true").await;
     post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    post_form(t.app(), "/tv/1396/favorite", "listed=true").await;
     drop(t);
     let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, database).await;
     let (_, json) = get_json(t.app(), "/api/favorites").await;
-    assert_eq!(json["titles"][0]["id"], 603);
+    assert_eq!(json["titles"][0]["id"], 1396);
+    assert_eq!(json["titles"][1]["id"], 603);
+    assert_eq!(t.catalog.watched(1396).await.seasons, [0, 1, 2]);
+    assert!(!t.catalog.watched(1396).await.show);
     let pool = credits::cache::ProviderCache::open(database)
         .await
         .unwrap()
@@ -1875,10 +1943,46 @@ async fn favorites_persist_and_storage_failures_never_look_empty() {
             post_form(t.app(), "/movie/603/favorite", &format!("listed={listed}")).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
+    // A failure partway through season writes must roll back the favorite
+    // and every season mark, while leaving the existing show untouched.
     sqlx::query("ALTER TABLE favorites_unavailable RENAME TO favorites")
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER reject_second_season BEFORE INSERT ON watched_seasons
+         WHEN NEW.tv_id = 999 AND NEW.season = 1
+         BEGIN SELECT RAISE(ABORT, 'season storage failed'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let response = t
+        .app()
+        .oneshot(
+            Request::post("/tv/999/favorite")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from("listed=true"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert!(
+        String::from_utf8(body.to_vec())
+            .unwrap()
+            .contains("Couldn&#39;t update your Favorites")
+    );
+    assert!(t.catalog.watched(999).await.seasons.is_empty());
+    assert!(
+        !t.catalog
+            .favorite_titles()
+            .await
+            .unwrap()
+            .contains(&(credits::model::MediaKind::Tv, 999))
+    );
+    assert_eq!(t.catalog.watched(1396).await.seasons, [0, 1, 2]);
     let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
     assert!(body.contains(r#"aria-pressed="true" aria-label="Favorite: The Matrix""#));
     drop(t);

@@ -1,6 +1,8 @@
-{# None means the state is unknown: don't pretend the title is not a favorite. #}
+{# None means the state is unknown: don't pretend the title is not a favorite.
+   TV detail refreshes its article so season badges update with the heart.
+   Catch failed responses on the source form before any target is swapped. #}
 {% macro toggle(kind, title_id, title, favorited, id, back, text, inline) %}
-<form class="watch-toggle favorite-toggle" id="{{ id }}" method="post" action="/{{ kind }}/{{ title_id }}/favorite"{% if inline %} hx-post="/{{ kind }}/{{ title_id }}/favorite" hx-target="#{{ id }}" hx-select="#{{ id }}" hx-swap="outerHTML" hx-on::before-swap="if (event.detail.xhr.status >= 400) { event.detail.shouldSwap = false; this.querySelector('[role=alert]').hidden = false; }" hx-on::send-error="this.querySelector('[role=alert]').hidden = false" hx-on::timeout="this.querySelector('[role=alert]').hidden = false"{% endif %}>
+<form class="watch-toggle favorite-toggle" id="{{ id }}" method="post" action="/{{ kind }}/{{ title_id }}/favorite"{% if inline %} hx-post="/{{ kind }}/{{ title_id }}/favorite" {% if kind == "tv" && id == "favorite-toggle" %}hx-target="closest article" hx-select="article.detail"{% else %}hx-target="#{{ id }}" hx-select="#{{ id }}"{% endif %} hx-swap="outerHTML" hx-on::before-on-load="if (event.detail.xhr.status >= 400) { event.preventDefault(); this.querySelector('[role=alert]').hidden = false; }" hx-on::send-error="this.querySelector('[role=alert]').hidden = false" hx-on::timeout="this.querySelector('[role=alert]').hidden = false"{% endif %}>
   {% if let Some(saved) = favorited %}
   <input type="hidden" name="listed" value="{{ !saved }}">
   <input type="hidden" name="back" value="{{ back }}">

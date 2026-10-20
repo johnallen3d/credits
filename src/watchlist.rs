@@ -35,6 +35,18 @@ impl Watchlist {
     /// Saves `title`. Adding it again refreshes its display fields but keeps
     /// its place in the list.
     pub async fn add(&self, title: &FilmographyEntry, at: Timestamp) -> Result<(), sqlx::Error> {
+        self.add_with_watched_seasons(title, &[], at).await
+    }
+
+    /// Saves a favorite and its current TV seasons in one transaction. Never
+    /// sets the whole-show mark, which would include future seasons.
+    pub async fn add_with_watched_seasons(
+        &self,
+        title: &FilmographyEntry,
+        seasons: &[u32],
+        at: Timestamp,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
         sqlx::query(&format!(
             "INSERT INTO {} (kind, id, title, year, poster_url, added_at)
              VALUES (?, ?, ?, ?, ?, ?)
@@ -48,9 +60,19 @@ impl Watchlist {
         .bind(&title.year)
         .bind(&title.poster_url)
         .bind(at.as_second())
-        .execute(&self.pool)
-        .await
-        .map(drop)
+        .execute(&mut *tx)
+        .await?;
+        for season in seasons {
+            sqlx::query(
+                "INSERT OR IGNORE INTO watched_seasons (tv_id, season, watched_at) VALUES (?, ?, ?)",
+            )
+            .bind(title.id as i64)
+            .bind(season)
+            .bind(at.as_second())
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
     }
 
     pub async fn remove(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {

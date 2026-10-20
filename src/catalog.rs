@@ -209,11 +209,17 @@ impl Catalog {
     /// Saves a title to the "To watch" list, with its name, year and poster
     /// from its cached TMDB entry.
     pub async fn add_to_watchlist(&self, kind: MediaKind, id: u64) -> Result<(), WatchlistError> {
-        self.save_title(&self.watchlist, kind, id).await
+        let (entry, _) = self.title_to_save(kind, id).await?;
+        Ok(self.watchlist.add(&entry, Timestamp::now()).await?)
     }
 
+    /// Favorites snapshot the show's current seasons, not future seasons.
     pub async fn add_favorite(&self, kind: MediaKind, id: u64) -> Result<(), WatchlistError> {
-        self.save_title(&self.favorites, kind, id).await
+        let (entry, seasons) = self.title_to_save(kind, id).await?;
+        Ok(self
+            .favorites
+            .add_with_watched_seasons(&entry, &seasons, Timestamp::now())
+            .await?)
     }
 
     pub async fn remove_favorite(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {
@@ -225,20 +231,21 @@ impl Catalog {
         self.favorites.titles().await
     }
 
-    async fn save_title(
+    async fn title_to_save(
         &self,
-        list: &Watchlist,
         kind: MediaKind,
         id: u64,
-    ) -> Result<(), WatchlistError> {
-        let (title, date, poster_path) = match kind {
+    ) -> Result<(FilmographyEntry, Vec<u32>), CatalogError> {
+        let (title, date, poster_path, seasons) = match kind {
             MediaKind::Movie => {
                 let (m, _) = self.movie_raw(id).await?;
-                (m.title, m.release_date, m.poster_path)
+                (m.title, m.release_date, m.poster_path, Vec::new())
             }
             MediaKind::Tv => {
                 let (t, _) = self.tv_raw(id).await?;
-                (t.name, t.first_air_date, t.poster_path)
+                let today = Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
+                let seasons = current_seasons(&t.seasons, today);
+                (t.name, t.first_air_date, t.poster_path, seasons)
             }
         };
         let entry = FilmographyEntry {
@@ -251,7 +258,7 @@ impl Catalog {
             poster_url: self.image(THUMB_SIZE, poster_path),
             rating: None,
         };
-        Ok(list.add(&entry, Timestamp::now()).await?)
+        Ok((entry, seasons))
     }
 
     pub async fn remove_from_watchlist(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {
@@ -1154,6 +1161,26 @@ fn department_rank(name: &str) -> (usize, &str) {
     (position.unwrap_or(DEPARTMENT_ORDER.len()), name)
 }
 
+/// Aired seasons (including specials), or undated seasons with listed
+/// episodes. Explicitly future-dated and empty/unknown seasons stay unwatched.
+fn current_seasons(seasons: &[tmdb::SeasonSummary], today: jiff::civil::Date) -> Vec<u32> {
+    seasons
+        .iter()
+        .filter(|s| s.episode_count != Some(0))
+        .filter(|s| {
+            let air_date = s
+                .air_date
+                .as_deref()
+                .and_then(|date| date.parse::<jiff::civil::Date>().ok());
+            match air_date {
+                Some(date) => date <= today,
+                None => s.episode_count.is_some_and(|count| count > 0),
+            }
+        })
+        .map(|s| s.season_number)
+        .collect()
+}
+
 fn season_name(number: u32) -> String {
     if number == 0 {
         "Specials".to_owned()
@@ -1237,6 +1264,25 @@ fn year(date: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn favorite_seasons_are_a_snapshot_of_current_seasons() {
+        let seasons: Vec<tmdb::SeasonSummary> = serde_json::from_value(serde_json::json!([
+            {"season_number": 0, "air_date": "2025-01-01", "episode_count": 2},
+            {"season_number": 1, "air_date": "2025-02-01", "episode_count": 10},
+            {"season_number": 2, "air_date": null, "episode_count": 8},
+            {"season_number": 3, "air_date": "2026-01-01", "episode_count": 1},
+            {"season_number": 4, "air_date": "2026-01-02", "episode_count": 10},
+            {"season_number": 5, "episode_count": 0},
+            {"season_number": 6},
+            {"season_number": 7, "air_date": "2025-01-01", "episode_count": 0},
+            {"season_number": 8, "air_date": "2025-01-01"}
+        ]))
+        .unwrap();
+        let today = "2026-01-01".parse().unwrap();
+        assert_eq!(current_seasons(&seasons, today), [0, 1, 2, 3, 8]);
+        assert!(current_seasons(&[], today).is_empty());
+    }
 
     #[test]
     fn roles_merge_without_duplicates() {
