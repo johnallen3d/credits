@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: johnallen3d
+          # Absent on fork PRs: the cache is then read-only and nothing is pushed.
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Test
+        run: nix flake check --print-build-logs
+      - name: Build
+        run: nix build --print-build-logs .#default
