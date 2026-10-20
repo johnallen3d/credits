@@ -657,6 +657,17 @@ async fn static_assets_are_served() {
 }
 
 #[tokio::test]
+async fn pages_link_the_favicon() {
+    let (_, _, body) = get_page(test_app().await, "/", false).await;
+    assert!(body.contains(r#"<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">"#));
+
+    let (status, headers, body) = get_page(test_app().await, "/static/favicon.svg", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["content-type"], "image/svg+xml");
+    assert!(body.starts_with("<svg"));
+}
+
+#[tokio::test]
 async fn stylesheet_url_changes_with_its_content() {
     let (_, _, body) = get_page(test_app().await, "/", false).await;
     let href = format!(

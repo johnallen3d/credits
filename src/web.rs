@@ -72,6 +72,10 @@ pub fn app(catalog: Catalog) -> Router {
             get(|| asset("image/svg+xml", include_str!("../static/tmdb-logo.svg"))),
         )
         .route(
+            "/static/favicon.svg",
+            get(|| asset("image/svg+xml", include_str!("../static/favicon.svg"))),
+        )
+        .route(
             "/static/imdb.svg",
             get(|| asset("image/svg+xml", include_str!("../static/imdb.svg"))),
         )
