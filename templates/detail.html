@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_watch.html" as watch %}
 {% block title %}{{ d.title }} · credits{% endblock %}
 {% block content %}
 {% let metadata = d.metadata %}{% include "_stale.html" %}
@@ -53,8 +54,16 @@
     </div>
   </div>
   {% if !d.season_list.is_empty() %}
-  <section class="section" aria-labelledby="seasons-heading">
+  {% let page = d.path() %}
+  {% let show_action = d.watched_path() %}
+  <section class="section" id="seasons" aria-labelledby="seasons-heading">
     <h2 id="seasons-heading">Seasons</h2>
+    <div class="watch-state">
+      {% call watch::toggle(show_action, watched.show, "Show watched", page, "seasons", "", "") %}{% endcall %}
+      {% if !watched.show %}
+      <p class="muted">Episode summaries and ratings stay blurred until you mark them, their season or the show watched.</p>
+      {% endif %}
+    </div>
     <ul class="tiles">
       {% for s in d.season_list %}
       <li><a href="/tv/{{ d.id }}/season/{{ s.number }}">
@@ -65,6 +74,7 @@
         {% endif %}
         <span class="name">{{ s.name }}</span>
         <span class="role">{% if let Some(year) = s.year %}{{ year }}{% endif %}{% if s.year.is_some() && s.episode_count.is_some() %} · {% endif %}{% if let Some(eps) = s.episodes_label() %}{{ eps }}{% endif %}</span>
+        {% if watched.season(*s.number) %}<span class="role watched-mark">✓ Watched</span>{% endif %}
       </a></li>
       {% endfor %}
     </ul>

@@ -4,7 +4,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{Path, Query},
-    http::{HeaderMap, Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode, header},
     response::IntoResponse,
     routing::get,
 };
@@ -415,6 +415,15 @@ async fn get_page(app: Router, uri: &str, htmx: bool) -> (StatusCode, HeaderMap,
     let headers = response.headers().clone();
     let body = response.into_body().collect().await.unwrap().to_bytes();
     (status, headers, String::from_utf8(body.to_vec()).unwrap())
+}
+
+async fn post_form(app: Router, uri: &str, form: &str) -> (StatusCode, HeaderMap) {
+    let request = Request::post(uri)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(form.to_owned()))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    (response.status(), response.headers().clone())
 }
 
 async fn get_json(app: Router, uri: &str) -> (StatusCode, Value) {
@@ -898,7 +907,7 @@ async fn season_page_shows_imdb_episode_ratings() {
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
     let (status, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains(r#"58 min · <span class="episode-rating"><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb"> <span class="rating-score">9.0/10</span></span>"#));
+    assert!(body.contains(r#"58 min · <span class="episode-rating" tabindex="0" title="Spoiler: select to peek"><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb"> <span class="rating-score">9.0/10</span></span>"#));
     assert_eq!(
         body.matches("episode-rating\"").count(),
         1,
@@ -944,6 +953,115 @@ async fn episode_rating_problems_never_break_the_season_page() {
         "not_configured"
     );
     assert_eq!(t.omdb.calls(), 0);
+}
+
+#[tokio::test]
+async fn episode_spoilers_are_blurred_until_watched() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert!(body.contains(r#"<li class="episode spoiler" id="episode-1">"#));
+    assert!(body.contains(r#"<p class="overview" tabindex="0" title="Spoiler: select to peek">A chemistry teacher is diagnosed.</p>"#));
+    assert!(body.contains(r#"action="/tv/1396/watched""#));
+    assert!(body.contains(r#"action="/tv/1396/season/1/watched""#));
+    assert!(body.contains(r#"action="/tv/1396/season/1/episode/1/watched""#));
+    assert_eq!(
+        body.matches(r#"aria-pressed="false""#).count(),
+        4,
+        "show, season, two episodes"
+    );
+    assert!(body.contains(r#"name="watched" value="true""#));
+
+    // One episode.
+    let (status, headers) = post_form(
+        t.app(),
+        "/tv/1396/season/1/episode/1/watched",
+        "watched=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/tv/1396/season/1#episode-1");
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert!(body.contains(r#"<li class="episode" id="episode-1">"#));
+    assert!(body.contains(r#"<p class="overview">A chemistry teacher is diagnosed.</p>"#));
+    assert!(body.contains(r#"<li class="episode spoiler" id="episode-2">"#));
+    post_form(
+        t.app(),
+        "/tv/1396/season/1/episode/1/watched",
+        "watched=false",
+    )
+    .await;
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert!(body.contains(r#"<li class="episode spoiler" id="episode-1">"#));
+
+    // The season covers its episodes, whose toggles can't undo it.
+    let (status, headers) = post_form(t.app(), "/tv/1396/season/1/watched", "watched=true").await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/tv/1396/season/1");
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert!(!body.contains("episode spoiler"));
+    assert_eq!(
+        body.matches(r#"title="Watched with the season" disabled"#)
+            .count(),
+        2
+    );
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/2", false).await;
+    assert!(
+        body.contains("episode spoiler"),
+        "other seasons stay blurred"
+    );
+    let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
+    assert_eq!(body.matches("✓ Watched").count(), 1);
+    assert!(body.contains(r#"aria-pressed="false""#));
+
+    // The whole show, from a season page, returns to that season page.
+    let (status, headers) = post_form(
+        t.app(),
+        "/tv/1396/watched",
+        "watched=true&back=%2Ftv%2F1396%2Fseason%2F2",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/tv/1396/season/2");
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/2", false).await;
+    assert!(!body.contains("episode spoiler"));
+    assert!(body.contains(r#"title="Watched with the whole show" disabled"#));
+    let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
+    assert!(body.contains(r#"aria-pressed="true""#));
+    assert!(body.contains(r#"name="watched" value="false""#));
+
+    // Unwatching the show keeps the season marked on its own.
+    let (_, headers) = post_form(t.app(), "/tv/1396/watched", "watched=false").await;
+    assert_eq!(headers[header::LOCATION], "/tv/1396");
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/2", false).await;
+    assert!(body.contains("episode spoiler"));
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert!(!body.contains("episode spoiler"));
+
+    // Only pages of the same show are valid places to return to.
+    for back in [
+        "https%3A%2F%2Fevil.test",
+        "%2Ftv%2F13960",
+        "%2Ftv%2F1396%2F%2Fevil.test",
+    ] {
+        let (_, headers) = post_form(
+            t.app(),
+            "/tv/1396/watched",
+            &format!("watched=false&back={back}"),
+        )
+        .await;
+        assert_eq!(headers[header::LOCATION], "/tv/1396", "{back}");
+    }
+    let (status, _) = post_form(t.app(), "/tv/x/watched", "watched=true").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = post_form(
+        t.app(),
+        "/tv/1396/season/1/episode/x/watched",
+        "watched=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = post_form(t.app(), "/tv/1396/watched", "watched=maybe").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

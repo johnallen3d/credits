@@ -111,6 +111,21 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .episode-rating .rating-source { width: 2rem; height: .95rem; vertical-align: -.15rem; }
 .episode-rating .rating-score { min-width: 0; color: var(--fg); }
 .episode-ratings-note, .section > .rating-stale { margin: 0 0 .75rem; font-size: .9rem; }
+/* Spoilers: blurred until watched; focus (click or tab) peeks at one. Eye toggles flip watched marks. */
+.watch-state { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; margin: 0 0 1rem; }
+.watch-state p { flex: 1 1 100%; margin: 0; font-size: .9rem; }
+.watch-toggle button { display: inline-flex; align-items: center; gap: .4rem; font: inherit; font-size: .9rem; padding: .35rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); cursor: pointer; }
+.watch-toggle button[aria-pressed="true"] { color: var(--person); border-color: var(--person); }
+.watch-toggle button:hover:not(:disabled), .watch-toggle button:focus-visible { border-color: var(--accent); color: var(--accent); }
+.watch-toggle button:disabled { opacity: .55; cursor: default; }
+.watch-toggle .eye { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.episode > div:not(.still) { flex: 1; min-width: 0; }
+.episode-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+.watch-toggle .icon-only { padding: .3rem; }
+.watched-mark { color: var(--person); }
+.spoiler .overview:not(.muted), .spoiler .episode-rating .rating-score { filter: blur(5px); user-select: none; cursor: pointer; transition: filter .15s; }
+.spoiler .overview:focus, .spoiler .episode-rating:focus .rating-score { filter: none; user-select: auto; cursor: auto; }
+.spoiler .overview:focus, .spoiler .episode-rating:focus { outline: none; }
 .still { flex: none; width: 200px; height: 113px; object-fit: cover; border-radius: 4px; background: var(--line); }
 .still.missing { display: flex; align-items: center; justify-content: center; font-size: .8rem; color: var(--muted); }
 

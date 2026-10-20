@@ -6,6 +6,7 @@ mod omdb;
 mod ratings;
 pub mod recent;
 mod tmdb;
+mod watched;
 pub mod web;
 
 pub use catalog::Catalog;

@@ -1,0 +1,17 @@
+{#- An eye toggle that flips a watched mark. `pressed` is the current state;
+    `covered` explains why it can't be turned off here (e.g. the whole show is
+    watched), or is empty. `text` is an optional visible label. -#}
+{% macro toggle(action, pressed, label, back, target, text, covered) %}
+<form class="watch-toggle" method="post" action="{{ action }}" hx-post="{{ action }}" hx-target="#{{ target }}" hx-select="#{{ target }}" hx-swap="outerHTML">
+  <input type="hidden" name="watched" value="{{ !pressed }}">
+  <input type="hidden" name="back" value="{{ back }}">
+  <button type="submit"{% if text.is_empty() %} class="icon-only"{% endif %} aria-pressed="{{ pressed }}" aria-label="{{ label }}" title="{% if !covered.is_empty() %}{{ covered }}{% else if pressed %}{{ label }}: yes, spoilers shown{% else %}{{ label }}: no, spoilers hidden{% endif %}"{% if !covered.is_empty() %} disabled{% endif %}>
+    {%- if pressed %}
+    <svg class="eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+    {%- else %}
+    <svg class="eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+    {%- endif %}
+    {%- if !text.is_empty() %}<span>{{ text }}</span>{% endif -%}
+  </button>
+</form>
+{% endmacro %}

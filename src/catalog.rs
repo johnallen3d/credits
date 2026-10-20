@@ -14,12 +14,13 @@ use crate::config::Config;
 use crate::model::{
     Department, Episode, FilmographyEntry, FilmographyGroup, KeyCrew, KeyRole, KnownFor, MediaKind,
     Metadata, PersonCredit, PersonDetail, PersonHit, Ratings, RecentView, SearchHit, SeasonDetail,
-    SeasonSummary, TitleCredits, TitleDetail, TitleHit,
+    SeasonSummary, TitleCredits, TitleDetail, TitleHit, WatchTarget, Watched,
 };
 use crate::omdb::OmdbClient;
 use crate::ratings::RatingsService;
 use crate::recent::RecentlyViewed;
 use crate::tmdb::{self, MultiResult, TmdbClient};
+use crate::watched::WatchedShows;
 
 const POSTER_SIZE: &str = "w342";
 const BACKDROP_SIZE: &str = "w1280";
@@ -62,6 +63,7 @@ pub struct Catalog {
     ratings: RatingsService,
     cache: ProviderCache,
     recent: RecentlyViewed,
+    watched: WatchedShows,
     metadata_ttl: Duration,
 }
 
@@ -98,6 +100,7 @@ impl Catalog {
             image_base: config.tmdb_image_base.trim_end_matches('/').to_owned(),
             ratings: RatingsService::new(omdb, cache.clone(), config.ratings_ttl),
             recent: RecentlyViewed::new(cache.pool()),
+            watched: WatchedShows::new(cache.pool()),
             cache,
             metadata_ttl: config.metadata_ttl,
         })
@@ -118,6 +121,27 @@ impl Catalog {
             tracing::warn!(error = %e, "reading recent views failed");
             Vec::new()
         })
+    }
+
+    /// Which parts of a TV show are marked watched; nothing if that can't be
+    /// read, so spoilers stay hidden.
+    pub async fn watched(&self, tv_id: u64) -> Watched {
+        self.watched.get(tv_id).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, tv_id, "reading watched state failed");
+            Watched::default()
+        })
+    }
+
+    /// Marks a whole TV show, a season or an episode as watched or not.
+    pub async fn set_watched(
+        &self,
+        tv_id: u64,
+        target: WatchTarget,
+        watched: bool,
+    ) -> Result<(), sqlx::Error> {
+        self.watched
+            .set(tv_id, target, watched, Timestamp::now())
+            .await
     }
 
     /// Movies, TV shows and people matching `query`, in TMDB's order; other

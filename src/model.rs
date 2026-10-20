@@ -231,6 +231,36 @@ impl RecentView {
     }
 }
 
+/// Which parts of a TV show have been marked as watched. Season pages blur
+/// an episode's summary and rating until it, its season or the show is watched.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Watched {
+    /// The whole show, every season included.
+    pub show: bool,
+    /// Seasons marked one at a time, ascending.
+    pub seasons: Vec<u32>,
+    /// (season, episode) pairs marked one at a time, ascending.
+    pub episodes: Vec<(u32, u32)>,
+}
+
+impl Watched {
+    pub fn season(&self, number: u32) -> bool {
+        self.show || self.seasons.contains(&number)
+    }
+
+    pub fn episode(&self, season: u32, number: u32) -> bool {
+        self.season(season) || self.episodes.contains(&(season, number))
+    }
+}
+
+/// What a watched mark applies to, within one TV show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchTarget {
+    Show,
+    Season(u32),
+    Episode { season: u32, number: u32 },
+}
+
 /// A timestamp as a local calendar day, e.g. "Oct 19, 2026".
 fn local_day(t: Timestamp) -> String {
     t.to_zoned(jiff::tz::TimeZone::system())
@@ -341,6 +371,11 @@ pub struct TitleDetail {
 impl TitleDetail {
     pub fn path(&self) -> String {
         title_path(self.kind, self.id)
+    }
+
+    /// Where the form marking this TV show watched posts to.
+    pub fn watched_path(&self) -> String {
+        format!("{}/watched", self.path())
     }
 
     pub fn has_more_credits(&self) -> bool {
@@ -478,6 +513,19 @@ pub struct SeasonDetail {
 impl SeasonDetail {
     pub fn show_path(&self) -> String {
         title_path(MediaKind::Tv, self.show_id)
+    }
+
+    pub fn path(&self) -> String {
+        format!("/tv/{}/season/{}", self.show_id, self.number)
+    }
+
+    /// Where the form marking this season watched posts to.
+    pub fn watched_path(&self) -> String {
+        format!("{}/watched", self.path())
+    }
+
+    pub fn show_watched_path(&self) -> String {
+        format!("{}/watched", self.show_path())
     }
 
     pub fn season_path(&self, season: &SeasonSummary) -> String {

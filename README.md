@@ -30,6 +30,13 @@ reported as unavailable and the page still renders. The key never leaves the
 server; JSON responses include each score's `source`, `scale`, the
 `imdb_id`, `state` (`fresh` / `stale` / `unavailable`) and `fetched_at`.
 
+## Spoilers
+
+Season pages blur episode summaries and IMDb episode scores until that season,
+or the whole show, is marked watched; select a blurred item to peek at it.
+Watched marks are stored in the same SQLite database and survive restarts. If
+they can't be read, spoilers stay hidden.
+
 ## Routes
 
 | HTML | JSON |
@@ -40,6 +47,7 @@ server; JSON responses include each score's `source`, `scale`, the
 | `/movie/{id}/credits`, `/tv/{id}/credits` | `/api/movie/{id}/credits`, `/api/tv/{id}/credits` |
 | `/tv/{id}/season/{n}` | `/api/tv/{id}/season/{n}` |
 | `/person/{id}` | `/api/person/{id}` |
+| `POST /tv/{id}/watched`, `POST /tv/{id}/season/{n}/watched` (form: `watched=true\|false`) | |
 
 Both sides use `Catalog` (`src/catalog.rs`) and the types in `src/model.rs`.
 Detail responses include a `ratings` object, key crew (directors and writers

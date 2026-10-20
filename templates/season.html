@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_watch.html" as watch %}
 {% block title %}{{ s.name }} · {{ s.show_title }} · credits{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="{{ s.show_path() }}">← {{ s.show_title }}</a></nav>
@@ -24,8 +25,23 @@
       </nav>
     </div>
   </div>
-  <section class="section" aria-labelledby="episodes-heading">
+  {% let page = s.path() %}
+  {% let show_action = s.show_watched_path() %}
+  {% let season_action = s.watched_path() %}
+  {% let revealed = watched.season(*s.number) %}
+  <section class="section" id="episodes" aria-labelledby="episodes-heading">
     <h2 id="episodes-heading">Episodes</h2>
+    <div class="watch-state">
+      {% call watch::toggle(show_action, watched.show, "Show watched", page, "episodes", "Show", "") %}{% endcall %}
+      {% if watched.show %}
+      {% call watch::toggle(season_action, true, "Season watched", page, "episodes", "Season", "Watched with the whole show") %}{% endcall %}
+      {% else %}
+      {% call watch::toggle(season_action, revealed, "Season watched", page, "episodes", "Season", "") %}{% endcall %}
+      {% endif %}
+      {% if !revealed %}
+      <p class="muted">Summaries and ratings of unwatched episodes are blurred. Select one to peek, or use its eye to mark it watched.</p>
+      {% endif %}
+    </div>
     {% if !s.episodes.is_empty() %}
     {% if s.episode_ratings.is_unavailable() %}
     <p class="muted episode-ratings-note">{{ s.episode_ratings.unavailable_message() }}</p>
@@ -38,17 +54,27 @@
     {% else %}
     <ol class="episodes">
       {% for e in s.episodes %}
-      <li class="episode" id="episode-{{ e.number }}">
+      {% let seen = watched.episode(*s.number, *e.number) %}
+      {% let episode_id = "episode-{}"|format(e.number) %}
+      {% let episode_action = "{}/episode/{}/watched"|format(page, e.number) %}
+      <li class="episode{% if !seen %} spoiler{% endif %}" id="{{ episode_id }}">
         {% if let Some(url) = e.still_url %}
         <img class="still" src="{{ url }}" alt="" loading="lazy" width="200" height="113">
         {% else %}
         <div class="still missing" aria-hidden="true">No image</div>
         {% endif %}
         <div>
-          <h3><span class="muted">{{ e.number }}.</span> {{ e.title }}</h3>
-          <p class="muted episode-facts">{% if let Some(day) = e.air_date_display() %}{{ day }}{% else %}Air date not announced{% endif %}{% if let Some(minutes) = e.runtime_minutes %} · {{ minutes }} min{% endif %}{% if let Some(r) = e.rating %} · <span class="episode-rating"><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"> <span class="rating-score">{{ r.display() }}</span></span>{% endif %}</p>
+          <div class="episode-head">
+            <h3><span class="muted">{{ e.number }}.</span> {{ e.title }}</h3>
+            {% if revealed %}
+            {% call watch::toggle(episode_action, true, "Episode watched", page, episode_id, "", "Watched with the season") %}{% endcall %}
+            {% else %}
+            {% call watch::toggle(episode_action, seen, "Episode watched", page, episode_id, "", "") %}{% endcall %}
+            {% endif %}
+          </div>
+          <p class="muted episode-facts">{% if let Some(day) = e.air_date_display() %}{{ day }}{% else %}Air date not announced{% endif %}{% if let Some(minutes) = e.runtime_minutes %} · {{ minutes }} min{% endif %}{% if let Some(r) = e.rating %} · <span class="episode-rating"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"> <span class="rating-score">{{ r.display() }}</span></span>{% endif %}</p>
           {% if let Some(overview) = e.overview %}
-          <p class="overview">{{ overview }}</p>
+          <p class="overview"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}>{{ overview }}</p>
           {% else %}
           <p class="overview muted">No summary available.</p>
           {% endif %}

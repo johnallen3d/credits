@@ -4,10 +4,10 @@
 use askama::Template;
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{Form, Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
-    response::{Html, IntoResponse, Response},
-    routing::get,
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -15,6 +15,7 @@ use serde_json::json;
 use crate::catalog::{Catalog, CatalogError};
 use crate::model::{
     MediaKind, PersonDetail, RecentView, SearchHit, SeasonDetail, TitleCredits, TitleDetail,
+    WatchTarget, Watched, title_path,
 };
 
 pub fn app(catalog: Catalog) -> Router {
@@ -37,7 +38,13 @@ pub fn app(catalog: Catalog) -> Router {
             "/tv/{id}/credits",
             get(|s, p| credits_page(s, p, MediaKind::Tv)),
         )
+        .route("/tv/{id}/watched", post(set_show_watched))
         .route("/tv/{id}/season/{number}", get(season_page))
+        .route("/tv/{id}/season/{number}/watched", post(set_season_watched))
+        .route(
+            "/tv/{id}/season/{number}/episode/{episode}/watched",
+            post(set_episode_watched),
+        )
         .route("/person/{id}", get(person_page))
         .route("/api/search", get(api_search))
         .route(
@@ -59,10 +66,7 @@ pub fn app(catalog: Catalog) -> Router {
             "/static/htmx.min.js",
             get(|| asset("text/javascript", include_str!("../static/htmx.min.js"))),
         )
-        .route(
-            "/static/app.css",
-            get(|| asset("text/css", APP_CSS)),
-        )
+        .route("/static/app.css", get(|| asset("text/css", APP_CSS)))
         .route(
             "/static/tmdb-logo.svg",
             get(|| asset("image/svg+xml", include_str!("../static/tmdb-logo.svg"))),
@@ -119,6 +123,8 @@ struct AboutPage;
 #[template(path = "detail.html")]
 struct DetailPage {
     d: TitleDetail,
+    /// Always unwatched for movies.
+    watched: Watched,
 }
 
 #[derive(Template)]
@@ -131,6 +137,7 @@ struct CreditsPage {
 #[template(path = "season.html")]
 struct SeasonPage {
     s: SeasonDetail,
+    watched: Watched,
 }
 
 #[derive(Template)]
@@ -149,6 +156,13 @@ struct ErrorPage {
 #[derive(Deserialize)]
 struct SearchParams {
     q: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WatchedForm {
+    watched: bool,
+    /// Page to return to; only pages of the same show are honored.
+    back: Option<String>,
 }
 
 async fn search_page(
@@ -198,8 +212,12 @@ async fn detail_page(
     if let Ok(d) = &result {
         catalog.record_view(RecentView::of_title(d)).await;
     }
+    let watched = match kind {
+        MediaKind::Tv if result.is_ok() => catalog.watched(id).await,
+        _ => Watched::default(),
+    };
     page(
-        result.map(|d| DetailPage { d }),
+        result.map(|d| DetailPage { d, watched }),
         || not_found_title(kind),
         "Couldn't load this title",
     )
@@ -228,8 +246,98 @@ async fn season_page(
     let (Ok(id), Ok(number)) = (id.parse::<u64>(), number.parse::<u32>()) else {
         return not_found_season();
     };
-    let result = catalog.season(id, number).await.map(|s| SeasonPage { s });
-    page(result, not_found_season, "Couldn't load this season")
+    let result = catalog.season(id, number).await;
+    let watched = match &result {
+        Ok(_) => catalog.watched(id).await,
+        Err(_) => Watched::default(),
+    };
+    page(
+        result.map(|s| SeasonPage { s, watched }),
+        not_found_season,
+        "Couldn't load this season",
+    )
+}
+
+async fn set_show_watched(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    Form(form): Form<WatchedForm>,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return not_found_title(MediaKind::Tv);
+    };
+    let back = form
+        .back
+        .filter(|back| is_show_page(back, id))
+        .unwrap_or_else(|| title_path(MediaKind::Tv, id));
+    save_watched(&catalog, id, WatchTarget::Show, form.watched, &back).await
+}
+
+async fn set_season_watched(
+    State(catalog): State<Catalog>,
+    Path((id, number)): Path<(String, String)>,
+    Form(form): Form<WatchedForm>,
+) -> Response {
+    let (Ok(id), Ok(number)) = (id.parse::<u64>(), number.parse::<u32>()) else {
+        return not_found_season();
+    };
+    let back = format!("/tv/{id}/season/{number}");
+    save_watched(
+        &catalog,
+        id,
+        WatchTarget::Season(number),
+        form.watched,
+        &back,
+    )
+    .await
+}
+
+async fn set_episode_watched(
+    State(catalog): State<Catalog>,
+    Path((id, season, number)): Path<(String, String, String)>,
+    Form(form): Form<WatchedForm>,
+) -> Response {
+    let (Ok(id), Ok(season), Ok(number)) = (
+        id.parse::<u64>(),
+        season.parse::<u32>(),
+        number.parse::<u32>(),
+    ) else {
+        return not_found_season();
+    };
+    let back = format!("/tv/{id}/season/{season}#episode-{number}");
+    let target = WatchTarget::Episode { season, number };
+    save_watched(&catalog, id, target, form.watched, &back).await
+}
+
+/// Saves a watched mark, then sends the browser back to `back`.
+async fn save_watched(
+    catalog: &Catalog,
+    id: u64,
+    target: WatchTarget,
+    watched: bool,
+    back: &str,
+) -> Response {
+    match catalog.set_watched(id, target, watched).await {
+        Ok(()) => Redirect::to(back).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, id, ?target, "saving watched state failed");
+            error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save watched state",
+                "The database couldn't be updated. Please try again.",
+            )
+        }
+    }
+}
+
+/// The show's own page or one of its subpages, so a form can't redirect elsewhere.
+fn is_show_page(path: &str, id: u64) -> bool {
+    let show = title_path(MediaKind::Tv, id);
+    path.strip_prefix(&show).is_some_and(|rest| {
+        (rest.is_empty() || rest.starts_with('/'))
+            && rest.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'/')
+            && !rest.contains("//")
+    })
 }
 
 async fn person_page(State(catalog): State<Catalog>, Path(id): Path<String>) -> Response {
