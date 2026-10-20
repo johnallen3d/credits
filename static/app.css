@@ -43,7 +43,8 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .recent h2 { font-size: 1.25rem; margin: 0 0 1rem; }
 .results { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
 .result a { display: flex; gap: 1rem; padding: .75rem; background: var(--card); border: 1px solid var(--line); border-radius: 8px; color: inherit; text-decoration: none; }
-.result a:hover, .result a:focus-visible { border-color: var(--accent); }
+.result a:hover, .result a:focus-visible, .result a.selected { border-color: var(--accent); }
+.result a.selected { box-shadow: 0 0 0 1px var(--accent); }
 .result h2 { margin: .25rem 0; font-size: 1.1rem; }
 .overview { margin: 0; }
 .result .overview { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
@@ -83,7 +84,8 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .crumbs a { text-decoration: none; }
 .tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 1rem; }
 .tiles a { display: flex; flex-direction: column; gap: .2rem; color: inherit; text-decoration: none; }
-.tiles a:hover .name, .tiles a:focus-visible .name { color: var(--accent); }
+.tiles a:hover .name, .tiles a:focus-visible .name, .tiles a.selected .name { color: var(--accent); }
+.tiles a.selected .poster { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tiles .poster { width: 100%; height: auto; aspect-ratio: 2 / 3; margin-bottom: .3rem; }
 .tiles .name { font-weight: 600; font-size: .95rem; line-height: 1.3; }
 .tiles .role { font-size: .85rem; color: var(--muted); line-height: 1.3; }
