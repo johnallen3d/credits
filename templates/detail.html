@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% import "_watch.html" as watch %}
 {% import "_watchlist.html" as watchlist %}
+{% import "_favorite.html" as favorite %}
 {% block title %}{{ d.title }} · credits{% endblock %}
 {% block content %}
 {% let metadata = d.metadata %}{% include "_stale.html" %}
@@ -20,7 +21,11 @@
       {% if let Some(original) = d.original_title %}<p class="original">{{ original }}</p>{% endif %}
       {% if let Some(tagline) = d.tagline %}<p class="tagline">{{ tagline }}</p>{% endif %}
       {% let page = d.path() %}
+      <div class="title-actions">
       {% call watchlist::toggle(d.kind.slug(), d.id, d.title, listed, "watchlist-toggle", page, "To watch", true) %}{% endcall %}
+      {% call favorite::toggle(d.kind.slug(), d.id, d.title, favorited, "favorite-toggle", page, "Favorite", true) %}{% endcall %}
+      </div>
+      {% if favorited.is_none() %}<p class="muted" role="status">Favorites couldn't be read. Please reload to try again.</p>{% endif %}
       <section class="ratings" aria-label="Ratings">
         {% if d.ratings.is_unavailable() %}
         <p class="rating muted">{{ d.ratings.unavailable_message() }}</p>

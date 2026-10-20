@@ -54,13 +54,22 @@ pub fn app(catalog: Catalog) -> Router {
         )
         .route(
             "/movie/{id}/watchlist",
-            post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Movie)),
+            post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Movie, false)),
         )
         .route(
             "/tv/{id}/watchlist",
-            post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Tv)),
+            post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Tv, false)),
         )
-        .route("/watchlist", get(watchlist_page))
+        .route(
+            "/movie/{id}/favorite",
+            post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Movie, true)),
+        )
+        .route(
+            "/tv/{id}/favorite",
+            post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Tv, true)),
+        )
+        .route("/watchlist", get(|s, q| watchlist_page(s, q, false)))
+        .route("/favorites", get(|s, q| watchlist_page(s, q, true)))
         .route("/person/{id}", get(person_page))
         .route("/api/search", get(api_search))
         .route(
@@ -82,7 +91,8 @@ pub fn app(catalog: Catalog) -> Router {
             get(api_episode),
         )
         .route("/api/person/{id}", get(api_person))
-        .route("/api/watchlist", get(api_watchlist))
+        .route("/api/watchlist", get(|s, q| api_watchlist(s, q, false)))
+        .route("/api/favorites", get(|s, q| api_watchlist(s, q, true)))
         .route(
             "/static/htmx.min.js",
             get(|| asset("text/javascript", include_str!("../static/htmx.min.js"))),
@@ -152,6 +162,7 @@ struct DetailPage {
     watched: Watched,
     /// On the "To watch" list.
     listed: bool,
+    favorited: Option<bool>,
 }
 
 #[derive(Template)]
@@ -185,6 +196,7 @@ struct PersonPage {
     tab: usize,
     /// Titles on the "To watch" list.
     listed: HashSet<(MediaKind, u64)>,
+    favorited: Option<HashSet<(MediaKind, u64)>>,
 }
 
 impl PersonPage {
@@ -194,6 +206,7 @@ impl PersonPage {
         kind: KindFilter,
         dept: Option<&str>,
         listed: HashSet<(MediaKind, u64)>,
+        favorited: Option<HashSet<(MediaKind, u64)>>,
     ) -> Self {
         let groups: Vec<FilmographyGroup> = p
             .filmography
@@ -218,11 +231,22 @@ impl PersonPage {
             groups,
             tab,
             listed,
+            favorited,
         }
     }
 
     fn is_listed(&self, e: &FilmographyEntry) -> bool {
         self.listed.contains(&(e.kind, e.id))
+    }
+
+    fn is_favorite(&self, e: &FilmographyEntry) -> Option<bool> {
+        self.favorited
+            .as_ref()
+            .map(|titles| titles.contains(&(e.kind, e.id)))
+    }
+
+    fn favorite_back_to(&self, e: &FilmographyEntry) -> String {
+        self.back_to(e).replace("#watchlist-", "#favorite-")
     }
 
     /// This page as it is, scrolled to `e`'s row, for its watchlist toggle.
@@ -291,17 +315,51 @@ struct WatchlistPage {
     kind: KindFilter,
     /// The titles of `kind`, in the list's order.
     shown: Vec<FilmographyEntry>,
+    favorites: bool,
+    listed: HashSet<(MediaKind, u64)>,
+    favorited: Option<HashSet<(MediaKind, u64)>>,
 }
 
 impl WatchlistPage {
-    fn new(w: WatchlistDetail, kind: KindFilter) -> Self {
+    fn new(
+        w: WatchlistDetail,
+        kind: KindFilter,
+        favorites: bool,
+        listed: HashSet<(MediaKind, u64)>,
+        favorited: Option<HashSet<(MediaKind, u64)>>,
+    ) -> Self {
         let shown = w
             .titles
             .iter()
             .filter(|e| kind.matches(e.kind))
             .cloned()
             .collect();
-        WatchlistPage { w, kind, shown }
+        WatchlistPage {
+            w,
+            kind,
+            shown,
+            favorites,
+            listed,
+            favorited,
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        if self.favorites {
+            "Favorites"
+        } else {
+            "To watch"
+        }
+    }
+
+    fn is_listed(&self, e: &FilmographyEntry) -> bool {
+        self.listed.contains(&(e.kind, e.id))
+    }
+
+    fn is_favorite(&self, e: &FilmographyEntry) -> Option<bool> {
+        self.favorited
+            .as_ref()
+            .map(|titles| titles.contains(&(e.kind, e.id)))
     }
 
     fn kind_count(&self, kind: &KindFilter) -> usize {
@@ -313,20 +371,25 @@ impl WatchlistPage {
     }
 
     fn kind_href(&self, kind: &KindFilter) -> String {
-        watchlist_href(self.w.sort, *kind)
+        watchlist_href(self.w.sort, *kind, self.favorites)
     }
 
     fn sort_href(&self, sort: WatchlistSort) -> String {
-        watchlist_href(sort, self.kind)
+        watchlist_href(sort, self.kind, self.favorites)
     }
 
     /// Where a removal returns to: this page as it is.
     fn back(&self) -> String {
-        watchlist_href(self.w.sort, self.kind)
+        watchlist_href(self.w.sort, self.kind, self.favorites)
     }
 }
 
-fn watchlist_href(sort: WatchlistSort, kind: KindFilter) -> String {
+fn watchlist_href(sort: WatchlistSort, kind: KindFilter, favorites: bool) -> String {
+    let path = if favorites {
+        "/favorites"
+    } else {
+        "/watchlist"
+    };
     let mut query = Vec::new();
     if sort.is_rating() {
         query.push("sort=rating".to_owned());
@@ -335,15 +398,30 @@ fn watchlist_href(sort: WatchlistSort, kind: KindFilter) -> String {
         query.push(format!("kind={kind}"));
     }
     if query.is_empty() {
-        "/watchlist".to_owned()
+        path.to_owned()
     } else {
-        format!("/watchlist?{}", query.join("&"))
+        format!("{path}?{}", query.join("&"))
     }
 }
 
 /// The element id of a title's watchlist toggle, unique on any page.
 fn watchlist_toggle_id(e: &FilmographyEntry) -> String {
     format!("watchlist-{}-{}", e.kind.slug(), e.id)
+}
+
+fn favorite_toggle_id(e: &FilmographyEntry) -> String {
+    format!("favorite-{}-{}", e.kind.slug(), e.id)
+}
+
+/// Unknown state disables hearts instead of offering a misleading toggle.
+async fn favorite_titles(catalog: &Catalog) -> Option<HashSet<(MediaKind, u64)>> {
+    match catalog.favorite_titles().await {
+        Ok(titles) => Some(titles),
+        Err(e) => {
+            tracing::warn!(error = %e, "reading favorites failed");
+            None
+        }
+    }
 }
 
 #[derive(Template)]
@@ -439,8 +517,16 @@ async fn detail_page(
         _ => Watched::default(),
     };
     let listed = result.is_ok() && catalog.watchlist_titles().await.contains(&(kind, id));
+    let favorited = favorite_titles(&catalog)
+        .await
+        .map(|titles| titles.contains(&(kind, id)));
     page(
-        result.map(|d| DetailPage { d, watched, listed }),
+        result.map(|d| DetailPage {
+            d,
+            watched,
+            listed,
+            favorited,
+        }),
         || not_found_title(kind),
         "Couldn't load this title",
     )
@@ -602,10 +688,11 @@ async fn person_page(
         }
         Err(_) => HashSet::new(),
     };
+    let favorited = favorite_titles(&catalog).await;
     page(
         result.map(|p| {
             let kind = KindFilter::from_query(params.kind.as_deref());
-            PersonPage::new(p, kind, params.dept.as_deref(), listed)
+            PersonPage::new(p, kind, params.dept.as_deref(), listed, favorited)
         }),
         not_found_person,
         "Couldn't load this person",
@@ -617,17 +704,22 @@ async fn set_on_watchlist(
     Path(id): Path<String>,
     Form(form): Form<WatchlistForm>,
     kind: MediaKind,
+    favorites: bool,
 ) -> Response {
     let Ok(id) = id.parse::<u64>() else {
         return not_found_title(kind);
     };
-    let result = if form.listed {
-        catalog.add_to_watchlist(kind, id).await
-    } else {
-        catalog
+    let result = match (favorites, form.listed) {
+        (true, true) => catalog.add_favorite(kind, id).await,
+        (false, true) => catalog.add_to_watchlist(kind, id).await,
+        (true, false) => catalog
+            .remove_favorite(kind, id)
+            .await
+            .map_err(WatchlistError::from),
+        (false, false) => catalog
             .remove_from_watchlist(kind, id)
             .await
-            .map_err(WatchlistError::from)
+            .map_err(WatchlistError::from),
     };
     match result {
         Ok(()) => {
@@ -642,7 +734,11 @@ async fn set_on_watchlist(
             tracing::warn!(error = %e, ?kind, id, "title lookup for watchlist failed");
             error_page(
                 status_for(&e),
-                "Couldn't add to your To watch list",
+                if favorites {
+                    "Couldn't add to your Favorites"
+                } else {
+                    "Couldn't add to your To watch list"
+                },
                 user_message(&e),
             )
         }
@@ -650,7 +746,11 @@ async fn set_on_watchlist(
             tracing::warn!(error = %e, ?kind, id, "saving watchlist failed");
             error_page(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't update your To watch list",
+                if favorites {
+                    "Couldn't update your Favorites"
+                } else {
+                    "Couldn't update your To watch list"
+                },
                 "The database couldn't be updated. Please try again.",
             )
         }
@@ -667,16 +767,33 @@ fn is_local_path(path: &str) -> bool {
 async fn watchlist_page(
     State(catalog): State<Catalog>,
     Query(params): Query<WatchlistParams>,
+    favorites: bool,
 ) -> Response {
     let sort = WatchlistSort::from_query(params.sort.as_deref());
     let kind = KindFilter::from_query(params.kind.as_deref());
-    match catalog.watchlist(sort).await {
-        Ok(w) => html(StatusCode::OK, WatchlistPage::new(w, kind).render()),
+    let result = if favorites {
+        catalog.favorites(sort).await
+    } else {
+        catalog.watchlist(sort).await
+    };
+    match result {
+        Ok(w) => {
+            let listed = catalog.watchlist_titles().await;
+            let favorited = favorite_titles(&catalog).await;
+            html(
+                StatusCode::OK,
+                WatchlistPage::new(w, kind, favorites, listed, favorited).render(),
+            )
+        }
         Err(e) => {
             tracing::warn!(error = %e, "reading the watchlist failed");
             error_page(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't load your To watch list",
+                if favorites {
+                    "Couldn't load your Favorites"
+                } else {
+                    "Couldn't load your To watch list"
+                },
                 "The database couldn't be read. Please try again.",
             )
         }
@@ -686,10 +803,16 @@ async fn watchlist_page(
 async fn api_watchlist(
     State(catalog): State<Catalog>,
     Query(params): Query<WatchlistParams>,
+    favorites: bool,
 ) -> Response {
     let sort = WatchlistSort::from_query(params.sort.as_deref());
     let kind = KindFilter::from_query(params.kind.as_deref());
-    match catalog.watchlist(sort).await {
+    let result = if favorites {
+        catalog.favorites(sort).await
+    } else {
+        catalog.watchlist(sort).await
+    };
+    match result {
         Ok(mut w) => {
             w.titles.retain(|e| kind.matches(e.kind));
             Json(w).into_response()
@@ -698,7 +821,11 @@ async fn api_watchlist(
             tracing::warn!(error = %e, "api watchlist read failed");
             api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "the watchlist couldn't be read",
+                if favorites {
+                    "favorites couldn't be read"
+                } else {
+                    "the watchlist couldn't be read"
+                },
             )
         }
     }

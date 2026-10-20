@@ -63,12 +63,12 @@ pub enum CatalogError {
     Provider(String),
 }
 
-/// Why a title couldn't be added to the "To watch" list.
+/// Why a title couldn't be added to a saved list.
 #[derive(Debug, thiserror::Error)]
 pub enum WatchlistError {
     #[error(transparent)]
     Title(#[from] CatalogError),
-    #[error("saving to the watchlist failed: {0}")]
+    #[error("saving to the title list failed: {0}")]
     Database(#[from] sqlx::Error),
 }
 
@@ -81,6 +81,7 @@ pub struct Catalog {
     recent: RecentlyViewed,
     watched: WatchedShows,
     watchlist: Watchlist,
+    favorites: Watchlist,
     metadata_ttl: Duration,
 }
 
@@ -119,6 +120,7 @@ impl Catalog {
             recent: RecentlyViewed::new(cache.pool()),
             watched: WatchedShows::new(cache.pool()),
             watchlist: Watchlist::new(cache.pool()),
+            favorites: Watchlist::favorites(cache.pool()),
             cache,
             metadata_ttl: config.metadata_ttl,
         })
@@ -165,7 +167,19 @@ impl Catalog {
     /// The "To watch" list in `sort` order. Unlike other saved state, a
     /// failed read is an error, so the page never passes it off as empty.
     pub async fn watchlist(&self, sort: WatchlistSort) -> Result<WatchlistDetail, sqlx::Error> {
-        let mut titles = self.watchlist.list().await?;
+        self.saved_list(&self.watchlist, sort).await
+    }
+
+    pub async fn favorites(&self, sort: WatchlistSort) -> Result<WatchlistDetail, sqlx::Error> {
+        self.saved_list(&self.favorites, sort).await
+    }
+
+    async fn saved_list(
+        &self,
+        list: &Watchlist,
+        sort: WatchlistSort,
+    ) -> Result<WatchlistDetail, sqlx::Error> {
+        let mut titles = list.list().await?;
         let sort_ratings = match sort {
             WatchlistSort::Added => None,
             WatchlistSort::Rating => Some(self.sort_by_rating(&mut [&mut titles]).await),
@@ -189,6 +203,28 @@ impl Catalog {
     /// Saves a title to the "To watch" list, with its name, year and poster
     /// from its cached TMDB entry.
     pub async fn add_to_watchlist(&self, kind: MediaKind, id: u64) -> Result<(), WatchlistError> {
+        self.save_title(&self.watchlist, kind, id).await
+    }
+
+    pub async fn add_favorite(&self, kind: MediaKind, id: u64) -> Result<(), WatchlistError> {
+        self.save_title(&self.favorites, kind, id).await
+    }
+
+    pub async fn remove_favorite(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {
+        self.favorites.remove(kind, id).await
+    }
+
+    /// Keep read failures distinct from an empty list, even on browsing pages.
+    pub async fn favorite_titles(&self) -> Result<HashSet<(MediaKind, u64)>, sqlx::Error> {
+        self.favorites.titles().await
+    }
+
+    async fn save_title(
+        &self,
+        list: &Watchlist,
+        kind: MediaKind,
+        id: u64,
+    ) -> Result<(), WatchlistError> {
         let (title, date, poster_path) = match kind {
             MediaKind::Movie => {
                 let (m, _) = self.movie_raw(id).await?;
@@ -209,7 +245,7 @@ impl Catalog {
             poster_url: self.image(THUMB_SIZE, poster_path),
             rating: None,
         };
-        Ok(self.watchlist.add(&entry, Timestamp::now()).await?)
+        Ok(list.add(&entry, Timestamp::now()).await?)
     }
 
     pub async fn remove_from_watchlist(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {

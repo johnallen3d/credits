@@ -1,0 +1,16 @@
+{# None means the state is unknown: don't pretend the title is not a favorite. #}
+{% macro toggle(kind, title_id, title, favorited, id, back, text, inline) %}
+<form class="watch-toggle favorite-toggle" id="{{ id }}" method="post" action="/{{ kind }}/{{ title_id }}/favorite"{% if inline %} hx-post="/{{ kind }}/{{ title_id }}/favorite" hx-target="#{{ id }}" hx-select="#{{ id }}" hx-swap="outerHTML" hx-on::before-swap="if (event.detail.xhr.status >= 400) { event.detail.shouldSwap = false; this.querySelector('[role=alert]').hidden = false; }" hx-on::send-error="this.querySelector('[role=alert]').hidden = false" hx-on::timeout="this.querySelector('[role=alert]').hidden = false"{% endif %}>
+  {% if let Some(saved) = favorited %}
+  <input type="hidden" name="listed" value="{{ !saved }}">
+  <input type="hidden" name="back" value="{{ back }}">
+  <button type="submit"{% if text.is_empty() %} class="icon-only"{% endif %} aria-pressed="{{ saved }}" aria-label="Favorite: {{ title }}" title="{% if saved %}In your Favorites; select to remove{% else %}Add to your Favorites{% endif %}">
+  {% else %}
+  <button type="submit"{% if text.is_empty() %} class="icon-only"{% endif %} disabled aria-label="Favorites unavailable: {{ title }}" title="Favorites couldn't be read. Please reload to try again.">
+  {% endif %}
+    <svg class="heart" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/></svg>
+    {%- if !text.is_empty() %}<span>{{ text }}</span>{% endif -%}
+  </button>
+  {% if inline %}<span class="favorite-error" role="alert" hidden>Couldn't update Favorites. Please try again.</span>{% endif %}
+</form>
+{% endmacro %}

@@ -1,4 +1,4 @@
-//! Movies and TV shows saved to watch later, stored next to the provider cache.
+//! Persistent title lists (To watch and Favorites), beside the provider cache.
 
 use std::collections::HashSet;
 
@@ -13,22 +13,35 @@ type Row = (String, i64, String, Option<String>, Option<String>);
 #[derive(Clone)]
 pub struct Watchlist {
     pool: SqlitePool,
+    // Only constructors choose the table; never interpolated from user input.
+    table: &'static str,
 }
 
 impl Watchlist {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            table: "watchlist",
+        }
+    }
+
+    pub fn favorites(pool: SqlitePool) -> Self {
+        Self {
+            pool,
+            table: "favorites",
+        }
     }
 
     /// Saves `title`. Adding it again refreshes its display fields but keeps
     /// its place in the list.
     pub async fn add(&self, title: &FilmographyEntry, at: Timestamp) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO watchlist (kind, id, title, year, poster_url, added_at)
+        sqlx::query(&format!(
+            "INSERT INTO {} (kind, id, title, year, poster_url, added_at)
              VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT (kind, id) DO UPDATE SET
                  title = excluded.title, year = excluded.year, poster_url = excluded.poster_url",
-        )
+            self.table,
+        ))
         .bind(title.kind.slug())
         .bind(title.id as i64)
         .bind(&title.title)
@@ -41,20 +54,24 @@ impl Watchlist {
     }
 
     pub async fn remove(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM watchlist WHERE kind = ? AND id = ?")
-            .bind(kind.slug())
-            .bind(id as i64)
-            .execute(&self.pool)
-            .await
-            .map(drop)
+        sqlx::query(&format!(
+            "DELETE FROM {} WHERE kind = ? AND id = ?",
+            self.table
+        ))
+        .bind(kind.slug())
+        .bind(id as i64)
+        .execute(&self.pool)
+        .await
+        .map(drop)
     }
 
     /// Most recently added first.
     pub async fn list(&self) -> Result<Vec<FilmographyEntry>, sqlx::Error> {
-        let rows: Vec<Row> = sqlx::query_as(
-            "SELECT kind, id, title, year, poster_url FROM watchlist
+        let rows: Vec<Row> = sqlx::query_as(&format!(
+            "SELECT kind, id, title, year, poster_url FROM {}
              ORDER BY added_at DESC, rowid DESC",
-        )
+            self.table,
+        ))
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -76,9 +93,10 @@ impl Watchlist {
 
     /// Which titles are saved, for marking them while browsing.
     pub async fn titles(&self) -> Result<HashSet<(MediaKind, u64)>, sqlx::Error> {
-        let rows: Vec<(String, i64)> = sqlx::query_as("SELECT kind, id FROM watchlist")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<(String, i64)> =
+            sqlx::query_as(&format!("SELECT kind, id FROM {}", self.table))
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows
             .into_iter()
             .filter_map(|(kind, id)| Some((MediaKind::from_slug(&kind)?, u64::try_from(id).ok()?)))
@@ -106,7 +124,16 @@ mod tests {
 
     #[tokio::test]
     async fn newest_first_and_re_adding_keeps_the_original_place() {
-        let list = Watchlist::new(ProviderCache::open(IN_MEMORY).await.unwrap().pool());
+        let pool = ProviderCache::open(IN_MEMORY).await.unwrap().pool();
+        for list in [
+            Watchlist::new(pool.clone()),
+            Watchlist::favorites(pool.clone()),
+        ] {
+            assert_list_order_and_identity(list).await;
+        }
+    }
+
+    async fn assert_list_order_and_identity(list: Watchlist) {
         let at = Timestamp::from_second(1_700_000_000).unwrap();
         list.add(&title(MediaKind::Movie, 1, "One"), at)
             .await

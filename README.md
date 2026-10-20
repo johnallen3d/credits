@@ -56,6 +56,16 @@ title's name, year and poster are a snapshot of its cached TMDB entry, taken
 when it's added. If the list can't be read, the page says so rather than
 showing it empty.
 
+## Favorites
+
+Heart a movie or TV show on its detail page, beside a filmography credit, or
+in either saved list. Favorites are independent of To watch and persist in
+SQLite. Open Favorites from the header; filter All / Movies / TV and sort by
+Added (newest first) or Rating, just like To watch. Unhearting removes a title
+from Favorites only. If favorite state cannot be read, hearts are disabled
+rather than showing an incorrect unsaved state; list and save failures are
+reported explicitly.
+
 ## Routes
 
 | HTML | JSON |
@@ -68,6 +78,8 @@ showing it empty.
 | `/tv/{id}/season/{n}/episode/{e}` | `/api/tv/{id}/season/{n}/episode/{e}` |
 | `/person/{id}` (`?sort=rating`) | `/api/person/{id}` (`?sort=rating`) |
 | `/watchlist` (`?kind=movie\|tv`, `?sort=rating`) | `/api/watchlist` (same parameters) |
+| `/favorites` (`?kind=movie\|tv`, `?sort=rating`) | `/api/favorites` (same parameters) |
+| `POST /movie/{id}/favorite`, `POST /tv/{id}/favorite` (form: `listed=true\|false`) | |
 | `POST /movie/{id}/watchlist`, `POST /tv/{id}/watchlist` (form: `listed=true\|false`) | |
 | `POST /tv/{id}/watched`, `POST /tv/{id}/season/{n}/watched` (form: `watched=true\|false`) | |
 

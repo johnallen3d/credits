@@ -133,10 +133,15 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .watch-toggle button[aria-pressed="true"] { color: var(--person); border-color: var(--person); }
 .watch-toggle button:hover:not(:disabled), .watch-toggle button:focus-visible { border-color: var(--accent); color: var(--accent); }
 .watch-toggle button:disabled { opacity: .55; cursor: default; }
-.watch-toggle .eye, .bookmark { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.watch-toggle .eye, .bookmark, .heart { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .watchlist-toggle button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .watchlist-toggle button[aria-pressed="true"] .bookmark { fill: currentColor; }
-.detail .watchlist-toggle { margin: .5rem 0; }
+.title-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+.detail .meta > .title-actions { margin: .5rem 0; }
+.favorite-toggle button[aria-pressed="true"] { color: #e86a92; border-color: #e86a92; }
+.favorite-toggle button[aria-pressed="true"] .heart { fill: currentColor; }
+.favorite-error:not([hidden]) { display: block; max-width: 15rem; color: var(--error-fg); font-size: .85rem; margin-top: .25rem; }
+.filmography .favorite-toggle button { border-color: transparent; background: none; }
 .filmography.with-toggle li { grid-template-columns: 3.5rem 46px 1fr auto; }
 .filmography .watchlist-toggle button { border-color: transparent; background: none; }
 .filmography li.empty-row { display: block; padding: .75rem 0; }

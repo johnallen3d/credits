@@ -407,10 +407,20 @@ async fn build_with(
     ratings_ttl: Duration,
     metadata_ttl: Duration,
 ) -> TestApp {
+    build_with_database(token, omdb_key, ratings_ttl, metadata_ttl, IN_MEMORY).await
+}
+
+async fn build_with_database(
+    token: &str,
+    omdb_key: Option<&str>,
+    ratings_ttl: Duration,
+    metadata_ttl: Duration,
+    database: &str,
+) -> TestApp {
     let mut config = Config::from_lookup(|key| match key {
         "TMDB_API_TOKEN" => Some(token.to_owned()),
         "OMDB_API_KEY" => omdb_key.map(str::to_owned),
-        "CREDITS_DB" => Some(IN_MEMORY.to_owned()),
+        "CREDITS_DB" => Some(database.to_owned()),
         _ => None,
     })
     .unwrap();
@@ -1611,6 +1621,196 @@ async fn titles_are_added_to_and_removed_from_the_watchlist_while_browsing() {
     }
     let (_, json) = get_json(t.app(), "/api/watchlist").await;
     assert_eq!(json["titles"], json!([]));
+}
+
+#[tokio::test]
+async fn favorites_are_independent_filterable_and_toggle_while_browsing() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (status, _, body) = get_page(t.app(), "/favorites", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"<a href="/favorites">Favorites</a>"#));
+    assert!(body.contains("No favorites yet."));
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(r#"aria-pressed="false" aria-label="Favorite: The Matrix""#));
+    assert!(body.contains(r##"hx-post="/movie/603/favorite" hx-target="#favorite-toggle" hx-select="#favorite-toggle""##));
+    assert!(body.contains("hx-on::before-swap="));
+    assert!(body.contains(r#"role="alert" hidden>Couldn't update Favorites. Please try again."#));
+
+    post_form(t.app(), "/movie/603/favorite", "listed=true").await;
+    let (status, headers) = post_form(
+        t.app(),
+        "/tv/1396/favorite",
+        "listed=true&back=%2Fperson%2F6384%3Fkind%3Dtv%23favorite-tv-1396",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers[header::LOCATION],
+        "/person/6384?kind=tv#favorite-tv-1396"
+    );
+    // Repeated requests keep one entry and its original position.
+    post_form(t.app(), "/movie/603/favorite", "listed=true").await;
+    let (_, json) = get_json(t.app(), "/api/favorites").await;
+    assert_eq!(json["titles"].as_array().unwrap().len(), 2);
+    assert_eq!(json["titles"][0]["title"], "Breaking Bad");
+    assert_eq!(
+        json["titles"][1]["poster_url"],
+        "https://img.test/t/p/w92/matrix.jpg"
+    );
+    let (_, watchlist) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(watchlist["titles"], json!([]));
+
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(r#"aria-pressed="true" aria-label="Favorite: The Matrix""#));
+    assert!(body.contains(r#"aria-pressed="false" aria-label="To watch: The Matrix""#));
+    let (_, _, body) = get_page(t.app(), "/person/6384", true).await;
+    assert!(body.contains(r##"id="favorite-movie-603" method="post" action="/movie/603/favorite" hx-post="/movie/603/favorite" hx-target="#favorite-movie-603" hx-select="#favorite-movie-603""##));
+    assert!(body.contains(r#"name="back" value="/person/6384#favorite-movie-603""#));
+    assert!(body.contains(r#"aria-pressed="true" aria-label="Favorite: The Matrix""#));
+
+    let (_, _, body) = get_page(t.app(), "/favorites?sort=rating&kind=movie", false).await;
+    assert!(body.contains("The Matrix</a>") && !body.contains("Breaking Bad</a>"));
+    assert!(body.contains(
+        r#"<a href="/favorites?sort=rating&#38;kind=movie" aria-current="true">Rating</a>"#
+    ));
+    assert!(body.contains(r#"<a href="/favorites?kind=movie">Added</a>"#));
+    assert!(body.contains(
+        r#"<a href="/favorites?sort=rating&#38;kind=tv">TV <span class="count">1</span></a>"#
+    ));
+    assert!(body.contains(r#"name="back" value="/favorites?sort=rating&#38;kind=movie""#));
+    let (_, filtered) = get_json(t.app(), "/api/favorites?kind=tv").await;
+    assert_eq!(filtered["titles"].as_array().unwrap().len(), 1);
+    assert_eq!(filtered["titles"][0]["kind"], "tv");
+    let (_, fallback) = get_json(t.app(), "/api/favorites?kind=unknown&sort=unknown").await;
+    assert_eq!(fallback["sort"], "added");
+    assert_eq!(fallback["titles"].as_array().unwrap().len(), 2);
+
+    // Each list offers both toggles, without changing membership in the other.
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert!(body.contains(r#"aria-pressed="true" aria-label="Favorite: The Matrix""#));
+    let (_, _, body) = get_page(t.app(), "/favorites", false).await;
+    assert!(body.contains(r#"aria-pressed="true" aria-label="To watch: The Matrix""#));
+    let (_, headers) = post_form(
+        t.app(),
+        "/movie/603/favorite",
+        "listed=false&back=%2Ffavorites%3Fkind%3Dmovie",
+    )
+    .await;
+    assert_eq!(headers[header::LOCATION], "/favorites?kind=movie");
+    let (_, _, body) = get_page(t.app(), "/favorites?kind=movie", false).await;
+    assert!(body.contains("No movies on your list."));
+    let (_, watchlist) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(watchlist["titles"][0]["id"], 603);
+
+    for back in [
+        "https%3A%2F%2Fexample.com",
+        "%2F%2Fexample.com",
+        "%2F%5Cexample.com",
+    ] {
+        let (_, headers) = post_form(
+            t.app(),
+            "/tv/1396/favorite",
+            &format!("listed=false&back={back}"),
+        )
+        .await;
+        assert_eq!(headers[header::LOCATION], "/tv/1396");
+    }
+    let (_, json) = get_json(t.app(), "/api/favorites").await;
+    assert_eq!(json["titles"], json!([]));
+}
+
+#[tokio::test]
+async fn favorite_ratings_and_provider_failures_are_explicit() {
+    let t = build_with(TOKEN, Some(OMDB_KEY), Duration::ZERO, Duration::ZERO).await;
+    post_form(t.app(), "/tv/1396/favorite", "listed=true").await;
+    post_form(t.app(), "/movie/603/favorite", "listed=true").await;
+    let (_, json) = get_json(t.app(), "/api/favorites?sort=rating").await;
+    assert_eq!(json["sort"], "rating");
+    assert_eq!(json["titles"][0]["title"], "Breaking Bad");
+    assert_eq!(json["titles"][1]["rating"]["source"], "rotten_tomatoes");
+    t.tmdb.set_down(true);
+    t.omdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/favorites?sort=rating", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Couldn't refresh some ratings"));
+    // Removing never needs an upstream lookup.
+    let (status, _) = post_form(t.app(), "/movie/603/favorite", "listed=false").await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    let t = build(TOKEN, None, Duration::from_secs(3600)).await;
+    post_form(t.app(), "/movie/603/favorite", "listed=true").await;
+    let (_, _, body) = get_page(t.app(), "/favorites?sort=rating", false).await;
+    assert!(body.contains("Ratings aren't configured on this server"));
+    for uri in ["/movie/1/favorite", "/movie/not-an-id/favorite"] {
+        let (status, _) = post_form(t.app(), uri, "listed=true").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    let (status, _) = post_form(t.app(), "/tv/500/favorite", "listed=true").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let (status, _) = post_form(t.app(), "/movie/603/favorite", "listed=invalid").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (_, json) = get_json(t.app(), "/api/favorites").await;
+    assert_eq!(json["titles"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn favorites_persist_and_storage_failures_never_look_empty() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "credits-favorites-{}-{unique}.db",
+        std::process::id()
+    ));
+    let database = path.to_str().unwrap();
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, database).await;
+    post_form(t.app(), "/movie/603/favorite", "listed=true").await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    drop(t);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, database).await;
+    let (_, json) = get_json(t.app(), "/api/favorites").await;
+    assert_eq!(json["titles"][0]["id"], 603);
+    let pool = credits::cache::ProviderCache::open(database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query("ALTER TABLE favorites RENAME TO favorites_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _, body) = get_page(t.app(), "/favorites", false).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(body.contains("Couldn&#39;t load your Favorites"));
+    assert!(!body.contains("No favorites yet."));
+    let (status, json) = get_json(t.app(), "/api/favorites").await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(json["error"].as_str().unwrap().contains("couldn't be read"));
+    for uri in ["/movie/603", "/person/6384", "/watchlist"] {
+        let (status, _, body) = get_page(t.app(), uri, false).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("Favorites couldn't be read."));
+        assert!(body.contains(r#"disabled aria-label="Favorites unavailable: The Matrix""#));
+        assert!(!body.contains(r#"aria-pressed="false" aria-label="Favorite: The Matrix""#));
+    }
+    for listed in ["true", "false"] {
+        let (status, _) =
+            post_form(t.app(), "/movie/603/favorite", &format!("listed={listed}")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    sqlx::query("ALTER TABLE favorites_unavailable RENAME TO favorites")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(r#"aria-pressed="true" aria-label="Favorite: The Matrix""#));
+    drop(t);
+    pool.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
 }
 
 #[tokio::test]
