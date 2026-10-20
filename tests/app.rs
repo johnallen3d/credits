@@ -1211,12 +1211,16 @@ async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     assert!(body.contains(r#"<a href="/tv/1396">Breaking Bad</a>"#));
     assert!(body.contains("as Neo / Thomas Anderson"));
     assert!(body.contains("· 1 episode"));
-    assert!(body.contains(r#"<a href="/movie/777">Man of Tai Chi</a>"#));
     assert!(body.contains(r#"<img class="poster thumb" src="https://img.test/t/p/w92/matrix.jpg" alt="" loading="lazy""#));
     assert!(body.contains(r#"<span class="poster thumb missing">No artwork</span>"#));
-    let acting = body.find(r#"id="dept-acting""#).unwrap();
-    let directing = body.find(r#"id="dept-directing""#).unwrap();
-    assert!(acting < directing, "known-for department first");
+    assert!(
+        body.contains(r#"id="dept-acting""#),
+        "known-for department shown first"
+    );
+    assert!(
+        !body.contains("Man of Tai Chi</a>"),
+        "other departments wait behind tabs"
+    );
     let filmography = &body[body.find(r#"id="filmography-heading""#).unwrap()..];
     let tba = filmography.find("TBA").unwrap();
     let matrix = filmography.find(r#"<a href="/movie/603">"#).unwrap();
@@ -1230,6 +1234,57 @@ async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     assert_eq!(acting["entries"].as_array().unwrap().len(), 4);
     assert_eq!(acting["entries"][2]["kind"], "tv");
     assert_eq!(acting["entries"][3]["role"], "Neo / Thomas Anderson");
+}
+
+#[tokio::test]
+async fn person_page_tabs_departments_and_filters_by_kind() {
+    let (_, _, body) = get_page(test_app().await, "/person/6384", false).await;
+    let tabs = &body[body.find(r#"<nav class="tabs""#).unwrap()..];
+    let tabs = &tabs[..tabs.find("</nav>").unwrap()];
+    assert!(tabs.contains(
+        r##"<a href="/person/6384#filmography-heading" aria-current="page">Acting <span class="count">4</span></a>"##
+    ));
+    assert!(
+        tabs.contains(r##"<a href="/person/6384?dept=directing#filmography-heading">Directing"##)
+    );
+    assert!(body.contains(
+        r##"<a href="/person/6384#filmography-heading" aria-current="true">All <span class="count">"##
+    ));
+
+    let (status, _, body) = get_page(test_app().await, "/person/6384?dept=directing", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"id="dept-directing""#));
+    assert!(body.contains(r#"<a href="/movie/777">Man of Tai Chi</a>"#));
+    assert!(!body.contains(r#"<a href="/movie/603">The Matrix</a>"#));
+    assert!(body.contains(
+        r##"<a href="/person/6384?sort=rating&#38;dept=directing#filmography-heading">Rating</a>"##
+    ));
+    assert!(
+        body.contains(
+            r##"<a href="/person/6384?kind=tv&#38;dept=directing#filmography-heading">TV"##
+        )
+    );
+
+    let (_, _, body) = get_page(test_app().await, "/person/6384?kind=tv", false).await;
+    assert!(body.contains(r#"<a href="/tv/1396">Breaking Bad</a>"#));
+    assert!(!body.contains(r#"<a href="/movie/603">The Matrix</a>"#));
+    assert!(body.contains(
+        r##"<a href="/person/6384?kind=tv#filmography-heading" aria-current="true">TV"##
+    ));
+    assert!(
+        !body.contains(">Directing <"),
+        "departments without TV credits drop out"
+    );
+
+    // A department the kind leaves empty falls back to the first tab.
+    let (status, _, body) = get_page(
+        test_app().await,
+        "/person/6384?kind=tv&dept=directing",
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"id="dept-acting""#));
 }
 
 #[tokio::test]

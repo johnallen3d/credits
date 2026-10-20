@@ -50,20 +50,24 @@
     {% else %}
     <nav class="sort" aria-label="Sort credits">
       <span class="muted">Sort by</span>
-      <a href="{{ p.path() }}#filmography-heading"{% if !p.sort.is_rating() %} aria-current="true"{% endif %}>Date</a>
-      <a href="{{ p.path() }}?sort=rating#filmography-heading"{% if p.sort.is_rating() %} aria-current="true"{% endif %}>Rating</a>
+      <a href="{{ self.sort_href(FilmographySort::Date) }}"{% if !p.sort.is_rating() %} aria-current="true"{% endif %}>Date</a>
+      <a href="{{ self.sort_href(FilmographySort::Rating) }}"{% if p.sort.is_rating() %} aria-current="true"{% endif %}>Rating</a>
+    </nav>
+    <nav class="sort" aria-label="Filter credits">
+      <span class="muted">Show</span>
+      {% for k in KindFilter::ALL %}<a href="{{ self.kind_href(k) }}"{% if k == kind %} aria-current="true"{% endif %}>{{ k.label() }} <span class="count">{{ self.kind_count(k) }}</span></a>
+      {% endfor %}
     </nav>
     {% if let Some(r) = p.sort_ratings %}
     {% if let Some(message) = r.unavailable_message() %}<p class="muted sort-note">{{ message }}</p>{% endif %}
     {% if let Some(day) = r.stale_on() %}<p class="rating-stale sort-note">Couldn't refresh some ratings; using scores from as early as {{ day }}.</p>{% endif %}
     {% if r.unrated > 0 && r.unavailable_reason.is_none() %}<p class="muted sort-note">Credits without a Rotten Tomatoes or IMDb score are listed last, newest first.</p>{% endif %}
     {% endif %}
-    <nav class="jump" aria-label="Departments">
-      {% for g in p.filmography %}<a href="#{{ g.anchor() }}">{{ g.department }} <span class="muted">{{ g.entries.len() }}</span></a>{% endfor %}
+    {% if let Some(g) = self.shown() %}
+    <nav class="tabs" aria-label="Departments">
+      {% for t in groups %}<a href="{{ self.tab_href(loop.index0) }}"{% if loop.index0 == tab %} aria-current="page"{% endif %}>{{ t.department }} <span class="count">{{ t.entries.len() }}</span></a>{% endfor %}
     </nav>
-    {% for g in p.filmography %}
-    <section id="{{ g.anchor() }}">
-      <h3>{{ g.department }}</h3>
+    <section id="{{ g.anchor() }}" aria-label="{{ g.department }}">
       <ul class="filmography">
         {% for e in g.entries %}
         <li>
@@ -74,7 +78,9 @@
         {% endfor %}
       </ul>
     </section>
-    {% endfor %}
+    {% else %}
+    <p class="muted">No {% if kind == KindFilter::Tv %}TV{% else %}movie{% endif %} credits listed for this person.</p>
+    {% endif %}
     {% endif %}
   </section>
 </article>

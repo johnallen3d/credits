@@ -14,8 +14,9 @@ use serde_json::json;
 
 use crate::catalog::{Catalog, CatalogError};
 use crate::model::{
-    EpisodeDetail, FilmographySort, MediaKind, PersonDetail, RecentView, SearchHit, SeasonDetail,
-    TitleCredits, TitleDetail, WatchTarget, Watched, title_path,
+    EpisodeDetail, FilmographyGroup, FilmographySort, KindFilter, MediaKind, PersonDetail,
+    RecentView, SearchHit, SeasonDetail, TitleCredits, TitleDetail, WatchTarget, Watched,
+    title_path,
 };
 
 pub fn app(catalog: Catalog) -> Router {
@@ -163,6 +164,91 @@ struct EpisodePage {
 #[template(path = "person.html")]
 struct PersonPage {
     p: PersonDetail,
+    kind: KindFilter,
+    /// Departments with credits of `kind`, holding only those credits.
+    groups: Vec<FilmographyGroup>,
+    /// The department tab shown, an index into `groups`.
+    tab: usize,
+}
+
+impl PersonPage {
+    /// Shows the department whose slug is `dept`, or the first one left.
+    fn new(p: PersonDetail, kind: KindFilter, dept: Option<&str>) -> Self {
+        let groups: Vec<FilmographyGroup> = p
+            .filmography
+            .iter()
+            .map(|g| FilmographyGroup {
+                department: g.department.clone(),
+                entries: g
+                    .entries
+                    .iter()
+                    .filter(|e| kind.matches(e.kind))
+                    .cloned()
+                    .collect(),
+            })
+            .filter(|g| !g.entries.is_empty())
+            .collect();
+        let tab = dept
+            .and_then(|d| groups.iter().position(|g| g.slug() == d))
+            .unwrap_or(0);
+        PersonPage {
+            p,
+            kind,
+            groups,
+            tab,
+        }
+    }
+
+    fn shown(&self) -> Option<&FilmographyGroup> {
+        self.groups.get(self.tab)
+    }
+
+    /// Credits of `kind` across every department.
+    fn kind_count(&self, kind: &KindFilter) -> usize {
+        self.p
+            .filmography
+            .iter()
+            .flat_map(|g| &g.entries)
+            .filter(|e| kind.matches(e.kind))
+            .count()
+    }
+
+    fn tab_href(&self, index: &usize) -> String {
+        let dept = (*index > 0).then(|| self.groups[*index].slug());
+        self.href(self.p.sort, self.kind, dept)
+    }
+
+    /// Keeps the current tab; a kind without that department shows the first.
+    fn kind_href(&self, kind: &KindFilter) -> String {
+        self.href(self.p.sort, *kind, self.current_dept())
+    }
+
+    fn sort_href(&self, sort: FilmographySort) -> String {
+        self.href(sort, self.kind, self.current_dept())
+    }
+
+    fn current_dept(&self) -> Option<String> {
+        (self.tab > 0).then(|| self.groups[self.tab].slug())
+    }
+
+    fn href(&self, sort: FilmographySort, kind: KindFilter, dept: Option<String>) -> String {
+        let mut query = Vec::new();
+        if sort.is_rating() {
+            query.push("sort=rating".to_owned());
+        }
+        if let Some(kind) = kind.query() {
+            query.push(format!("kind={kind}"));
+        }
+        if let Some(dept) = dept {
+            query.push(format!("dept={dept}"));
+        }
+        let query = if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", query.join("&"))
+        };
+        format!("{}{query}#filmography-heading", self.p.path())
+    }
 }
 
 #[derive(Template)]
@@ -180,6 +266,10 @@ struct SearchParams {
 #[derive(Deserialize)]
 struct PersonParams {
     sort: Option<String>,
+    /// Page only: "movie" or "tv" narrows the filmography.
+    kind: Option<String>,
+    /// Page only: the department tab to show, by `FilmographyGroup::slug`.
+    dept: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -400,7 +490,10 @@ async fn person_page(
         catalog.record_view(RecentView::of_person(p)).await;
     }
     page(
-        result.map(|p| PersonPage { p }),
+        result.map(|p| {
+            let kind = KindFilter::from_query(params.kind.as_deref());
+            PersonPage::new(p, kind, params.dept.as_deref())
+        }),
         not_found_person,
         "Couldn't load this person",
     )

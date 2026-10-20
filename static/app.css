@@ -98,6 +98,12 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .sort { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-bottom: .75rem; font-size: .9rem; }
 .sort a { padding: .2rem .65rem; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; }
 .sort a[aria-current] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.sort .count, .tabs .count { color: var(--muted); font-size: .85em; }
+.sort a[aria-current] .count { color: inherit; opacity: .7; }
+.tabs { display: flex; gap: .25rem 1.25rem; overflow-x: auto; margin-bottom: .5rem; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.tabs a { flex: none; padding: .5rem .1rem; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--muted); text-decoration: none; white-space: nowrap; }
+.tabs a:hover, .tabs a:focus-visible { color: var(--fg); }
+.tabs a[aria-current] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
 .sort-note { margin: 0 0 .75rem; font-size: .9rem; }
 .credit-rating { white-space: nowrap; margin-left: .25rem; }
 .credit-rating .rating-source { width: 2rem; height: .95rem; vertical-align: -.15rem; }

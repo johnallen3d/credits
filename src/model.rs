@@ -460,6 +460,11 @@ impl Department {
 }
 
 fn anchor(name: &str) -> String {
+    format!("dept-{}", slug(name))
+}
+
+/// Lowercase ASCII letters and digits joined by single hyphens.
+fn slug(name: &str) -> String {
     let slug: String = name
         .chars()
         .map(|c| {
@@ -474,7 +479,7 @@ fn anchor(name: &str) -> String {
         .split('-')
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>();
-    format!("dept-{}", slug.join("-"))
+    slug.join("-")
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -676,6 +681,53 @@ impl FilmographySort {
     }
 }
 
+/// Which titles a person's filmography page lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KindFilter {
+    #[default]
+    All,
+    Movie,
+    Tv,
+}
+
+impl KindFilter {
+    pub const ALL: [KindFilter; 3] = [KindFilter::All, KindFilter::Movie, KindFilter::Tv];
+
+    /// The `kind` query parameter; anything unrecognised means all.
+    pub fn from_query(value: Option<&str>) -> Self {
+        match value {
+            Some("movie") => KindFilter::Movie,
+            Some("tv") => KindFilter::Tv,
+            _ => KindFilter::All,
+        }
+    }
+
+    /// The `kind` query value selecting this filter; none for all.
+    pub fn query(self) -> Option<&'static str> {
+        match self {
+            KindFilter::All => None,
+            KindFilter::Movie => Some("movie"),
+            KindFilter::Tv => Some("tv"),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KindFilter::All => "All",
+            KindFilter::Movie => "Movies",
+            KindFilter::Tv => "TV",
+        }
+    }
+
+    pub fn matches(self, kind: MediaKind) -> bool {
+        match self {
+            KindFilter::All => true,
+            KindFilter::Movie => kind == MediaKind::Movie,
+            KindFilter::Tv => kind == MediaKind::Tv,
+        }
+    }
+}
+
 /// What stood behind a by-rating order: credits without a score, and
 /// whether some scores were stale or couldn't be loaded.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -714,6 +766,11 @@ pub struct FilmographyGroup {
 impl FilmographyGroup {
     pub fn anchor(&self) -> String {
         anchor(&self.department)
+    }
+
+    /// The department as the person page's `dept` query value.
+    pub fn slug(&self) -> String {
+        slug(&self.department)
     }
 
     pub fn is_acting(&self) -> bool {
