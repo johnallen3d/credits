@@ -18,9 +18,10 @@ use crate::model::{
     Availability, Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup,
     FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
     OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings, RecentView,
-    SearchHit, SeasonDetail, SeasonSummary, Service, ServiceOption, ServicesDetail, ServicesState,
-    SortRatings, TitleCredits, TitleDetail, TitleHit, UnavailableReason, WatchProvider,
-    WatchTarget, Watched, WatchlistDetail, WatchlistSort, WhereToWatch, WhereToWatchState,
+    SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup, ServiceOption, ServicesDetail,
+    ServicesState, SortRatings, TitleCredits, TitleDetail, TitleHit, UnavailableReason,
+    WatchProvider, WatchTarget, Watched, WatchlistDetail, WatchlistSort, WhereToWatch,
+    WhereToWatchState,
 };
 use crate::omdb::OmdbClient;
 use crate::ratings::RatingsService;
@@ -47,6 +48,21 @@ const TV_KEY_DIRECTORS: usize = 3;
 const MAX_CHARACTERS: usize = 3;
 /// Titles in a person page's "Known for" row.
 const KNOWN_FOR_TITLES: usize = 8;
+/// Services listed as popular in regions without a curated list: the most
+/// popular in TMDB's order.
+const POPULAR_SERVICES: usize = 10;
+/// The major US subscription services, by TMDB ID: Netflix, Amazon Prime
+/// Video, Disney Plus, HBO Max, Hulu, Apple TV, Paramount Plus Essential and
+/// Premium, Peacock Premium and Premium Plus, YouTube TV and ESPN Plus.
+const POPULAR_US: [u64; 12] = [8, 9, 337, 1899, 15, 350, 2616, 2303, 386, 387, 2528, 1768];
+/// Name endings of channels sold through another service, including a
+/// misspelling TMDB uses.
+const ADD_ON_SUFFIXES: [&str; 4] = [
+    " amazon channel",
+    " amzon channel",
+    " roku premium channel",
+    " apple tv channel",
+];
 /// Titles looked up at once when sorting by rating or checking which
 /// services offer them.
 const CONCURRENT_TITLE_LOOKUPS: usize = 8;
@@ -327,28 +343,7 @@ impl Catalog {
     pub async fn services(&self) -> Result<ServicesDetail, sqlx::Error> {
         let chosen = self.services.list().await?;
         let (listed, state, complete, fetched_at) = self.service_list().await;
-        let chosen_ids: HashSet<u64> = chosen.iter().map(|s| s.id).collect();
-        // Chosen services TMDB no longer lists stay, so they can be removed.
-        let (mut first, rest): (Vec<_>, Vec<_>) =
-            listed.into_iter().partition(|s| chosen_ids.contains(&s.id));
-        let listed_ids: HashSet<u64> = first.iter().map(|s| s.id).collect();
-        first.extend(
-            chosen
-                .iter()
-                .filter(|s| !listed_ids.contains(&s.id))
-                .cloned(),
-        );
-        let options = first
-            .into_iter()
-            .map(|service| ServiceOption {
-                service,
-                chosen: true,
-            })
-            .chain(rest.into_iter().map(|service| ServiceOption {
-                service,
-                chosen: false,
-            }))
-            .collect();
+        let options = service_options(&self.watch_region, listed, &chosen);
         Ok(ServicesDetail {
             region: self.watch_region.clone(),
             chosen,
@@ -1503,6 +1498,61 @@ fn known_for_titles(
     .collect()
 }
 
+/// The services page's options: the user's services, then the popular ones,
+/// then the rest, each A to Z. Add-on channels are left out unless chosen,
+/// since the service itself is nearly always listed alongside them.
+/// `listed` is in TMDB's order for `region`.
+fn service_options(region: &str, listed: Vec<Service>, chosen: &[Service]) -> Vec<ServiceOption> {
+    let chosen_ids: HashSet<u64> = chosen.iter().map(|s| s.id).collect();
+    // Chosen services TMDB no longer lists stay, so they can be removed.
+    let (mut mine, rest): (Vec<_>, Vec<_>) =
+        listed.into_iter().partition(|s| chosen_ids.contains(&s.id));
+    let listed_ids: HashSet<u64> = mine.iter().map(|s| s.id).collect();
+    mine.extend(
+        chosen
+            .iter()
+            .filter(|s| !listed_ids.contains(&s.id))
+            .cloned(),
+    );
+    let rest = rest.into_iter().filter(|s| !is_add_on(&s.name));
+    let curated: Option<&[u64]> = match region {
+        "US" => Some(&POPULAR_US),
+        _ => None,
+    };
+    let mut options: Vec<ServiceOption> = mine
+        .into_iter()
+        .map(|service| ServiceOption {
+            service,
+            chosen: true,
+            group: ServiceGroup::Mine,
+        })
+        .chain(rest.enumerate().map(|(rank, service)| {
+            let popular = match curated {
+                Some(ids) => ids.contains(&service.id),
+                None => rank < POPULAR_SERVICES,
+            };
+            ServiceOption {
+                service,
+                chosen: false,
+                group: if popular {
+                    ServiceGroup::Popular
+                } else {
+                    ServiceGroup::More
+                },
+            }
+        }))
+        .collect();
+    options.sort_by_cached_key(|o| (o.group, o.service.name.to_lowercase()));
+    options
+}
+
+/// Whether `name` is a channel sold through another service, like
+/// "Shudder Amazon Channel".
+fn is_add_on(name: &str) -> bool {
+    let name = name.to_lowercase();
+    ADD_ON_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+}
+
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.trim().is_empty())
 }
@@ -1514,6 +1564,54 @@ fn year(date: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_options_group_popular_and_hide_add_ons() {
+        let service = |id: u64, name: &str| Service {
+            id,
+            name: name.to_owned(),
+            logo_url: None,
+        };
+        let listed = || {
+            vec![
+                service(2, "Apple TV Store"),
+                service(204, "Shudder Amazon Channel"),
+                service(8, "Netflix"),
+                service(99, "Shudder"),
+                service(582, "Paramount+ Amazon Channel"),
+            ]
+        };
+        let summary = |options: Vec<ServiceOption>| {
+            options
+                .into_iter()
+                .map(|o| (o.group, o.service.name))
+                .collect::<Vec<_>>()
+        };
+        let named = |group, name: &str| (group, name.to_owned());
+        use ServiceGroup::{Mine, More, Popular};
+
+        // The US has a curated popular list, whatever TMDB's order.
+        let chosen = [service(204, "Shudder Amazon Channel"), service(5, "Gone")];
+        assert_eq!(
+            summary(service_options("US", listed(), &chosen)),
+            [
+                named(Mine, "Gone"),
+                named(Mine, "Shudder Amazon Channel"),
+                named(Popular, "Netflix"),
+                named(More, "Apple TV Store"),
+                named(More, "Shudder"),
+            ]
+        );
+
+        // Elsewhere, the most popular in TMDB's order.
+        let mut many = listed();
+        many.extend((10..20).map(|id| service(id, &format!("Extra {id}"))));
+        let options = summary(service_options("GB", many, &[]));
+        assert_eq!(options[0], named(Popular, "Apple TV Store"));
+        assert_eq!(options.iter().filter(|(g, _)| *g == Popular).count(), 10);
+        assert_eq!(options.iter().filter(|(g, _)| *g == More).count(), 3);
+        assert!(!options.iter().any(|(_, n)| n.contains("Channel")));
+    }
 
     #[test]
     fn favorite_seasons_are_a_snapshot_of_current_seasons() {

@@ -590,6 +590,29 @@ pub struct ServiceOption {
     #[serde(flatten)]
     pub service: Service,
     pub chosen: bool,
+    pub group: ServiceGroup,
+}
+
+/// Where a service appears on the services page, in page order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceGroup {
+    /// The user's services.
+    Mine,
+    /// The region's major services, besides the user's.
+    Popular,
+    /// Every other service.
+    More,
+}
+
+impl ServiceGroup {
+    pub fn heading(self) -> &'static str {
+        match self {
+            Self::Mine => "Your services",
+            Self::Popular => "Popular",
+            Self::More => "More services",
+        }
+    }
 }
 
 /// The services page: the user's choice and every service to choose from.
@@ -598,8 +621,9 @@ pub struct ServicesDetail {
     pub region: String,
     /// The saved choice, by name.
     pub chosen: Vec<Service>,
-    /// Chosen services first, then the rest in TMDB's order for the region.
-    /// Only the chosen ones when TMDB's list is unavailable.
+    /// In group order, alphabetical within each group, without add-on
+    /// channels the user hasn't chosen. Only the chosen ones when TMDB's list
+    /// is unavailable.
     pub options: Vec<ServiceOption>,
     /// Of TMDB's list of services.
     pub state: WhereToWatchState,
@@ -620,6 +644,14 @@ impl ServicesDetail {
 
     pub fn fetched_on(&self) -> Option<String> {
         self.fetched_at.map(local_day)
+    }
+
+    /// The options split into their groups, for headings.
+    pub fn groups(&self) -> Vec<(ServiceGroup, &[ServiceOption])> {
+        self.options
+            .chunk_by(|a, b| a.group == b.group)
+            .map(|options| (options[0].group, options))
+            .collect()
     }
 }
 

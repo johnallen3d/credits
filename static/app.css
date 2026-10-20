@@ -225,8 +225,10 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .sort .services-edit { border: 0; padding-left: .25rem; }
 .services h1 { margin: 0 0 .5rem; }
 .services .region { font-size: 1rem; font-weight: 400; }
-.service-options { list-style: none; margin: 1rem 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .4rem; }
-.service-option { display: flex; align-items: center; gap: .5rem; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); cursor: pointer; font-size: .9rem; }
+.service-group { margin: 1.25rem 0 0; font-size: 1rem; }
+.service-options { list-style: none; margin: .5rem 0 1rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); grid-auto-rows: 1fr; gap: .4rem; }
+.service-options li { display: flex; }
+.service-option { flex: 1; display: flex; align-items: center; gap: .5rem; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); cursor: pointer; font-size: .9rem; }
 .service-option:has(input:checked) { border-color: var(--person); box-shadow: 0 0 0 1px var(--person); }
 .service-option img, .service-option .logo { flex: none; width: 32px; height: 32px; border-radius: 6px; background: var(--line); }
 .service-save { position: sticky; bottom: 0; padding: .75rem 0; background: var(--bg); border-top: 1px solid var(--line); }

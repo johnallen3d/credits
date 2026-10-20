@@ -58,8 +58,15 @@ carry `where_to_watch` with `region`, `state` (`fresh` / `stale` /
 
 Choose the streaming services you subscribe to on My services (linked from
 the header). The choices come from TMDB's lists of movie and TV services for
-`CREDITS_REGION`, most popular there first, and are cached like other TMDB
-data; the choice itself is saved in SQLite with each service's name and logo.
+`CREDITS_REGION` and are cached like other TMDB data. The page lists your
+services first, then the popular ones, then the rest, each A to Z. Popular
+is a fixed list of the major US subscription services (Netflix, Prime
+Video, Disney Plus, HBO Max, Hulu, Apple TV, Paramount Plus, Peacock,
+YouTube TV and ESPN Plus); in other regions it's TMDB's ten most popular.
+Channels sold through another service (names ending in Amazon Channel, Roku
+Premium Channel or Apple TV channel) aren't listed unless already chosen,
+since TMDB nearly always lists the service itself alongside them.
+The choice itself is saved in SQLite with each service's name and logo.
 Movie and TV pages then highlight your services among the offers, and the
 collapsed summary names those that include the title (streaming, free or
 free with ads; renting and buying cost extra). The To watch list adds a
@@ -77,7 +84,8 @@ services can't be loaded, My services shows only your current choice, which
 you can still remove. If your saved choice can't be read, pages say so
 rather than treating it as empty, and saving is refused so it isn't
 overwritten. JSON: `/api/services` carries `chosen`, `options` (each with
-`chosen`), `state`, `complete` and `fetched_at`; title offers carry `mine`
+`chosen` and `group`: `mine`, `popular` or `more`), `state`,
+`complete` and `fetched_at`; title offers carry `mine`
 and `where_to_watch.my_services` (`not_chosen` / `chosen` / `unreadable`);
 To watch titles carry `availability` and the list a `services` summary.
 

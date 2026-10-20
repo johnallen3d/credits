@@ -224,6 +224,8 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                                 "display_priority": 2, "display_priorities": { "US": 4 } }),
                         json!({ "provider_id": 2, "provider_name": "Apple TV", "logo_path": null,
                                 "display_priority": 9 }),
+                        json!({ "provider_id": 204, "provider_name": "Shudder Amazon Channel",
+                                "logo_path": null, "display_priorities": { "US": 3 } }),
                     ];
                     if kind == "tv" {
                         results.push(json!({ "provider_id": 300, "provider_name": "Pluto TV",
@@ -2228,14 +2230,21 @@ async fn services_are_chosen_and_highlighted_on_title_pages() {
         "linked from the header"
     );
     assert!(body.contains("No services chosen yet."));
-    let netflix = body.find(r#"value="8">"#).unwrap();
-    let max = body.find(r#"value="1899">"#).unwrap();
-    let pluto = body.find(r#"value="300">"#).unwrap();
-    let apple = body.find(r#"value="2">"#).unwrap();
+    let at = |needle: &str| body.find(needle).unwrap();
+    let order = [
+        at(r#"<h2 class="service-group">Popular</h2>"#),
+        at(r#"value="1899">"#), // Max
+        at(r#"value="8">"#),    // Netflix
+        at(r#"<h2 class="service-group">More services</h2>"#),
+        at(r#"value="2">"#),   // Apple TV
+        at(r#"value="300">"#), // Pluto TV
+    ];
     assert!(
-        netflix < max && max < pluto && pluto < apple,
-        "movie and TV lists merged in the region's display priority order"
+        order.is_sorted(),
+        "the major US services, then the rest, each A to Z"
     );
+    assert!(!body.contains(r#"value="204""#), "add-on channels hidden");
+    assert!(!body.contains("Your services</h2>"));
     assert_eq!(body.matches(r#"value="1899">"#).count(), 1, "listed once");
     assert!(body.contains(r#"<img src="https://img.test/t/p/w92/netflix.jpg""#));
 
@@ -2260,11 +2269,23 @@ async fn services_are_chosen_and_highlighted_on_title_pages() {
     assert_eq!(json["complete"], true);
     assert_eq!(json["options"][0]["name"], "Netflix");
     assert_eq!(json["options"][0]["chosen"], true);
+    assert_eq!(json["options"][0]["group"], "mine");
+    assert_eq!(json["options"][1]["name"], "Pluto TV");
     assert_eq!(json["options"][2]["name"], "Max");
     assert_eq!(json["options"][2]["chosen"], false);
+    assert_eq!(json["options"][2]["group"], "popular");
+    assert_eq!(json["options"][3]["name"], "Apple TV");
+    assert_eq!(json["options"][3]["group"], "more");
+    assert_eq!(json["options"].as_array().unwrap().len(), 4);
     let (_, _, body) = get_page(t.app(), "/services", false).await;
     assert!(body.contains(r#"<input type="checkbox" name="service" value="8" checked>"#));
     assert!(body.contains(r#"<input type="checkbox" name="service" value="1899">"#));
+    assert!(
+        body.find(r#"<h2 class="service-group">Your services</h2>"#)
+            .unwrap()
+            < body.find(r#"value="8" checked>"#).unwrap(),
+        "your services come first, under their own heading"
+    );
     assert!(body.contains("Your services: <strong>Netflix</strong>, <strong>Pluto TV</strong>"));
 
     let (_, _, body) = get_page(t.app(), "/movie/603", false).await;

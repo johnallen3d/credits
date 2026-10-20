@@ -19,16 +19,19 @@
   {% endif %}
   {% if !s.options.is_empty() %}
   <form class="service-form" method="post" action="/services">
+    {% for (group, options) in s.groups() %}
+    <h2 class="service-group">{{ group.heading() }}</h2>
     <ul class="service-options">
-      {% for o in s.options %}
+      {% for o in options %}
       <li><label class="service-option"><input type="checkbox" name="service" value="{{ o.service.id }}"{% if o.chosen %} checked{% endif %}>{% if let Some(logo) = o.service.logo_url %}<img src="{{ logo }}" alt="" width="32" height="32" loading="lazy">{% else %}<span class="logo missing" aria-hidden="true"></span>{% endif %}<span>{{ o.service.name }}</span></label></li>
       {% endfor %}
     </ul>
+    {% endfor %}
     <div class="service-save"><button type="submit">Save services</button></div>
   </form>
   {% endif %}
   {% if !s.is_unavailable() %}
-  <p class="attribution muted">Services from <a href="https://www.justwatch.com/" rel="noopener">JustWatch</a>, via TMDB, most popular in {{ s.region }} first.</p>
+  <p class="attribution muted">Services from <a href="https://www.justwatch.com/" rel="noopener">JustWatch</a>, via TMDB. Channels sold through another service, like Amazon or Roku channels, aren't listed; choose the service itself.</p>
   {% endif %}
 </section>
 {% endblock %}
