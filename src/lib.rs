@@ -7,6 +7,7 @@ mod ratings;
 pub mod recent;
 mod tmdb;
 mod watched;
+mod watchlist;
 pub mod web;
 
 pub use catalog::Catalog;

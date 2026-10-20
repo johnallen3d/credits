@@ -18,13 +18,14 @@ use crate::model::{
     Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup, FilmographySort,
     KeyCrew, KeyRole, KnownFor, MediaKind, Metadata, PersonCredit, PersonDetail, PersonHit, Rating,
     Ratings, RecentView, SearchHit, SeasonDetail, SeasonSummary, SortRatings, TitleCredits,
-    TitleDetail, TitleHit, UnavailableReason, WatchTarget, Watched,
+    TitleDetail, TitleHit, UnavailableReason, WatchTarget, Watched, WatchlistDetail, WatchlistSort,
 };
 use crate::omdb::OmdbClient;
 use crate::ratings::RatingsService;
 use crate::recent::RecentlyViewed;
 use crate::tmdb::{self, MultiResult, TmdbClient};
 use crate::watched::WatchedShows;
+use crate::watchlist::Watchlist;
 
 const POSTER_SIZE: &str = "w342";
 const BACKDROP_SIZE: &str = "w1280";
@@ -62,6 +63,15 @@ pub enum CatalogError {
     Provider(String),
 }
 
+/// Why a title couldn't be added to the "To watch" list.
+#[derive(Debug, thiserror::Error)]
+pub enum WatchlistError {
+    #[error(transparent)]
+    Title(#[from] CatalogError),
+    #[error("saving to the watchlist failed: {0}")]
+    Database(#[from] sqlx::Error),
+}
+
 #[derive(Clone)]
 pub struct Catalog {
     tmdb: TmdbClient,
@@ -70,6 +80,7 @@ pub struct Catalog {
     cache: ProviderCache,
     recent: RecentlyViewed,
     watched: WatchedShows,
+    watchlist: Watchlist,
     metadata_ttl: Duration,
 }
 
@@ -107,6 +118,7 @@ impl Catalog {
             ratings: RatingsService::new(omdb, cache.clone(), config.ratings_ttl),
             recent: RecentlyViewed::new(cache.pool()),
             watched: WatchedShows::new(cache.pool()),
+            watchlist: Watchlist::new(cache.pool()),
             cache,
             metadata_ttl: config.metadata_ttl,
         })
@@ -148,6 +160,60 @@ impl Catalog {
         self.watched
             .set(tv_id, target, watched, Timestamp::now())
             .await
+    }
+
+    /// The "To watch" list in `sort` order. Unlike other saved state, a
+    /// failed read is an error, so the page never passes it off as empty.
+    pub async fn watchlist(&self, sort: WatchlistSort) -> Result<WatchlistDetail, sqlx::Error> {
+        let mut titles = self.watchlist.list().await?;
+        let sort_ratings = match sort {
+            WatchlistSort::Added => None,
+            WatchlistSort::Rating => Some(self.sort_by_rating(&mut [&mut titles]).await),
+        };
+        Ok(WatchlistDetail {
+            titles,
+            sort,
+            sort_ratings,
+        })
+    }
+
+    /// Titles on the "To watch" list; none if that can't be read, so every
+    /// toggle offers to add.
+    pub async fn watchlist_titles(&self) -> HashSet<(MediaKind, u64)> {
+        self.watchlist.titles().await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "reading the watchlist failed");
+            HashSet::new()
+        })
+    }
+
+    /// Saves a title to the "To watch" list, with its name, year and poster
+    /// from its cached TMDB entry.
+    pub async fn add_to_watchlist(&self, kind: MediaKind, id: u64) -> Result<(), WatchlistError> {
+        let (title, date, poster_path) = match kind {
+            MediaKind::Movie => {
+                let (m, _) = self.movie_raw(id).await?;
+                (m.title, m.release_date, m.poster_path)
+            }
+            MediaKind::Tv => {
+                let (t, _) = self.tv_raw(id).await?;
+                (t.name, t.first_air_date, t.poster_path)
+            }
+        };
+        let entry = FilmographyEntry {
+            kind,
+            id,
+            title,
+            year: year(date.as_deref()),
+            role: None,
+            episode_count: None,
+            poster_url: self.image(THUMB_SIZE, poster_path),
+            rating: None,
+        };
+        Ok(self.watchlist.add(&entry, Timestamp::now()).await?)
+    }
+
+    pub async fn remove_from_watchlist(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {
+        self.watchlist.remove(kind, id).await
     }
 
     /// Movies, TV shows and people matching `query`, in TMDB's order; other
@@ -453,7 +519,10 @@ impl Catalog {
             .collect();
         let sort_ratings = match sort {
             FilmographySort::Date => None,
-            FilmographySort::Rating => Some(self.sort_by_rating(&mut filmography).await),
+            FilmographySort::Rating => {
+                let mut lists: Vec<_> = filmography.iter_mut().map(|g| &mut g.entries).collect();
+                Some(self.sort_by_rating(&mut lists).await)
+            }
         };
 
         Ok(PersonDetail {
@@ -474,10 +543,11 @@ impl Catalog {
         })
     }
 
-    /// Reorders each department best rated first, by Rotten Tomatoes or else
-    /// IMDb; unscored entries follow, keeping their date order.
-    async fn sort_by_rating(&self, filmography: &mut [FilmographyGroup]) -> SortRatings {
-        let entries = || filmography.iter().flat_map(|g| &g.entries);
+    /// Reorders each list (e.g. a filmography department) best rated first,
+    /// by Rotten Tomatoes or else IMDb; unscored entries follow in their
+    /// existing order.
+    async fn sort_by_rating(&self, lists: &mut [&mut Vec<FilmographyEntry>]) -> SortRatings {
+        let entries = || lists.iter().flat_map(|l| l.iter());
         if !self.ratings.is_configured() {
             return SortRatings {
                 unrated: entries().count(),
@@ -498,12 +568,12 @@ impl Catalog {
                 summary.unavailable_reason = Some(UnavailableReason::ProviderError);
             }
         }
-        for group in filmography {
-            for e in &mut group.entries {
+        for list in lists {
+            for e in list.iter_mut() {
                 e.rating = ratings.get(&(e.kind, e.id)).and_then(Rating::for_sorting);
                 summary.unrated += usize::from(e.rating.is_none());
             }
-            group.entries.sort_by(|a, b| match (&a.rating, &b.rating) {
+            list.sort_by(|a, b| match (&a.rating, &b.rating) {
                 (Some(a), Some(b)) => b.percent().total_cmp(&a.percent()),
                 (Some(_), None) => Ordering::Less,
                 (None, Some(_)) => Ordering::Greater,

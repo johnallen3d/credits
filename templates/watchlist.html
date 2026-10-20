@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% import "_watchlist.html" as watchlist %}
+{% block title %}To watch · credits{% endblock %}
+{% block content %}
+<section class="watchlist" aria-labelledby="watchlist-heading">
+  <h1 id="watchlist-heading">To watch</h1>
+  {% if w.titles.is_empty() %}
+  <p class="hint">Nothing saved yet. Use the <svg class="bookmark inline" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg> To watch button on a movie or TV show, or beside any title in a person's filmography, and it will be listed here.</p>
+  {% else %}
+  <nav class="sort" aria-label="Sort titles">
+    <span class="muted">Sort by</span>
+    <a href="{{ self.sort_href(WatchlistSort::Added) }}"{% if !w.sort.is_rating() %} aria-current="true"{% endif %}>Added</a>
+    <a href="{{ self.sort_href(WatchlistSort::Rating) }}"{% if w.sort.is_rating() %} aria-current="true"{% endif %}>Rating</a>
+  </nav>
+  <nav class="sort" aria-label="Filter titles">
+    <span class="muted">Show</span>
+    {% for k in KindFilter::ALL %}<a href="{{ self.kind_href(k) }}"{% if k == kind %} aria-current="true"{% endif %}>{{ k.label() }} <span class="count">{{ self.kind_count(k) }}</span></a>
+    {% endfor %}
+  </nav>
+  {% if let Some(r) = w.sort_ratings %}
+  {% if r.not_configured() %}<p class="muted sort-note">Ratings aren't configured on this server, so titles stay in the order they were added.</p>
+  {% else if let Some(message) = r.unavailable_message() %}<p class="muted sort-note">{{ message }}</p>{% endif %}
+  {% if let Some(day) = r.stale_on() %}<p class="rating-stale sort-note">Couldn't refresh some ratings; using scores from as early as {{ day }}.</p>{% endif %}
+  {% if r.unrated > 0 && r.unavailable_reason.is_none() %}<p class="muted sort-note">Titles without a Rotten Tomatoes or IMDb score are listed last, most recently added first.</p>{% endif %}
+  {% endif %}
+  {% let back = self.back() %}
+  <ul class="filmography with-toggle">
+    {% for e in shown %}
+    <li>
+      <span class="year">{% if let Some(year) = e.year %}{{ year }}{% else %}TBA{% endif %}</span>
+      <a href="{{ e.path() }}" tabindex="-1" aria-hidden="true">{% if let Some(url) = e.poster_url %}<img class="poster thumb" src="{{ url }}" alt="" loading="lazy" width="46" height="69">{% else %}<span class="poster thumb missing">No artwork</span>{% endif %}</a>
+      <span><a href="{{ e.path() }}">{{ e.title }}</a> <span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if let Some(r) = e.rating %} <span class="credit-rating"><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"> <span class="rating-score">{{ r.display() }}</span></span>{% endif %}</span>
+      {% call watchlist::toggle(e.kind.slug(), e.id, e.title, true, crate::web::watchlist_toggle_id(e), back, "", false) %}{% endcall %}
+    </li>
+    {% else %}
+    <li class="empty-row"><span class="muted">No {% if kind == KindFilter::Tv %}TV shows{% else %}movies{% endif %} on your list.</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endblock %}

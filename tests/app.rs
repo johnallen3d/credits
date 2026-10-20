@@ -1516,3 +1516,140 @@ async fn expired_tmdb_data_is_served_when_tmdb_is_down() {
     );
     assert!(body.contains("Couldn&#39;t load this person"));
 }
+
+#[tokio::test]
+async fn titles_are_added_to_and_removed_from_the_watchlist_while_browsing() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (status, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(r#"<a href="/watchlist">To watch</a>"#),
+        "linked from the header"
+    );
+    assert!(body.contains("Nothing saved yet."));
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(r#"<form class="watch-toggle watchlist-toggle" id="watchlist-toggle" method="post" action="/movie/603/watchlist""#));
+    assert!(body.contains(r#"aria-pressed="false" aria-label="To watch: The Matrix""#));
+
+    let (status, headers) = post_form(
+        t.app(),
+        "/movie/603/watchlist",
+        "listed=true&back=%2Fmovie%2F603",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/movie/603");
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(r#"aria-pressed="true" aria-label="To watch: The Matrix""#));
+
+    // From a filmography row, back to that row.
+    let (_, headers) = post_form(
+        t.app(),
+        "/tv/1396/watchlist",
+        "listed=true&back=%2Fperson%2F6384%3Fkind%3Dtv%23watchlist-tv-1396",
+    )
+    .await;
+    assert_eq!(
+        headers[header::LOCATION],
+        "/person/6384?kind=tv#watchlist-tv-1396"
+    );
+    let (_, _, body) = get_page(t.app(), "/person/6384", false).await;
+    assert!(body.contains(r##"id="watchlist-movie-603" method="post" action="/movie/603/watchlist" hx-post="/movie/603/watchlist" hx-target="#watchlist-movie-603" hx-select="#watchlist-movie-603""##));
+    assert!(
+        body.contains(
+            r#"<input type="hidden" name="back" value="/person/6384#watchlist-movie-603">"#
+        )
+    );
+    assert!(body.contains(r#"aria-pressed="true" aria-label="To watch: The Matrix""#));
+    assert!(body.contains(r#"aria-pressed="false" aria-label="To watch: The Tonight Show""#));
+
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    let bb = body.find(r#"<a href="/tv/1396">Breaking Bad</a>"#).unwrap();
+    let matrix = body.find(r#"<a href="/movie/603">The Matrix</a>"#).unwrap();
+    assert!(bb < matrix, "most recently added first");
+    assert!(body.contains(
+        r#"<a href="/watchlist" aria-current="true">All <span class="count">2</span></a>"#
+    ));
+    assert!(
+        body.contains(r#"<a href="/watchlist?kind=movie">Movies <span class="count">1</span></a>"#)
+    );
+    assert!(
+        body.contains(r#"<img class="poster thumb" src="https://img.test/t/p/w92/matrix.jpg""#)
+    );
+
+    let (_, _, body) = get_page(t.app(), "/watchlist?kind=tv", false).await;
+    assert!(body.contains("Breaking Bad") && !body.contains("The Matrix</a>"));
+    assert!(body.contains(r#"<a href="/watchlist?sort=rating&#38;kind=tv">Rating</a>"#));
+    let (_, json) = get_json(t.app(), "/api/watchlist?kind=movie").await;
+    assert_eq!(json["sort"], "added");
+    assert_eq!(json["titles"].as_array().unwrap().len(), 1);
+    assert_eq!(json["titles"][0]["title"], "The Matrix");
+    assert_eq!(json["titles"][0]["year"], "1999");
+
+    // Removing from the list page goes back to it; other sites are refused.
+    let (_, headers) = post_form(
+        t.app(),
+        "/movie/603/watchlist",
+        "listed=false&back=%2Fwatchlist%3Fkind%3Dmovie",
+    )
+    .await;
+    assert_eq!(headers[header::LOCATION], "/watchlist?kind=movie");
+    let (_, _, body) = get_page(t.app(), "/watchlist?kind=movie", false).await;
+    assert!(body.contains("No movies on your list."));
+    for back in [
+        "https%3A%2F%2Fexample.com",
+        "%2F%2Fexample.com",
+        "%2F%5Cexample.com",
+    ] {
+        let (_, headers) = post_form(
+            t.app(),
+            "/tv/1396/watchlist",
+            &format!("listed=false&back={back}"),
+        )
+        .await;
+        assert_eq!(headers[header::LOCATION], "/tv/1396");
+    }
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(json["titles"], json!([]));
+}
+
+#[tokio::test]
+async fn watchlist_sorts_by_rating_and_reports_problems() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    post_form(t.app(), "/tv/1396/watchlist", "listed=true").await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    let (_, json) = get_json(t.app(), "/api/watchlist?sort=rating").await;
+    assert_eq!(json["sort"], "rating");
+    // Breaking Bad's IMDb 9.5 (95%) beats The Matrix's 83% Tomatometer.
+    assert_eq!(json["titles"][0]["title"], "Breaking Bad");
+    assert_eq!(json["titles"][1]["rating"]["source"], "rotten_tomatoes");
+    let (_, _, body) = get_page(t.app(), "/watchlist?sort=rating", false).await;
+    assert!(body.contains(r#"<a href="/watchlist?sort=rating" aria-current="true">Rating</a>"#));
+    assert!(body.contains(r#"<span class="rating-score">83%</span>"#));
+    assert!(!body.contains("listed last"), "every title is scored");
+
+    let t = build(TOKEN, None, Duration::from_secs(3600)).await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    let (_, _, body) = get_page(t.app(), "/watchlist?sort=rating", false).await;
+    assert!(body.contains(
+        "Ratings aren't configured on this server, so titles stay in the order they were added."
+    ));
+
+    // Titles TMDB doesn't know or can't load aren't saved.
+    let (status, _) = post_form(t.app(), "/movie/1/watchlist", "listed=true").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, body) = {
+        let request = Request::post("/tv/500/watchlist")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from("listed=true"))
+            .unwrap();
+        let response = t.app().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        (status, (), String::from_utf8(body.to_vec()).unwrap())
+    };
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(body.contains("Couldn&#39;t add to your To watch list"));
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(json["titles"].as_array().unwrap().len(), 1);
+}

@@ -9,14 +9,16 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::catalog::{Catalog, CatalogError};
+use crate::catalog::{Catalog, CatalogError, WatchlistError};
 use crate::model::{
-    EpisodeDetail, FilmographyGroup, FilmographySort, KindFilter, MediaKind, PersonDetail,
-    RecentView, SearchHit, SeasonDetail, TitleCredits, TitleDetail, WatchTarget, Watched,
-    title_path,
+    EpisodeDetail, FilmographyEntry, FilmographyGroup, FilmographySort, KindFilter, MediaKind,
+    PersonDetail, RecentView, SearchHit, SeasonDetail, TitleCredits, TitleDetail, WatchTarget,
+    Watched, WatchlistDetail, WatchlistSort, title_path,
 };
 
 pub fn app(catalog: Catalog) -> Router {
@@ -50,6 +52,15 @@ pub fn app(catalog: Catalog) -> Router {
             "/tv/{id}/season/{number}/episode/{episode}/watched",
             post(set_episode_watched),
         )
+        .route(
+            "/movie/{id}/watchlist",
+            post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Movie)),
+        )
+        .route(
+            "/tv/{id}/watchlist",
+            post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Tv)),
+        )
+        .route("/watchlist", get(watchlist_page))
         .route("/person/{id}", get(person_page))
         .route("/api/search", get(api_search))
         .route(
@@ -71,6 +82,7 @@ pub fn app(catalog: Catalog) -> Router {
             get(api_episode),
         )
         .route("/api/person/{id}", get(api_person))
+        .route("/api/watchlist", get(api_watchlist))
         .route(
             "/static/htmx.min.js",
             get(|| asset("text/javascript", include_str!("../static/htmx.min.js"))),
@@ -138,6 +150,8 @@ struct DetailPage {
     d: TitleDetail,
     /// Always unwatched for movies.
     watched: Watched,
+    /// On the "To watch" list.
+    listed: bool,
 }
 
 #[derive(Template)]
@@ -169,11 +183,18 @@ struct PersonPage {
     groups: Vec<FilmographyGroup>,
     /// The department tab shown, an index into `groups`.
     tab: usize,
+    /// Titles on the "To watch" list.
+    listed: HashSet<(MediaKind, u64)>,
 }
 
 impl PersonPage {
     /// Shows the department whose slug is `dept`, or the first one left.
-    fn new(p: PersonDetail, kind: KindFilter, dept: Option<&str>) -> Self {
+    fn new(
+        p: PersonDetail,
+        kind: KindFilter,
+        dept: Option<&str>,
+        listed: HashSet<(MediaKind, u64)>,
+    ) -> Self {
         let groups: Vec<FilmographyGroup> = p
             .filmography
             .iter()
@@ -196,7 +217,19 @@ impl PersonPage {
             kind,
             groups,
             tab,
+            listed,
         }
+    }
+
+    fn is_listed(&self, e: &FilmographyEntry) -> bool {
+        self.listed.contains(&(e.kind, e.id))
+    }
+
+    /// This page as it is, scrolled to `e`'s row, for its watchlist toggle.
+    fn back_to(&self, e: &FilmographyEntry) -> String {
+        let page = self.href(self.p.sort, self.kind, self.current_dept());
+        let page = page.split_once('#').map_or(page.as_str(), |(page, _)| page);
+        format!("{page}#{}", watchlist_toggle_id(e))
     }
 
     fn shown(&self) -> Option<&FilmographyGroup> {
@@ -252,6 +285,68 @@ impl PersonPage {
 }
 
 #[derive(Template)]
+#[template(path = "watchlist.html")]
+struct WatchlistPage {
+    w: WatchlistDetail,
+    kind: KindFilter,
+    /// The titles of `kind`, in the list's order.
+    shown: Vec<FilmographyEntry>,
+}
+
+impl WatchlistPage {
+    fn new(w: WatchlistDetail, kind: KindFilter) -> Self {
+        let shown = w
+            .titles
+            .iter()
+            .filter(|e| kind.matches(e.kind))
+            .cloned()
+            .collect();
+        WatchlistPage { w, kind, shown }
+    }
+
+    fn kind_count(&self, kind: &KindFilter) -> usize {
+        self.w
+            .titles
+            .iter()
+            .filter(|e| kind.matches(e.kind))
+            .count()
+    }
+
+    fn kind_href(&self, kind: &KindFilter) -> String {
+        watchlist_href(self.w.sort, *kind)
+    }
+
+    fn sort_href(&self, sort: WatchlistSort) -> String {
+        watchlist_href(sort, self.kind)
+    }
+
+    /// Where a removal returns to: this page as it is.
+    fn back(&self) -> String {
+        watchlist_href(self.w.sort, self.kind)
+    }
+}
+
+fn watchlist_href(sort: WatchlistSort, kind: KindFilter) -> String {
+    let mut query = Vec::new();
+    if sort.is_rating() {
+        query.push("sort=rating".to_owned());
+    }
+    if let Some(kind) = kind.query() {
+        query.push(format!("kind={kind}"));
+    }
+    if query.is_empty() {
+        "/watchlist".to_owned()
+    } else {
+        format!("/watchlist?{}", query.join("&"))
+    }
+}
+
+/// The element id of a title's watchlist toggle, unique on any page.
+fn watchlist_toggle_id(e: &FilmographyEntry) -> String {
+    format!("watchlist-{}-{}", e.kind.slug(), e.id)
+}
+
+#[derive(Template)]
 #[template(path = "error.html")]
 struct ErrorPage {
     heading: &'static str,
@@ -270,6 +365,19 @@ struct PersonParams {
     kind: Option<String>,
     /// Page only: the department tab to show, by `FilmographyGroup::slug`.
     dept: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WatchlistParams {
+    sort: Option<String>,
+    kind: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WatchlistForm {
+    listed: bool,
+    /// Page to return to; only paths on this site are honored.
+    back: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -330,8 +438,9 @@ async fn detail_page(
         MediaKind::Tv if result.is_ok() => catalog.watched(id).await,
         _ => Watched::default(),
     };
+    let listed = result.is_ok() && catalog.watchlist_titles().await.contains(&(kind, id));
     page(
-        result.map(|d| DetailPage { d, watched }),
+        result.map(|d| DetailPage { d, watched, listed }),
         || not_found_title(kind),
         "Couldn't load this title",
     )
@@ -486,17 +595,113 @@ async fn person_page(
     };
     let sort = FilmographySort::from_query(params.sort.as_deref());
     let result = catalog.person(id, sort).await;
-    if let Ok(p) = &result {
-        catalog.record_view(RecentView::of_person(p)).await;
-    }
+    let listed = match &result {
+        Ok(p) => {
+            catalog.record_view(RecentView::of_person(p)).await;
+            catalog.watchlist_titles().await
+        }
+        Err(_) => HashSet::new(),
+    };
     page(
         result.map(|p| {
             let kind = KindFilter::from_query(params.kind.as_deref());
-            PersonPage::new(p, kind, params.dept.as_deref())
+            PersonPage::new(p, kind, params.dept.as_deref(), listed)
         }),
         not_found_person,
         "Couldn't load this person",
     )
+}
+
+async fn set_on_watchlist(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    Form(form): Form<WatchlistForm>,
+    kind: MediaKind,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return not_found_title(kind);
+    };
+    let result = if form.listed {
+        catalog.add_to_watchlist(kind, id).await
+    } else {
+        catalog
+            .remove_from_watchlist(kind, id)
+            .await
+            .map_err(WatchlistError::from)
+    };
+    match result {
+        Ok(()) => {
+            let back = form
+                .back
+                .filter(|back| is_local_path(back))
+                .unwrap_or_else(|| title_path(kind, id));
+            Redirect::to(&back).into_response()
+        }
+        Err(WatchlistError::Title(CatalogError::NotFound)) => not_found_title(kind),
+        Err(WatchlistError::Title(e)) => {
+            tracing::warn!(error = %e, ?kind, id, "title lookup for watchlist failed");
+            error_page(
+                status_for(&e),
+                "Couldn't add to your To watch list",
+                user_message(&e),
+            )
+        }
+        Err(e @ WatchlistError::Database(_)) => {
+            tracing::warn!(error = %e, ?kind, id, "saving watchlist failed");
+            error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't update your To watch list",
+                "The database couldn't be updated. Please try again.",
+            )
+        }
+    }
+}
+
+/// A path on this site, so a form can't redirect elsewhere.
+fn is_local_path(path: &str) -> bool {
+    path.starts_with('/')
+        && !path.starts_with("//")
+        && path.bytes().all(|b| b.is_ascii_graphic() && b != b'\\')
+}
+
+async fn watchlist_page(
+    State(catalog): State<Catalog>,
+    Query(params): Query<WatchlistParams>,
+) -> Response {
+    let sort = WatchlistSort::from_query(params.sort.as_deref());
+    let kind = KindFilter::from_query(params.kind.as_deref());
+    match catalog.watchlist(sort).await {
+        Ok(w) => html(StatusCode::OK, WatchlistPage::new(w, kind).render()),
+        Err(e) => {
+            tracing::warn!(error = %e, "reading the watchlist failed");
+            error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't load your To watch list",
+                "The database couldn't be read. Please try again.",
+            )
+        }
+    }
+}
+
+async fn api_watchlist(
+    State(catalog): State<Catalog>,
+    Query(params): Query<WatchlistParams>,
+) -> Response {
+    let sort = WatchlistSort::from_query(params.sort.as_deref());
+    let kind = KindFilter::from_query(params.kind.as_deref());
+    match catalog.watchlist(sort).await {
+        Ok(mut w) => {
+            w.titles.retain(|e| kind.matches(e.kind));
+            Json(w).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "api watchlist read failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the watchlist couldn't be read",
+            )
+        }
+    }
 }
 
 async fn api_search(

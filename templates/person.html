@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_watchlist.html" as watchlist %}
 {% block title %}{{ p.name }} · credits{% endblock %}
 {% block content %}
 {% let metadata = p.metadata %}{% include "_stale.html" %}
@@ -68,12 +69,13 @@
       {% for t in groups %}<a href="{{ self.tab_href(loop.index0) }}"{% if loop.index0 == tab %} aria-current="page"{% endif %}>{{ t.department }} <span class="count">{{ t.entries.len() }}</span></a>{% endfor %}
     </nav>
     <section id="{{ g.anchor() }}" aria-label="{{ g.department }}">
-      <ul class="filmography">
+      <ul class="filmography with-toggle">
         {% for e in g.entries %}
         <li>
           <span class="year">{% if let Some(year) = e.year %}{{ year }}{% else %}TBA{% endif %}</span>
           <a href="{{ e.path() }}" tabindex="-1" aria-hidden="true">{% if let Some(url) = e.poster_url %}<img class="poster thumb" src="{{ url }}" alt="" loading="lazy" width="46" height="69">{% else %}<span class="poster thumb missing">No artwork</span>{% endif %}</a>
           <span><a href="{{ e.path() }}">{{ e.title }}</a> <span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if let Some(role) = e.role %} <span class="muted">{% if g.is_acting() %}as {% endif %}{{ role }}</span>{% endif %}{% if let Some(eps) = e.episodes_label() %} <span class="muted">· {{ eps }}</span>{% endif %}{% if let Some(r) = e.rating %} <span class="credit-rating"><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"> <span class="rating-score">{{ r.display() }}</span></span>{% endif %}</span>
+          {% call watchlist::toggle(e.kind.slug(), e.id, e.title, self.is_listed(e), crate::web::watchlist_toggle_id(e), self.back_to(e), "", true) %}{% endcall %}
         </li>
         {% endfor %}
       </ul>

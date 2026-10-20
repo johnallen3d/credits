@@ -1,0 +1,14 @@
+{#- A bookmark toggle that adds a title to the "To watch" list or removes it.
+    `listed` is the current state; `id` names the form; `back` is the page to
+    return to. With `inline`, HTMX swaps just this form instead of reloading
+    the page. `text` is an optional visible label. -#}
+{% macro toggle(kind, title_id, title, listed, id, back, text, inline) %}
+<form class="watch-toggle watchlist-toggle" id="{{ id }}" method="post" action="/{{ kind }}/{{ title_id }}/watchlist"{% if inline %} hx-post="/{{ kind }}/{{ title_id }}/watchlist" hx-target="#{{ id }}" hx-select="#{{ id }}" hx-swap="outerHTML"{% endif %}>
+  <input type="hidden" name="listed" value="{{ !listed }}">
+  <input type="hidden" name="back" value="{{ back }}">
+  <button type="submit"{% if text.is_empty() %} class="icon-only"{% endif %} aria-pressed="{{ listed }}" aria-label="To watch: {{ title }}" title="{% if listed %}On your To watch list; select to remove{% else %}Add to your To watch list{% endif %}">
+    <svg class="bookmark" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+    {%- if !text.is_empty() %}<span>{{ text }}</span>{% endif -%}
+  </button>
+</form>
+{% endmacro %}

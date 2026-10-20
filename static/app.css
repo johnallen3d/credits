@@ -19,7 +19,7 @@ a { color: var(--accent); }
 body { display: flex; flex-direction: column; min-height: 100vh; }
 header.site, main, footer.site { width: 100%; max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
 main { flex: 1 0 auto; }
-header.site { padding-top: 1.25rem; padding-bottom: 1.25rem; }
+header.site { padding-top: 1.25rem; padding-bottom: 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-top: 1px solid var(--line); }
 .brand { font-weight: 700; font-size: 1.25rem; color: var(--fg); text-decoration: none; }
 .site-nav { display: flex; gap: 1.25rem; }
@@ -133,6 +133,15 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .watch-toggle button[aria-pressed="true"] { color: var(--person); border-color: var(--person); }
 .watch-toggle button:hover:not(:disabled), .watch-toggle button:focus-visible { border-color: var(--accent); color: var(--accent); }
 .watch-toggle button:disabled { opacity: .55; cursor: default; }
+.watch-toggle .eye, .bookmark { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.watchlist-toggle button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.watchlist-toggle button[aria-pressed="true"] .bookmark { fill: currentColor; }
+.detail .watchlist-toggle { margin: .5rem 0; }
+.filmography.with-toggle li { grid-template-columns: 3.5rem 46px 1fr auto; }
+.filmography .watchlist-toggle button { border-color: transparent; background: none; }
+.filmography li.empty-row { display: block; padding: .75rem 0; }
+.bookmark.inline { width: 1em; height: 1em; vertical-align: -.15em; }
+.watchlist h1 { margin: 0 0 1rem; }
 .watch-toggle .eye { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .episode > div:not(.still) { flex: 1; min-width: 0; }
 .episode-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }

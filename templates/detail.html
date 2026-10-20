@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_watch.html" as watch %}
+{% import "_watchlist.html" as watchlist %}
 {% block title %}{{ d.title }} · credits{% endblock %}
 {% block content %}
 {% let metadata = d.metadata %}{% include "_stale.html" %}
@@ -18,6 +19,8 @@
       <h1>{{ d.title }}{% if let Some(year) = d.year %} <span class="year">({{ year }})</span>{% endif %}</h1>
       {% if let Some(original) = d.original_title %}<p class="original">{{ original }}</p>{% endif %}
       {% if let Some(tagline) = d.tagline %}<p class="tagline">{{ tagline }}</p>{% endif %}
+      {% let page = d.path() %}
+      {% call watchlist::toggle(d.kind.slug(), d.id, d.title, listed, "watchlist-toggle", page, "To watch", true) %}{% endcall %}
       <section class="ratings" aria-label="Ratings">
         {% if d.ratings.is_unavailable() %}
         <p class="rating muted">{{ d.ratings.unavailable_message() }}</p>

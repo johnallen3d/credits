@@ -24,6 +24,14 @@ impl MediaKind {
             MediaKind::Tv => "tv",
         }
     }
+
+    pub fn from_slug(slug: &str) -> Option<Self> {
+        match slug {
+            "movie" => Some(MediaKind::Movie),
+            "tv" => Some(MediaKind::Tv),
+            _ => None,
+        }
+    }
 }
 
 /// One search result. Serialized with a `kind` of "movie", "tv" or "person"
@@ -728,6 +736,40 @@ impl KindFilter {
     }
 }
 
+/// The "To watch" list: saved movies and TV shows in the chosen order.
+#[derive(Clone, Debug, Serialize)]
+pub struct WatchlistDetail {
+    pub titles: Vec<FilmographyEntry>,
+    pub sort: WatchlistSort,
+    /// Only when sorted by rating: how complete the scores behind the order are.
+    pub sort_ratings: Option<SortRatings>,
+}
+
+/// How the "To watch" list is ordered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchlistSort {
+    /// Most recently added first.
+    #[default]
+    Added,
+    /// Highest `sort_score` first, then unscored titles most recently added first.
+    Rating,
+}
+
+impl WatchlistSort {
+    /// The `sort` query parameter; anything unrecognised means added.
+    pub fn from_query(value: Option<&str>) -> Self {
+        match value {
+            Some("rating") => WatchlistSort::Rating,
+            _ => WatchlistSort::Added,
+        }
+    }
+
+    pub fn is_rating(self) -> bool {
+        self == WatchlistSort::Rating
+    }
+}
+
 /// What stood behind a by-rating order: credits without a score, and
 /// whether some scores were stale or couldn't be loaded.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -742,6 +784,10 @@ pub struct SortRatings {
 impl SortRatings {
     pub fn stale_on(&self) -> Option<String> {
         self.stale_since.map(local_day)
+    }
+
+    pub fn not_configured(&self) -> bool {
+        self.unavailable_reason == Some(UnavailableReason::NotConfigured)
     }
 
     pub fn unavailable_message(&self) -> Option<&'static str> {

@@ -45,6 +45,17 @@ item to peek at it.
 Watched marks are stored in the same SQLite database and survive restarts. If
 they can't be read, spoilers stay hidden.
 
+## To watch
+
+Movies and TV shows can be saved to a "To watch" list from their own page,
+or from any row of a person's filmography, with the bookmark toggle. The list
+page (linked from the header) shows the newest additions first and filters
+and sorts like a filmography: All / Movies / TV (`?kind=movie|tv`) and Added
+/ Rating (`?sort=rating`). The list lives in the same SQLite database; each
+title's name, year and poster are a snapshot of its cached TMDB entry, taken
+when it's added. If the list can't be read, the page says so rather than
+showing it empty.
+
 ## Routes
 
 | HTML | JSON |
@@ -56,6 +67,8 @@ they can't be read, spoilers stay hidden.
 | `/tv/{id}/season/{n}` | `/api/tv/{id}/season/{n}` |
 | `/tv/{id}/season/{n}/episode/{e}` | `/api/tv/{id}/season/{n}/episode/{e}` |
 | `/person/{id}` (`?sort=rating`) | `/api/person/{id}` (`?sort=rating`) |
+| `/watchlist` (`?kind=movie\|tv`, `?sort=rating`) | `/api/watchlist` (same parameters) |
+| `POST /movie/{id}/watchlist`, `POST /tv/{id}/watchlist` (form: `listed=true\|false`) | |
 | `POST /tv/{id}/watched`, `POST /tv/{id}/season/{n}/watched` (form: `watched=true\|false`) | |
 
 Both sides use `Catalog` (`src/catalog.rs`) and the types in `src/model.rs`.
