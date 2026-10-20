@@ -374,6 +374,7 @@ pub struct TitleDetail {
     pub backdrop_url: Option<String>,
     pub tmdb_url: String,
     pub ratings: Ratings,
+    pub where_to_watch: WhereToWatch,
     /// Directors and writers (movies), creators and principal directors (TV).
     pub key_crew: Vec<KeyCrew>,
     /// Top-billed cast only; the full list is in `TitleCredits`.
@@ -398,6 +399,112 @@ impl TitleDetail {
     pub fn has_more_credits(&self) -> bool {
         self.cast_total > self.cast.len() || self.crew_total > 0
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WhereToWatchState {
+    /// From TMDB data within its freshness window.
+    Fresh,
+    /// From an expired cached copy, served because TMDB could not be reached.
+    Stale,
+    /// Not known: TMDB could not be reached and nothing cached includes it.
+    Unavailable,
+}
+
+/// How a title can be watched in one region, from TMDB's JustWatch data.
+#[derive(Clone, Debug, Serialize)]
+pub struct WhereToWatch {
+    /// ISO 3166-1 country code.
+    pub region: String,
+    pub state: WhereToWatchState,
+    /// TMDB's page of every offer in the region, which links on to each service.
+    pub link: Option<String>,
+    /// Non-empty groups, in `OfferKind` order. Empty when nothing is offered
+    /// in the region, or when unavailable.
+    pub offers: Vec<OfferGroup>,
+    pub fetched_at: Option<Timestamp>,
+}
+
+impl WhereToWatch {
+    pub fn unavailable(region: String) -> Self {
+        Self {
+            region,
+            state: WhereToWatchState::Unavailable,
+            link: None,
+            offers: Vec::new(),
+            fetched_at: None,
+        }
+    }
+
+    pub fn is_unavailable(&self) -> bool {
+        self.state == WhereToWatchState::Unavailable
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.state == WhereToWatchState::Stale
+    }
+
+    pub fn fetched_on(&self) -> Option<String> {
+        self.fetched_at.map(local_day)
+    }
+
+    /// "1 to stream · 7 to rent · 5 to buy", for the collapsed section.
+    pub fn summary(&self) -> String {
+        self.offers
+            .iter()
+            .map(|g| format!("{} {}", g.providers.len(), g.kind.summary_label()))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfferKind {
+    /// Included with a subscription.
+    Stream,
+    Free,
+    /// Free with ads.
+    Ads,
+    Rent,
+    Buy,
+}
+
+impl OfferKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Stream => "Stream",
+            Self::Free => "Free",
+            Self::Ads => "Free with ads",
+            Self::Rent => "Rent",
+            Self::Buy => "Buy",
+        }
+    }
+
+    fn summary_label(self) -> &'static str {
+        match self {
+            Self::Stream => "to stream",
+            Self::Free => "free",
+            Self::Ads => "free with ads",
+            Self::Rent => "to rent",
+            Self::Buy => "to buy",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OfferGroup {
+    pub kind: OfferKind,
+    /// In TMDB's display priority order.
+    pub providers: Vec<WatchProvider>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct WatchProvider {
+    pub id: u64,
+    pub name: String,
+    pub logo_url: Option<String>,
 }
 
 /// A person's part in one title: a character for cast, job titles for crew.

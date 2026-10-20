@@ -74,6 +74,23 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .rating-score { display: inline-block; min-width: 4.5rem; font-variant-numeric: tabular-nums; }
 .rating-source { width: 2.4rem; height: 1.1rem; object-fit: contain; object-position: left center; vertical-align: -.2rem; }
 .rating-stale { margin: .25rem 0 0; font-size: .85rem; color: var(--error-fg); }
+.where-to-watch .region { font-size: .9rem; font-weight: 400; }
+.where-to-watch summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; list-style: none; }
+.where-to-watch summary::-webkit-details-marker { display: none; }
+.where-to-watch summary::before { content: ""; align-self: center; width: .5rem; height: .5rem; margin-right: .25rem; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); transition: transform .15s; }
+.where-to-watch details[open] > summary::before { transform: rotate(45deg); }
+.where-to-watch summary h2 { display: inline; margin: 0; }
+.where-to-watch summary:hover h2, .where-to-watch summary:focus-visible h2 { color: var(--accent); }
+.where-to-watch details[open] > summary { margin-bottom: 1rem; }
+.offer-summary { font-size: .9rem; }
+.offer-group { margin-bottom: 1rem; }
+.offer-group h3 { font-size: .85rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 .5rem; }
+.providers { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .5rem; }
+.provider { display: inline-flex; align-items: center; gap: .5rem; padding: .3rem .75rem .3rem .3rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: inherit; text-decoration: none; font-size: .9rem; }
+.provider:not(:has(img)) { padding-left: .75rem; }
+a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
+.provider img { width: 40px; height: 40px; border-radius: 6px; }
+.attribution { font-size: .85rem; margin: .5rem 0 0; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; }

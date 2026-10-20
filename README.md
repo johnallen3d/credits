@@ -37,6 +37,23 @@ comes from its cached TMDB entry, so the first rating sort of a busy
 filmography costs one TMDB and one OMDb request per title, eight at a time;
 date order, the default, looks nothing up.
 
+## Where to watch
+
+Movie and TV pages list where the title can be watched in one country:
+streaming with a subscription, free, free with ads, rent and buy, each with the
+services in TMDB's order. The list starts collapsed to one line counting the
+offers of each kind. The data is JustWatch's, via TMDB, and comes in the
+same TMDB request and cache entry as the rest of the page. Set the country with
+`CREDITS_REGION` (a two-letter code, default `US`). TMDB doesn't link straight to
+each service, so the services link to TMDB's page of every offer for the
+country, which does.
+
+When TMDB data is stale, the offers are marked with the date they were listed.
+Cache entries saved before this feature are refetched; if TMDB is down and only
+such an entry exists, where to watch is reported as unavailable. JSON responses
+carry `where_to_watch` with `region`, `state` (`fresh` / `stale` /
+`unavailable`), `link`, `offers` and `fetched_at`.
+
 ## Spoilers
 
 Season and episode pages blur episode summaries and IMDb episode scores until

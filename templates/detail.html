@@ -61,6 +61,7 @@
       <p><a href="{{ d.tmdb_url }}" rel="noopener">View on TMDB</a></p>
     </div>
   </div>
+  {% include "_where_to_watch.html" %}
   {% if !d.season_list.is_empty() %}
   {% let page = d.path() %}
   {% let show_action = d.watched_path() %}

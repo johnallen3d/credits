@@ -88,6 +88,37 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                     6060 => "tt6060000",
                     _ => return (StatusCode::NOT_FOUND, Json(json!({ "status_code": 34 }))),
                 };
+                let watch_providers = if id == 603 {
+                    json!({ "results": {
+                        "US": {
+                            "link": "https://www.themoviedb.org/movie/603-the-matrix/watch?locale=US",
+                            "flatrate": [
+                                { "provider_id": 8, "provider_name": "Netflix",
+                                  "logo_path": "/netflix.jpg", "display_priority": 4 },
+                                { "provider_id": 1899, "provider_name": "Max",
+                                  "logo_path": "/max.jpg", "display_priority": 1 },
+                                { "provider_id": 8, "provider_name": "Netflix",
+                                  "logo_path": "/netflix.jpg", "display_priority": 4 }
+                            ],
+                            "rent": [
+                                { "provider_id": 2, "provider_name": "Apple TV",
+                                  "logo_path": null, "display_priority": 3 }
+                            ]
+                        },
+                        "GB": {
+                            "link": "https://www.themoviedb.org/movie/603-the-matrix/watch?locale=GB",
+                            "buy": [
+                                { "provider_id": 10, "provider_name": "Amazon Video",
+                                  "logo_path": "/amazon.jpg", "display_priority": 7 }
+                            ]
+                        }
+                    }})
+                } else {
+                    // Offered elsewhere, but not in the default region.
+                    json!({ "results": { "GB": { "link": "https://www.themoviedb.org/movie/6060/watch?locale=GB",
+                        "flatrate": [{ "provider_id": 8, "provider_name": "Netflix",
+                                       "logo_path": "/netflix.jpg", "display_priority": 4 }] } } })
+                };
                 (
                     StatusCode::OK,
                     Json(json!({
@@ -97,6 +128,7 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         "genres": [{ "id": 28, "name": "Action" }, { "id": 878, "name": "Science Fiction" }],
                         "poster_path": "/matrix.jpg", "backdrop_path": null,
                         "external_ids": { "imdb_id": imdb_id },
+                        "watch/providers": watch_providers,
                         "credits": {
                             "cast": [
                                 { "id": 6384, "name": "Keanu Reeves", "character": "Neo",
@@ -143,6 +175,11 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         "genres": [{ "id": 18, "name": "Drama" }],
                         "poster_path": null, "backdrop_path": "/bb-back.jpg",
                         "external_ids": { "imdb_id": imdb_id },
+                        "watch/providers": { "results": { "US": {
+                            "link": "https://www.themoviedb.org/tv/1396-breaking-bad/watch?locale=US",
+                            "ads": [{ "provider_id": 300, "provider_name": "Pluto TV",
+                                      "logo_path": "/pluto.jpg", "display_priority": 9 }]
+                        } } },
                         "created_by": [{ "id": 66633, "name": "Vince Gilligan", "profile_path": null }],
                         "seasons": [
                             { "season_number": 0, "name": "Specials", "episode_count": 9,
@@ -417,13 +454,17 @@ async fn build_with_database(
     metadata_ttl: Duration,
     database: &str,
 ) -> TestApp {
-    let mut config = Config::from_lookup(|key| match key {
+    let config = Config::from_lookup(|key| match key {
         "TMDB_API_TOKEN" => Some(token.to_owned()),
         "OMDB_API_KEY" => omdb_key.map(str::to_owned),
         "CREDITS_DB" => Some(database.to_owned()),
         _ => None,
     })
     .unwrap();
+    build_from(config, ratings_ttl, metadata_ttl).await
+}
+
+async fn build_from(mut config: Config, ratings_ttl: Duration, metadata_ttl: Duration) -> TestApp {
     let omdb = FakeOmdb::default();
     let tmdb = FakeTmdb::default();
     config.tmdb_api_base = fake_tmdb(tmdb.clone()).await;
@@ -548,6 +589,7 @@ async fn about_page_carries_tmdb_and_omdb_attribution() {
     );
     assert!(body.contains("/static/tmdb-logo.svg"));
     assert!(body.contains("OMDb API"));
+    assert!(body.contains(r#"Where to watch data by <a href="https://www.justwatch.com/""#));
 }
 
 #[tokio::test]
@@ -1885,4 +1927,153 @@ async fn watchlist_sorts_by_rating_and_reports_problems() {
     assert!(body.contains("Couldn&#39;t add to your To watch list"));
     let (_, json) = get_json(t.app(), "/api/watchlist").await;
     assert_eq!(json["titles"].as_array().unwrap().len(), 1);
+}
+
+fn temp_database(name: &str) -> String {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir()
+        .join(format!("credits-{name}-{}-{unique}.db", std::process::id()))
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn title_pages_show_where_to_watch_in_the_region() {
+    let (_, _, body) = get_page(test_app().await, "/movie/603", false).await;
+    assert!(body.contains(r#"<h2 id="where-to-watch-heading">Where to watch <span class="muted region">in US</span></h2>"#));
+    assert!(
+        body.contains(
+            r#"<span class="muted offer-summary">2 to stream · 1 to rent</span></summary>"#
+        ),
+        "collapsed behind a summary of the offers"
+    );
+    assert!(!body.contains("<details open"));
+    let stream = body.find("<h3>Stream</h3>").unwrap();
+    let rent = body.find("<h3>Rent</h3>").unwrap();
+    assert!(stream < rent, "subscription offers come first");
+    let max = body.find("Max</span>").unwrap();
+    let netflix = body.find("Netflix</span>").unwrap();
+    assert!(max < netflix, "services in TMDB's display priority order");
+    assert_eq!(
+        body.matches("Netflix</span>").count(),
+        1,
+        "duplicates dropped"
+    );
+    assert!(body.contains(r#"<img src="https://img.test/t/p/w92/max.jpg""#));
+    assert!(
+        body.contains(r#"<span class="provider-name">Apple TV</span>"#),
+        "named even without a logo"
+    );
+    assert!(
+        body.contains(r#"href="https://www.themoviedb.org/movie/603-the-matrix/watch?locale=US""#)
+    );
+    assert!(body.contains(r#"Availability from <a href="https://www.justwatch.com/""#));
+    assert!(
+        !body.contains("Amazon Video"),
+        "other regions are not shown"
+    );
+
+    let (_, _, body) = get_page(test_app().await, "/tv/1396", false).await;
+    assert!(body.contains("<h3>Free with ads</h3>"));
+    assert!(body.contains("Pluto TV"));
+
+    let (_, _, body) = get_page(test_app().await, "/movie/6060", false).await;
+    assert!(body.contains("No streaming, rental or purchase options are listed for US."));
+    assert!(body.contains("Availability from"));
+
+    let (_, json) = get_json(test_app().await, "/api/movie/603").await;
+    assert_eq!(
+        json["where_to_watch"]["link"],
+        "https://www.themoviedb.org/movie/603-the-matrix/watch?locale=US"
+    );
+    assert_eq!(json["where_to_watch"]["region"], "US");
+    assert_eq!(json["where_to_watch"]["state"], "fresh");
+    assert!(json["where_to_watch"]["fetched_at"].is_string());
+    assert_eq!(
+        json["where_to_watch"]["offers"],
+        json!([
+            { "kind": "stream", "providers": [
+                { "id": 1899, "name": "Max", "logo_url": "https://img.test/t/p/w92/max.jpg" },
+                { "id": 8, "name": "Netflix", "logo_url": "https://img.test/t/p/w92/netflix.jpg" }
+            ] },
+            { "kind": "rent", "providers": [{ "id": 2, "name": "Apple TV", "logo_url": null }] }
+        ])
+    );
+
+    let ttl = Duration::from_secs(3600);
+    let config = Config::from_lookup(|key| match key {
+        "TMDB_API_TOKEN" => Some(TOKEN.to_owned()),
+        "CREDITS_DB" => Some(IN_MEMORY.to_owned()),
+        "CREDITS_REGION" => Some("gb".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+    let t = build_from(config, ttl, ttl).await;
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(r#"<span class="muted region">in GB</span>"#));
+    assert!(body.contains("<h3>Buy</h3>"));
+    assert!(body.contains("Amazon Video"));
+    assert!(!body.contains("Netflix"));
+}
+
+#[tokio::test]
+async fn where_to_watch_survives_tmdb_outages_and_older_cache_entries() {
+    let database = temp_database("where-to-watch");
+    let t = build_with(
+        TOKEN,
+        Some(OMDB_KEY),
+        Duration::from_secs(3600),
+        Duration::ZERO,
+    )
+    .await;
+    get_page(t.app(), "/movie/603", false).await;
+    t.tmdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Netflix"), "expired offers are still shown");
+    assert!(body.contains("Couldn't refresh where to watch; showing what was listed on "));
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json["where_to_watch"]["state"], "stale");
+
+    // Entries cached before where to watch was requested lack it.
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, &database).await;
+    get_page(t.app(), "/movie/603", false).await;
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    let drop_providers =
+        r#"UPDATE provider_cache SET payload = json_remove(payload, '$."watch/providers"')"#;
+    sqlx::query(drop_providers).execute(&pool).await.unwrap();
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert_eq!(
+        t.tmdb.calls(),
+        2,
+        "a fresh entry without offers is refetched"
+    );
+    assert!(body.contains("Netflix"));
+    get_page(t.app(), "/movie/603", false).await;
+    assert_eq!(t.tmdb.calls(), 2, "and then served from the cache");
+
+    sqlx::query(drop_providers).execute(&pool).await.unwrap();
+    t.tmdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("stale-notice"));
+    assert!(body.contains("Where to watch couldn't be loaded right now."));
+    assert!(!body.contains("Availability from"));
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json["where_to_watch"]["state"], "unavailable");
+    assert_eq!(json["where_to_watch"]["offers"], json!([]));
+
+    drop(t);
+    pool.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
 }

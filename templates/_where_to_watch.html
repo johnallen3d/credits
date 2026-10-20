@@ -1,0 +1,31 @@
+{% let w = d.where_to_watch %}
+<section class="section where-to-watch" id="where-to-watch" aria-labelledby="where-to-watch-heading">
+  {% if w.offers.is_empty() %}
+  <h2 id="where-to-watch-heading">Where to watch <span class="muted region">in {{ w.region }}</span></h2>
+  {% if w.is_unavailable() %}
+  <p class="muted">Where to watch couldn't be loaded right now.</p>
+  {% else %}
+  <p class="muted">No streaming, rental or purchase options are listed for {{ w.region }}.</p>
+  {% endif %}
+  {% else %}
+  <details>
+    <summary><h2 id="where-to-watch-heading">Where to watch <span class="muted region">in {{ w.region }}</span></h2> <span class="muted offer-summary">{{ w.summary() }}</span></summary>
+    {% for group in w.offers %}
+    <div class="offer-group">
+      <h3>{{ group.kind.label() }}</h3>
+      <ul class="providers">
+        {% for p in group.providers %}
+        <li>{% if let Some(link) = w.link %}<a class="provider" href="{{ link }}" rel="noopener">{% else %}<span class="provider">{% endif %}{% if let Some(logo) = p.logo_url %}<img src="{{ logo }}" alt="" width="40" height="40" loading="lazy">{% endif %}<span class="provider-name">{{ p.name }}</span>{% if w.link.is_some() %}</a>{% else %}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+  {% if w.is_stale() %}
+  <p class="rating-stale">Couldn't refresh where to watch{% if let Some(day) = w.fetched_on() %}; showing what was listed on {{ day }}{% endif %}.</p>
+  {% endif %}
+  {% if !w.is_unavailable() %}
+  <p class="attribution muted">Availability from <a href="https://www.justwatch.com/" rel="noopener">JustWatch</a>{% if let Some(link) = w.link %} · <a href="{{ link }}" rel="noopener">All options on TMDB</a>{% endif %}</p>
+  {% endif %}
+</section>

@@ -16,9 +16,11 @@ use crate::cache::ProviderCache;
 use crate::config::Config;
 use crate::model::{
     Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup, FilmographySort,
-    KeyCrew, KeyRole, KnownFor, MediaKind, Metadata, PersonCredit, PersonDetail, PersonHit, Rating,
-    Ratings, RecentView, SearchHit, SeasonDetail, SeasonSummary, SortRatings, TitleCredits,
-    TitleDetail, TitleHit, UnavailableReason, WatchTarget, Watched, WatchlistDetail, WatchlistSort,
+    KeyCrew, KeyRole, KnownFor, MediaKind, Metadata, MetadataState, OfferGroup, OfferKind,
+    PersonCredit, PersonDetail, PersonHit, Rating, Ratings, RecentView, SearchHit, SeasonDetail,
+    SeasonSummary, SortRatings, TitleCredits, TitleDetail, TitleHit, UnavailableReason,
+    WatchProvider, WatchTarget, Watched, WatchlistDetail, WatchlistSort, WhereToWatch,
+    WhereToWatchState,
 };
 use crate::omdb::OmdbClient;
 use crate::ratings::RatingsService;
@@ -33,6 +35,8 @@ const PROFILE_SIZE: &str = "w185";
 const STILL_SIZE: &str = "w300";
 /// Small posters beside title references in lists, e.g. a filmography.
 const THUMB_SIZE: &str = "w92";
+/// Streaming service logos, shown at about 40px square.
+const LOGO_SIZE: &str = "w92";
 const PROVIDER: &str = "tmdb";
 /// Cast members shown on a title page; the rest are on its credits page.
 const TOP_CAST: usize = 12;
@@ -83,6 +87,7 @@ pub struct Catalog {
     watchlist: Watchlist,
     favorites: Watchlist,
     metadata_ttl: Duration,
+    watch_region: String,
 }
 
 /// A filmography entry with its full release date, for sorting.
@@ -123,6 +128,7 @@ impl Catalog {
             favorites: Watchlist::favorites(cache.pool()),
             cache,
             metadata_ttl: config.metadata_ttl,
+            watch_region: config.watch_region.clone(),
         })
     }
 
@@ -665,12 +671,17 @@ impl Catalog {
     }
 
     async fn movie_raw(&self, id: u64) -> Result<(tmdb::Movie, Metadata), CatalogError> {
-        self.cached(format!("movie/{id}"), self.tmdb.movie(id))
-            .await
+        self.cached_if(format!("movie/{id}"), self.tmdb.movie(id), |m| {
+            m.watch_providers.is_some()
+        })
+        .await
     }
 
     async fn tv_raw(&self, id: u64) -> Result<(tmdb::Tv, Metadata), CatalogError> {
-        self.cached(format!("tv/{id}"), self.tmdb.tv(id)).await
+        self.cached_if(format!("tv/{id}"), self.tmdb.tv(id), |t| {
+            t.watch_providers.is_some()
+        })
+        .await
     }
 
     /// TMDB data through the provider cache. Expired entries are refetched, and
@@ -681,9 +692,22 @@ impl Catalog {
         key: String,
         fetch: impl Future<Output = Result<T, CatalogError>>,
     ) -> Result<(T, Metadata), CatalogError> {
+        self.cached_if(key, fetch, |_| true).await
+    }
+
+    /// `cached`, also refetching fresh entries that aren't `complete`: those
+    /// saved before the request asked TMDB for more.
+    async fn cached_if<T: Serialize + DeserializeOwned>(
+        &self,
+        key: String,
+        fetch: impl Future<Output = Result<T, CatalogError>>,
+        complete: impl Fn(&T) -> bool,
+    ) -> Result<(T, Metadata), CatalogError> {
         let now = Timestamp::now();
         let stale = match self.cache.get::<T>(PROVIDER, &key).await {
-            Ok(Some(c)) if c.is_fresh(now) => return Ok((c.value, Metadata::fresh(c.fetched_at))),
+            Ok(Some(c)) if c.is_fresh(now) && complete(&c.value) => {
+                return Ok((c.value, Metadata::fresh(c.fetched_at)));
+            }
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, %key, "TMDB cache read failed");
@@ -710,8 +734,9 @@ impl Catalog {
         }
     }
 
-    fn movie(&self, m: tmdb::Movie, ratings: Ratings, metadata: Metadata) -> TitleDetail {
+    fn movie(&self, mut m: tmdb::Movie, ratings: Ratings, metadata: Metadata) -> TitleDetail {
         let people = Summary::from(self.movie_people(&m));
+        let where_to_watch = self.where_to_watch(m.watch_providers.take(), metadata);
         TitleDetail {
             kind: MediaKind::Movie,
             id: m.id,
@@ -729,6 +754,7 @@ impl Catalog {
             backdrop_url: self.image(BACKDROP_SIZE, m.backdrop_path),
             tmdb_url: format!("https://www.themoviedb.org/movie/{}", m.id),
             ratings,
+            where_to_watch,
             key_crew: people.key_crew,
             cast: people.cast,
             cast_total: people.cast_total,
@@ -738,8 +764,9 @@ impl Catalog {
         }
     }
 
-    fn tv(&self, t: tmdb::Tv, ratings: Ratings, metadata: Metadata) -> TitleDetail {
+    fn tv(&self, mut t: tmdb::Tv, ratings: Ratings, metadata: Metadata) -> TitleDetail {
         let people = Summary::from(self.tv_people(&t));
+        let where_to_watch = self.where_to_watch(t.watch_providers.take(), metadata);
         TitleDetail {
             kind: MediaKind::Tv,
             id: t.id,
@@ -757,6 +784,7 @@ impl Catalog {
             backdrop_url: self.image(BACKDROP_SIZE, t.backdrop_path),
             tmdb_url: format!("https://www.themoviedb.org/tv/{}", t.id),
             ratings,
+            where_to_watch,
             key_crew: people.key_crew,
             cast: people.cast,
             cast_total: people.cast_total,
@@ -964,6 +992,53 @@ impl Catalog {
         // Specials (season 0) go after the regular seasons.
         list.sort_by_key(|s| (s.number == 0, s.number));
         list
+    }
+
+    /// The configured region's offers, each kind's services in TMDB's order.
+    fn where_to_watch(
+        &self,
+        providers: Option<tmdb::WatchProviders>,
+        metadata: Metadata,
+    ) -> WhereToWatch {
+        let region = self.watch_region.clone();
+        let Some(mut providers) = providers else {
+            return WhereToWatch::unavailable(region);
+        };
+        let offers = providers.results.remove(&region).unwrap_or_default();
+        WhereToWatch {
+            state: match metadata.state {
+                MetadataState::Fresh => WhereToWatchState::Fresh,
+                MetadataState::Stale => WhereToWatchState::Stale,
+            },
+            link: offers.link.filter(|l| l.starts_with("https://")),
+            offers: [
+                (OfferKind::Stream, offers.flatrate),
+                (OfferKind::Free, offers.free),
+                (OfferKind::Ads, offers.ads),
+                (OfferKind::Rent, offers.rent),
+                (OfferKind::Buy, offers.buy),
+            ]
+            .into_iter()
+            .filter_map(|(kind, mut services)| {
+                services.sort_by_key(|p| p.display_priority.unwrap_or(u32::MAX));
+                let mut seen = HashSet::new();
+                services.retain(|p| seen.insert(p.provider_id));
+                (!services.is_empty()).then(|| OfferGroup {
+                    kind,
+                    providers: services
+                        .into_iter()
+                        .map(|p| WatchProvider {
+                            id: p.provider_id,
+                            name: p.provider_name,
+                            logo_url: self.image(LOGO_SIZE, p.logo_path),
+                        })
+                        .collect(),
+                })
+            })
+            .collect(),
+            fetched_at: Some(metadata.fetched_at),
+            region,
+        }
     }
 
     fn image(&self, size: &str, path: Option<String>) -> Option<String> {

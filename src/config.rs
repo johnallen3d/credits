@@ -5,8 +5,10 @@ pub const TOKEN_VAR: &str = "TMDB_API_TOKEN";
 pub const OMDB_KEY_VAR: &str = "OMDB_API_KEY";
 pub const BIND_VAR: &str = "CREDITS_BIND";
 pub const DB_VAR: &str = "CREDITS_DB";
+pub const REGION_VAR: &str = "CREDITS_REGION";
 const DEFAULT_BIND: &str = "127.0.0.1:3000";
 const DEFAULT_DB: &str = "credits.db";
+const DEFAULT_REGION: &str = "US";
 /// How long fetched ratings count as fresh before OMDb is asked again.
 const RATINGS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 /// How long TMDB title, season and person data counts as fresh.
@@ -25,6 +27,9 @@ pub struct Config {
     pub metadata_ttl: Duration,
     /// SQLite file for the provider cache, or `cache::IN_MEMORY`.
     pub database_path: String,
+    /// ISO 3166-1 country code, uppercase, whose streaming and rental offers
+    /// are shown.
+    pub watch_region: String,
     pub bind: SocketAddr,
 }
 
@@ -53,6 +58,8 @@ pub enum ConfigError {
          so it only listens on localhost"
     )]
     NonLoopbackBind(SocketAddr),
+    #[error("{REGION_VAR}={0:?} is not a two-letter country code (expected e.g. {DEFAULT_REGION})")]
+    InvalidRegion(String),
 }
 
 impl Config {
@@ -89,6 +96,15 @@ impl Config {
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| DEFAULT_DB.to_owned());
 
+        let watch_region = match lookup(REGION_VAR).map(|r| r.trim().to_owned()) {
+            None => DEFAULT_REGION.to_owned(),
+            Some(r) if r.is_empty() => DEFAULT_REGION.to_owned(),
+            Some(r) if r.len() == 2 && r.bytes().all(|b| b.is_ascii_alphabetic()) => {
+                r.to_ascii_uppercase()
+            }
+            Some(r) => return Err(ConfigError::InvalidRegion(r)),
+        };
+
         Ok(Self {
             tmdb_token: token,
             tmdb_api_base: "https://api.themoviedb.org/3".to_owned(),
@@ -98,6 +114,7 @@ impl Config {
             ratings_ttl: RATINGS_TTL,
             metadata_ttl: METADATA_TTL,
             database_path,
+            watch_region,
             bind,
         })
     }
@@ -177,6 +194,24 @@ mod tests {
                 .unwrap()
                 .database_path,
             "/tmp/x.db"
+        );
+    }
+
+    #[test]
+    fn watch_region_defaults_to_us_and_must_be_a_country_code() {
+        let token = (TOKEN_VAR, "eyJ.token.sig");
+        assert_eq!(config(&[token]).unwrap().watch_region, "US");
+        assert_eq!(
+            config(&[token, (REGION_VAR, "")]).unwrap().watch_region,
+            "US"
+        );
+        assert_eq!(
+            config(&[token, (REGION_VAR, " gb ")]).unwrap().watch_region,
+            "GB"
+        );
+        assert_eq!(
+            config(&[token, (REGION_VAR, "USA")]).unwrap_err(),
+            ConfigError::InvalidRegion("USA".to_owned())
         );
     }
 }

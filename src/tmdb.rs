@@ -2,6 +2,7 @@
 //! to the catalog; everything else uses `crate::model`. Detail responses are
 //! also the provider cache payload, so they serialize back to the same shape.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -41,7 +42,7 @@ impl TmdbClient {
     pub async fn movie(&self, id: u64) -> Result<Movie, CatalogError> {
         self.get(
             &format!("/movie/{id}"),
-            &[("append_to_response", "external_ids,credits")],
+            &[("append_to_response", "external_ids,credits,watch/providers")],
         )
         .await
     }
@@ -49,7 +50,10 @@ impl TmdbClient {
     pub async fn tv(&self, id: u64) -> Result<Tv, CatalogError> {
         self.get(
             &format!("/tv/{id}"),
-            &[("append_to_response", "external_ids,aggregate_credits")],
+            &[(
+                "append_to_response",
+                "external_ids,aggregate_credits,watch/providers",
+            )],
         )
         .await
     }
@@ -178,6 +182,9 @@ pub struct Movie {
     pub external_ids: ExternalIds,
     #[serde(default)]
     pub credits: Credits,
+    /// Absent from cache entries saved before it was requested.
+    #[serde(rename = "watch/providers")]
+    pub watch_providers: Option<WatchProviders>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -203,6 +210,42 @@ pub struct Tv {
     pub created_by: Vec<Creator>,
     #[serde(default)]
     pub seasons: Vec<SeasonSummary>,
+    /// Absent from cache entries saved before it was requested.
+    #[serde(rename = "watch/providers")]
+    pub watch_providers: Option<WatchProviders>,
+}
+
+/// Where a title can be watched, keyed by ISO 3166-1 region code. TMDB gets
+/// this from JustWatch.
+#[derive(Serialize, Deserialize, Default)]
+pub struct WatchProviders {
+    #[serde(default)]
+    pub results: HashMap<String, RegionProviders>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct RegionProviders {
+    /// TMDB's page of every offer in the region.
+    pub link: Option<String>,
+    /// Subscription streaming.
+    #[serde(default)]
+    pub flatrate: Vec<WatchProvider>,
+    #[serde(default)]
+    pub free: Vec<WatchProvider>,
+    #[serde(default)]
+    pub ads: Vec<WatchProvider>,
+    #[serde(default)]
+    pub rent: Vec<WatchProvider>,
+    #[serde(default)]
+    pub buy: Vec<WatchProvider>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WatchProvider {
+    pub provider_id: u64,
+    pub provider_name: String,
+    pub logo_path: Option<String>,
+    pub display_priority: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
