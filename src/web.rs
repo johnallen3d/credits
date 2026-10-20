@@ -14,8 +14,8 @@ use serde_json::json;
 
 use crate::catalog::{Catalog, CatalogError};
 use crate::model::{
-    FilmographySort, MediaKind, PersonDetail, RecentView, SearchHit, SeasonDetail, TitleCredits,
-    TitleDetail, WatchTarget, Watched, title_path,
+    EpisodeDetail, FilmographySort, MediaKind, PersonDetail, RecentView, SearchHit, SeasonDetail,
+    TitleCredits, TitleDetail, WatchTarget, Watched, title_path,
 };
 
 pub fn app(catalog: Catalog) -> Router {
@@ -42,6 +42,10 @@ pub fn app(catalog: Catalog) -> Router {
         .route("/tv/{id}/season/{number}", get(season_page))
         .route("/tv/{id}/season/{number}/watched", post(set_season_watched))
         .route(
+            "/tv/{id}/season/{number}/episode/{episode}",
+            get(episode_page),
+        )
+        .route(
             "/tv/{id}/season/{number}/episode/{episode}/watched",
             post(set_episode_watched),
         )
@@ -61,6 +65,10 @@ pub fn app(catalog: Catalog) -> Router {
             get(|s, p| api_credits(s, p, MediaKind::Tv)),
         )
         .route("/api/tv/{id}/season/{number}", get(api_season))
+        .route(
+            "/api/tv/{id}/season/{number}/episode/{episode}",
+            get(api_episode),
+        )
         .route("/api/person/{id}", get(api_person))
         .route(
             "/static/htmx.min.js",
@@ -141,6 +149,13 @@ struct CreditsPage {
 #[template(path = "season.html")]
 struct SeasonPage {
     s: SeasonDetail,
+    watched: Watched,
+}
+
+#[derive(Template)]
+#[template(path = "episode.html")]
+struct EpisodePage {
+    e: EpisodeDetail,
     watched: Watched,
 }
 
@@ -267,6 +282,25 @@ async fn season_page(
     )
 }
 
+async fn episode_page(
+    State(catalog): State<Catalog>,
+    Path((id, season, number)): Path<(String, String, String)>,
+) -> Response {
+    let Some((id, season, number)) = episode_ids(&id, &season, &number) else {
+        return not_found_episode();
+    };
+    let result = catalog.episode(id, season, number).await;
+    let watched = match &result {
+        Ok(_) => catalog.watched(id).await,
+        Err(_) => Watched::default(),
+    };
+    page(
+        result.map(|e| EpisodePage { e, watched }),
+        not_found_episode,
+        "Couldn't load this episode",
+    )
+}
+
 async fn set_show_watched(
     State(catalog): State<Catalog>,
     Path(id): Path<String>,
@@ -306,14 +340,17 @@ async fn set_episode_watched(
     Path((id, season, number)): Path<(String, String, String)>,
     Form(form): Form<WatchedForm>,
 ) -> Response {
-    let (Ok(id), Ok(season), Ok(number)) = (
-        id.parse::<u64>(),
-        season.parse::<u32>(),
-        number.parse::<u32>(),
-    ) else {
+    let Some((id, season, number)) = episode_ids(&id, &season, &number) else {
         return not_found_season();
     };
-    let back = format!("/tv/{id}/season/{season}#episode-{number}");
+    // Back to the episode's own page if that's where the form was, else its
+    // place on the season page.
+    let episode_page = format!("/tv/{id}/season/{season}/episode/{number}");
+    let back = if form.back.as_deref() == Some(episode_page.as_str()) {
+        episode_page
+    } else {
+        format!("/tv/{id}/season/{season}#episode-{number}")
+    };
     let target = WatchTarget::Episode { season, number };
     save_watched(&catalog, id, target, form.watched, &back).await
 }
@@ -418,6 +455,16 @@ async fn api_season(
     api_result(catalog.season(id, number).await, "season")
 }
 
+async fn api_episode(
+    State(catalog): State<Catalog>,
+    Path((id, season, number)): Path<(String, String, String)>,
+) -> Response {
+    let Some((id, season, number)) = episode_ids(&id, &season, &number) else {
+        return api_not_found();
+    };
+    api_result(catalog.episode(id, season, number).await, "episode")
+}
+
 async fn api_person(
     State(catalog): State<Catalog>,
     Path(id): Path<String>,
@@ -428,6 +475,10 @@ async fn api_person(
     };
     let sort = FilmographySort::from_query(params.sort.as_deref());
     api_result(catalog.person(id, sort).await, "person")
+}
+
+fn episode_ids(id: &str, season: &str, number: &str) -> Option<(u64, u32, u32)> {
+    Some((id.parse().ok()?, season.parse().ok()?, number.parse().ok()?))
 }
 
 /// Renders a page, or the matching error page when the catalog lookup failed.
@@ -498,6 +549,14 @@ fn not_found_season() -> Response {
         StatusCode::NOT_FOUND,
         "Season not found",
         "TMDB has no such season for that TV show.",
+    )
+}
+
+fn not_found_episode() -> Response {
+    error_page(
+        StatusCode::NOT_FOUND,
+        "Episode not found",
+        "TMDB has no such episode for that TV show.",
     )
 }
 

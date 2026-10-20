@@ -135,6 +135,11 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .spoiler .overview:focus, .spoiler .episode-rating:focus { outline: none; }
 .still { flex: none; width: 200px; height: 113px; object-fit: cover; border-radius: 4px; background: var(--line); }
 .still.missing { display: flex; align-items: center; justify-content: center; font-size: .8rem; color: var(--muted); }
+.still-link { flex: none; }
+.episode h3 a { color: inherit; text-decoration: none; }
+.episode h3 a:hover, .episode h3 a:focus-visible { color: var(--accent); }
+.still.large { width: 300px; height: auto; aspect-ratio: 16 / 9; }
+.detail-body > .meta { flex: 1; min-width: 0; }
 
 @media (max-width: 640px) {
   header.site, main, footer.site { padding-left: 1rem; padding-right: 1rem; }
@@ -159,6 +164,7 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
   .episode::after { content: ""; display: table; clear: both; }
   .still { float: left; width: 40%; height: auto; aspect-ratio: 16 / 9; margin: 0 .75rem .4rem 0; }
   .episode .overview { clear: both; }
+  .still.large { float: none; display: block; width: 100%; margin: 0 0 1rem; }
   .pager { flex-wrap: wrap; }
   .pager a { padding: .35rem 0; }
 }

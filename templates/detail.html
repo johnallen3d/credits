@@ -85,20 +85,7 @@
     {% if d.cast.is_empty() %}
     <p class="muted">TMDB has no cast listed for this title.</p>
     {% else %}
-    <ul class="tiles">
-      {% for p in d.cast %}
-      <li><a href="{{ p.person_path() }}">
-        {% if let Some(url) = p.profile_url %}
-        <img class="poster" src="{{ url }}" alt="" loading="lazy" width="92" height="138">
-        {% else %}
-        <div class="poster missing" aria-hidden="true">No photo</div>
-        {% endif %}
-        <span class="name">{{ p.name }}</span>
-        {% if let Some(role) = p.role %}<span class="role">{{ role }}</span>{% endif %}
-        {% if let Some(eps) = p.episodes_label() %}<span class="role">{{ eps }}</span>{% endif %}
-      </a></li>
-      {% endfor %}
-    </ul>
+    {% let people = d.cast %}{% include "_people.html" %}
     {% endif %}
     {% if d.has_more_credits() %}
     <p><a href="{{ d.path() }}/credits">Full cast &amp; crew</a> <span class="muted">({{ d.cast_total }} cast, {{ d.crew_total }} crew)</span></p>

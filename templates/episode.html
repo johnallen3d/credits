@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% import "_watch.html" as watch %}
+{% block title %}{{ e.title }} · {{ e.season_name }} · {{ e.show_title }} · credits{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{{ e.show_path() }}">← {{ e.show_title }}</a> · <a href="{{ e.season_path() }}">{{ e.season_name }}</a></nav>
+{% let metadata = e.metadata %}{% include "_stale.html" %}
+{% let page = e.path() %}
+{% let action = e.watched_path() %}
+{% let seen = watched.episode(*e.season_number, *e.number) %}
+<article class="detail">
+  <div class="detail-body">
+    {% if let Some(url) = e.still_url %}
+    <img class="still large" src="{{ url }}" alt="{{ e.title }} still" width="300" height="169">
+    {% else %}
+    <div class="still large missing" role="img" aria-label="No image available">No image</div>
+    {% endif %}
+    <div class="meta{% if !seen %} spoiler{% endif %}" id="episode">
+      <span class="badge badge-tv">TV episode</span>
+      <h1>{{ e.title }}</h1>
+      <p class="original">{{ e.season_name }} · Episode {{ e.number }}</p>
+      <div class="watch-state">
+        {% if watched.season(*e.season_number) %}
+        {% call watch::toggle(action, true, "Episode watched", page, "episode", "Watched", "Watched with the season") %}{% endcall %}
+        {% else %}
+        {% call watch::toggle(action, seen, "Episode watched", page, "episode", "Watched", "") %}{% endcall %}
+        {% endif %}
+      </div>
+      <section class="ratings" aria-label="Rating">
+        {% if e.episode_ratings.is_unavailable() %}
+        <p class="rating muted">{{ e.episode_ratings.unavailable_message() }}</p>
+        {% else if let Some(r) = e.rating %}
+        <p class="rating preferred"><span class="episode-rating"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}><strong class="rating-score">{{ r.display() }}</strong></span> <img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"></p>
+        {% else %}
+        <p class="rating preferred muted">No IMDb score</p>
+        {% endif %}
+        {% if e.episode_ratings.is_stale() %}
+        <p class="rating-stale">Couldn't refresh ratings{% if let Some(day) = e.episode_ratings.fetched_on() %}; showing scores from {{ day }}{% endif %}.</p>
+        {% endif %}
+      </section>
+      <dl class="facts">
+        <dt>Aired</dt><dd>{% if let Some(day) = e.air_date_display() %}{{ day }}{% else %}Not announced{% endif %}</dd>
+        {% if let Some(minutes) = e.runtime_minutes %}<dt>Runtime</dt><dd>{{ minutes }} min</dd>{% endif %}
+        {% for k in e.key_crew %}
+        <dt>{{ k.role.label() }}</dt><dd>{% for p in k.people %}<a href="{{ p.person_path() }}">{{ p.name }}</a>{% if !loop.last %}, {% endif %}{% endfor %}</dd>
+        {% endfor %}
+      </dl>
+      {% if let Some(overview) = e.overview %}
+      <p class="overview"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}>{{ overview }}</p>
+      {% else %}
+      <p class="overview muted">No summary available.</p>
+      {% endif %}
+      <nav class="pager" aria-label="Episodes">
+        {% if let Some(prev) = e.previous %}<a href="{{ e.season_path() }}/episode/{{ prev }}">← Episode {{ prev }}</a>{% endif %}
+        {% if let Some(next) = e.next %}<a href="{{ e.season_path() }}/episode/{{ next }}">Episode {{ next }} →</a>{% endif %}
+      </nav>
+    </div>
+  </div>
+  <section class="section" aria-labelledby="guests-heading">
+    <h2 id="guests-heading">Guest stars</h2>
+    {% if e.guest_stars.is_empty() %}
+    <p class="muted">TMDB lists no guest stars for this episode.</p>
+    {% else %}
+    {% let people = e.guest_stars %}{% include "_people.html" %}
+    {% endif %}
+  </section>
+  <section class="section" aria-labelledby="cast-heading">
+    <h2 id="cast-heading">Series cast</h2>
+    {% if e.cast.is_empty() %}
+    <p class="muted">TMDB lists no series regulars for this episode.</p>
+    {% else %}
+    {% let people = e.cast %}{% include "_people.html" %}
+    {% endif %}
+  </section>
+  {% for d in e.crew %}
+  <section class="section" id="{{ d.anchor() }}">
+    <h2>{{ d.name }}</h2>
+    <ul class="credit-list">
+      {% for p in d.people %}{% let prefix = "" %}{% include "_credit.html" %}{% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</article>
+{% endblock %}

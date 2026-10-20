@@ -1,0 +1,14 @@
+<ul class="tiles">
+  {% for p in people %}
+  <li><a href="{{ p.person_path() }}">
+    {% if let Some(url) = p.profile_url %}
+    <img class="poster" src="{{ url }}" alt="" loading="lazy" width="92" height="138">
+    {% else %}
+    <div class="poster missing" aria-hidden="true">No photo</div>
+    {% endif %}
+    <span class="name">{{ p.name }}</span>
+    {% if let Some(role) = p.role %}<span class="role">{{ role }}</span>{% endif %}
+    {% if let Some(eps) = p.episodes_label() %}<span class="role">{{ eps }}</span>{% endif %}
+  </a></li>
+  {% endfor %}
+</ul>

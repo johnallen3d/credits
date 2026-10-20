@@ -15,10 +15,10 @@ use tokio::task::JoinSet;
 use crate::cache::ProviderCache;
 use crate::config::Config;
 use crate::model::{
-    Department, Episode, FilmographyEntry, FilmographyGroup, FilmographySort, KeyCrew, KeyRole,
-    KnownFor, MediaKind, Metadata, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
-    RecentView, SearchHit, SeasonDetail, SeasonSummary, SortRatings, TitleCredits, TitleDetail,
-    TitleHit, UnavailableReason, WatchTarget, Watched,
+    Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup, FilmographySort,
+    KeyCrew, KeyRole, KnownFor, MediaKind, Metadata, PersonCredit, PersonDetail, PersonHit, Rating,
+    Ratings, RecentView, SearchHit, SeasonDetail, SeasonSummary, SortRatings, TitleCredits,
+    TitleDetail, TitleHit, UnavailableReason, WatchTarget, Watched,
 };
 use crate::omdb::OmdbClient;
 use crate::ratings::RatingsService;
@@ -292,6 +292,69 @@ impl Catalog {
             previous: neighbour(-1),
             next: neighbour(1),
             metadata: show_metadata.combine(season_metadata),
+        })
+    }
+
+    pub async fn episode(
+        &self,
+        tv_id: u64,
+        season: u32,
+        number: u32,
+    ) -> Result<EpisodeDetail, CatalogError> {
+        let ((show, show_metadata), (episode, episode_metadata)) = tokio::try_join!(
+            self.tv_raw(tv_id),
+            self.cached(
+                format!("tv/{tv_id}/season/{season}/episode/{number}"),
+                self.tmdb.episode(tv_id, season, number)
+            ),
+        )?;
+        let (episode_ratings, mut episode_scores) = self
+            .ratings
+            .for_season(show.external_ids.imdb_id.clone(), episode.season_number)
+            .await;
+        let summary = show
+            .seasons
+            .iter()
+            .find(|s| s.season_number == episode.season_number);
+        let episode_count = summary.and_then(|s| s.episode_count).unwrap_or(0);
+        let number = episode.episode_number;
+        let credits = &episode.credits;
+        let cast_of = |members: &[tmdb::CastMember]| {
+            merge_credits(
+                members.iter().map(|c| {
+                    (
+                        (),
+                        self.credit(c.id, &c.name, c.character.clone(), None, &c.profile_path),
+                    )
+                }),
+                Separator::Characters,
+            )
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect::<Vec<_>>()
+        };
+        Ok(EpisodeDetail {
+            show_id: show.id,
+            show_title: show.name.clone(),
+            season_number: episode.season_number,
+            season_name: summary
+                .and_then(|s| non_empty(s.name.clone()))
+                .unwrap_or_else(|| season_name(episode.season_number)),
+            number,
+            title: non_empty(episode.name).unwrap_or_else(|| format!("Episode {number}")),
+            air_date: non_empty(episode.air_date),
+            overview: non_empty(episode.overview),
+            runtime_minutes: episode.runtime.filter(|r| *r > 0),
+            still_url: self.image(STILL_SIZE, episode.still_path),
+            rating: episode_scores.remove(&number),
+            episode_ratings,
+            key_crew: self.key_crew(&credits.crew),
+            cast: cast_of(&credits.cast),
+            guest_stars: cast_of(&credits.guest_stars),
+            crew: departments(self.crew_by_department(&credits.crew)),
+            previous: number.checked_sub(1).filter(|n| *n > 0),
+            next: Some(number + 1).filter(|n| *n <= episode_count),
+            metadata: show_metadata.combine(episode_metadata),
         })
     }
 
@@ -607,8 +670,17 @@ impl Catalog {
             }),
             Separator::Characters,
         );
-        let crew: Vec<(String, PersonCredit)> = merge_credits(
-            m.credits.crew.iter().map(|c| {
+        People {
+            cast: cast.into_iter().map(|(_, p)| p).collect(),
+            crew: self.crew_by_department(&m.credits.crew),
+            key_crew: self.key_crew(&m.credits.crew),
+        }
+    }
+
+    /// Crew of a movie or episode, one entry per person and department.
+    fn crew_by_department(&self, crew: &[tmdb::CrewMember]) -> Vec<(String, PersonCredit)> {
+        merge_credits(
+            crew.iter().map(|c| {
                 let department =
                     non_empty(c.department.clone()).unwrap_or_else(|| "Crew".to_owned());
                 (
@@ -617,13 +689,14 @@ impl Catalog {
                 )
             }),
             Separator::Jobs,
-        );
+        )
+    }
 
+    /// Directors and writers of a movie or episode.
+    fn key_crew(&self, crew: &[tmdb::CrewMember]) -> Vec<KeyCrew> {
         let with_jobs = |jobs: &[&str]| {
             merge_credits(
-                m.credits
-                    .crew
-                    .iter()
+                crew.iter()
                     .filter(|c| c.job.as_deref().is_some_and(|j| jobs.contains(&j)))
                     .map(|c| {
                         (
@@ -637,20 +710,14 @@ impl Catalog {
             .map(|(_, p)| p)
             .collect::<Vec<_>>()
         };
-        let key_crew = [
+        [
             (KeyRole::Director, with_jobs(&["Director"])),
             (KeyRole::Writer, with_jobs(WRITER_JOBS)),
         ]
         .into_iter()
         .filter(|(_, people)| !people.is_empty())
         .map(|(role, people)| KeyCrew { role, people })
-        .collect();
-
-        People {
-            cast: cast.into_iter().map(|(_, p)| p).collect(),
-            crew,
-            key_crew,
-        }
+        .collect()
     }
 
     fn tv_people(&self, t: &tmdb::Tv) -> People {

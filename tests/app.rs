@@ -196,6 +196,42 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
             }),
         )
         .route(
+            "/3/tv/{id}/season/{season}/episode/{number}",
+            get(|Path((id, season, number)): Path<(u64, u32, u32)>| async move {
+                if (id, season, number) != (1396, 1, 1) {
+                    return (StatusCode::NOT_FOUND, Json(json!({ "status_code": 34 })));
+                }
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "season_number": 1, "episode_number": 1, "name": "Pilot",
+                        "air_date": "2008-01-20", "runtime": 58, "still_path": "/pilot.jpg",
+                        "overview": "A chemistry teacher is diagnosed.",
+                        "credits": {
+                            "cast": [
+                                { "id": 17419, "name": "Bryan Cranston", "character": "Walter White",
+                                  "profile_path": "/bryan.jpg" }
+                            ],
+                            "guest_stars": [
+                                { "id": 61535, "name": "Steven Michael Quezada",
+                                  "character": "Steven Gomez", "profile_path": null },
+                                { "id": 61535, "name": "Steven Michael Quezada",
+                                  "character": "Gomie", "profile_path": null }
+                            ],
+                            "crew": [
+                                { "id": 66633, "name": "Vince Gilligan", "department": "Directing",
+                                  "job": "Director" },
+                                { "id": 66633, "name": "Vince Gilligan", "department": "Writing",
+                                  "job": "Writer" },
+                                { "id": 5, "name": "Lynne Willingham", "department": "Editing",
+                                  "job": "Editor" }
+                            ]
+                        }
+                    })),
+                )
+            }),
+        )
+        .route(
             "/3/person/{id}",
             get(|Path(id): Path<u64>| async move {
                 match id {
@@ -911,6 +947,93 @@ async fn season_page_lists_episodes_with_fallbacks() {
     assert!(body.contains("Season not found"));
     let (status, _) = get_json(test_app().await, "/api/tv/1396/season/x").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn episode_page_shows_episode_cast_and_crew() {
+    let (_, _, body) = get_page(test_app().await, "/tv/1396/season/1", false).await;
+    assert!(body.contains(
+        r#"<h3><a href="/tv/1396/season/1/episode/1"><span class="muted">1.</span> Pilot</a></h3>"#
+    ));
+
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (status, _, body) = get_page(t.app(), "/tv/1396/season/1/episode/1", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("<title>Pilot · Season 1 · Breaking Bad · credits</title>"));
+    assert!(body.contains(
+        r#"<a href="/tv/1396">← Breaking Bad</a> · <a href="/tv/1396/season/1">Season 1</a>"#
+    ));
+    assert!(body.contains("Season 1 · Episode 1"));
+    assert!(body.contains("https://img.test/t/p/w300/pilot.jpg"));
+    assert!(body.contains("<dt>Runtime</dt><dd>58 min</dd>"));
+    assert!(
+        body.contains(r#"<dt>Directed by</dt><dd><a href="/person/66633">Vince Gilligan</a></dd>"#)
+    );
+    assert!(
+        body.contains(r#"<dt>Written by</dt><dd><a href="/person/66633">Vince Gilligan</a></dd>"#)
+    );
+    let guests = body.find("Guest stars").unwrap();
+    let regulars = body.find("Series cast").unwrap();
+    assert!(guests < regulars);
+    assert!(
+        body.contains(r#"<span class="role">Steven Gomez / Gomie</span>"#),
+        "roles merged"
+    );
+    assert_eq!(body.matches(r#"href="/person/61535""#).count(), 1);
+    assert!(body.contains(r#"<a href="/person/17419">"#));
+    assert!(body.contains(r#"<span class="role">Walter White</span>"#));
+    assert!(body.contains(r#"id="dept-editing""#));
+    assert!(body.contains(r#"<a href="/tv/1396/season/1/episode/2">Episode 2 →</a>"#));
+    assert!(
+        !body.contains("← Episode"),
+        "no previous link before episode 1"
+    );
+    // Unwatched: score and summary blurred.
+    assert!(body.contains(r#"class="meta spoiler" id="episode""#));
+    assert!(body.contains(r#"<strong class="rating-score">9.0/10</strong>"#));
+    assert!(body.contains(r#"<p class="overview" tabindex="0" title="Spoiler: select to peek">A chemistry teacher is diagnosed.</p>"#));
+
+    let (status, json) = get_json(t.app(), "/api/tv/1396/season/1/episode/1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["title"], "Pilot");
+    assert_eq!(json["season_name"], "Season 1");
+    assert_eq!(json["rating"]["score"], 9.0);
+    assert_eq!(json["guest_stars"][0]["role"], "Steven Gomez / Gomie");
+    assert_eq!(json["cast"][0]["name"], "Bryan Cranston");
+    assert_eq!(json["key_crew"][0]["role"], "director");
+    assert_eq!(json["previous"], Value::Null);
+    assert_eq!(json["next"], 2);
+
+    let (status, _, body) = get_page(t.app(), "/tv/1396/season/1/episode/99", false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body.contains("Episode not found"));
+    let (status, _) = get_json(t.app(), "/api/tv/1396/season/1/episode/x").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn marking_an_episode_watched_from_its_page_returns_there() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (status, headers) = post_form(
+        t.app(),
+        "/tv/1396/season/1/episode/1/watched",
+        "watched=true&back=%2Ftv%2F1396%2Fseason%2F1%2Fepisode%2F1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/tv/1396/season/1/episode/1");
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/1/episode/1", false).await;
+    assert!(body.contains(r#"class="meta" id="episode""#));
+    assert!(body.contains(r#"<p class="overview">A chemistry teacher is diagnosed.</p>"#));
+
+    // Any other page falls back to the episode on its season page.
+    let (_, headers) = post_form(
+        t.app(),
+        "/tv/1396/season/1/episode/1/watched",
+        "watched=false&back=%2Ftv%2F1396%2Fseason%2F1%2Fepisode%2F2",
+    )
+    .await;
+    assert_eq!(headers[header::LOCATION], "/tv/1396/season/1#episode-1");
 }
 
 #[tokio::test]

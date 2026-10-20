@@ -556,6 +556,59 @@ impl Episode {
     }
 }
 
+/// One TV episode with everyone credited on it.
+#[derive(Clone, Debug, Serialize)]
+pub struct EpisodeDetail {
+    pub show_id: u64,
+    pub show_title: String,
+    pub season_number: u32,
+    pub season_name: String,
+    pub number: u32,
+    /// TMDB's name, or "Episode N" when it has none.
+    pub title: String,
+    pub air_date: Option<String>,
+    pub overview: Option<String>,
+    pub runtime_minutes: Option<u32>,
+    pub still_url: Option<String>,
+    /// IMDb's episode score; None when IMDb has none or ratings are unavailable.
+    pub rating: Option<Rating>,
+    /// Where `rating` came from, and why it's missing if it is.
+    pub episode_ratings: EpisodeRatings,
+    /// Directors and writers of this episode.
+    pub key_crew: Vec<KeyCrew>,
+    /// Series regulars who appear in this episode, in billing order.
+    pub cast: Vec<PersonCredit>,
+    pub guest_stars: Vec<PersonCredit>,
+    pub crew: Vec<Department>,
+    /// Neighbouring episode numbers within the season, for navigation.
+    pub previous: Option<u32>,
+    pub next: Option<u32>,
+    pub metadata: Metadata,
+}
+
+impl EpisodeDetail {
+    pub fn show_path(&self) -> String {
+        title_path(MediaKind::Tv, self.show_id)
+    }
+
+    pub fn season_path(&self) -> String {
+        format!("/tv/{}/season/{}", self.show_id, self.season_number)
+    }
+
+    pub fn path(&self) -> String {
+        format!("{}/episode/{}", self.season_path(), self.number)
+    }
+
+    /// Where the form marking this episode watched posts to.
+    pub fn watched_path(&self) -> String {
+        format!("{}/watched", self.path())
+    }
+
+    pub fn air_date_display(&self) -> Option<String> {
+        self.air_date.as_deref().map(display_date)
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct PersonDetail {
     pub id: u64,

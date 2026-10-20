@@ -58,6 +58,19 @@ impl TmdbClient {
         self.get(&format!("/tv/{tv_id}/season/{number}"), &[]).await
     }
 
+    pub async fn episode(
+        &self,
+        tv_id: u64,
+        season: u32,
+        number: u32,
+    ) -> Result<EpisodeDetail, CatalogError> {
+        self.get(
+            &format!("/tv/{tv_id}/season/{season}/episode/{number}"),
+            &[("append_to_response", "credits")],
+        )
+        .await
+    }
+
     pub async fn person(&self, id: u64) -> Result<Person, CatalogError> {
         self.get(
             &format!("/person/{id}"),
@@ -294,6 +307,30 @@ pub struct Episode {
     pub air_date: Option<String>,
     pub runtime: Option<u32>,
     pub still_path: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EpisodeDetail {
+    pub season_number: u32,
+    pub episode_number: u32,
+    pub name: Option<String>,
+    pub overview: Option<String>,
+    pub air_date: Option<String>,
+    pub runtime: Option<u32>,
+    pub still_path: Option<String>,
+    #[serde(default)]
+    pub credits: EpisodeCredits,
+}
+
+/// Credits of one episode: `cast` is the series regulars who appear in it.
+#[derive(Serialize, Deserialize, Default)]
+pub struct EpisodeCredits {
+    #[serde(default)]
+    pub cast: Vec<CastMember>,
+    #[serde(default)]
+    pub guest_stars: Vec<CastMember>,
+    #[serde(default)]
+    pub crew: Vec<CrewMember>,
 }
 
 #[derive(Serialize, Deserialize)]

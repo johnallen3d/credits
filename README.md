@@ -39,8 +39,9 @@ date order, the default, looks nothing up.
 
 ## Spoilers
 
-Season pages blur episode summaries and IMDb episode scores until that season,
-or the whole show, is marked watched; select a blurred item to peek at it.
+Season and episode pages blur episode summaries and IMDb episode scores until
+that episode, its season or the whole show is marked watched; select a blurred
+item to peek at it.
 Watched marks are stored in the same SQLite database and survive restarts. If
 they can't be read, spoilers stay hidden.
 
@@ -53,13 +54,16 @@ they can't be read, spoilers stay hidden.
 | `/tv/{id}` | `/api/tv/{id}` |
 | `/movie/{id}/credits`, `/tv/{id}/credits` | `/api/movie/{id}/credits`, `/api/tv/{id}/credits` |
 | `/tv/{id}/season/{n}` | `/api/tv/{id}/season/{n}` |
+| `/tv/{id}/season/{n}/episode/{e}` | `/api/tv/{id}/season/{n}/episode/{e}` |
 | `/person/{id}` (`?sort=rating`) | `/api/person/{id}` (`?sort=rating`) |
 | `POST /tv/{id}/watched`, `POST /tv/{id}/season/{n}/watched` (form: `watched=true\|false`) | |
 
 Both sides use `Catalog` (`src/catalog.rs`) and the types in `src/model.rs`.
 Detail responses include a `ratings` object, key crew (directors and writers
 for movies; creators and most frequent directors for TV), the top-billed cast,
-cast/crew totals and, for TV, the season list. Credits responses carry the full
+cast/crew totals and, for TV, the season list. Episode responses carry that
+episode's guest stars, the series regulars credited on it, its directors and
+writers, and its crew grouped by department. Credits responses carry the full
 cast and the crew grouped by department. Person responses carry the
 filmography grouped by department, the person's main department first.
 
