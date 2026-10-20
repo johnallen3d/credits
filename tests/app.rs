@@ -544,6 +544,18 @@ async fn post_form(app: Router, uri: &str, form: &str) -> (StatusCode, HeaderMap
     (response.status(), response.headers().clone())
 }
 
+async fn post_htmx_form(app: Router, uri: &str, form: &str) -> (StatusCode, String) {
+    let request = Request::post(uri)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("HX-Request", "true")
+        .body(Body::from(form.to_owned()))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(body.to_vec()).unwrap())
+}
+
 async fn get_json(app: Router, uri: &str) -> (StatusCode, Value) {
     let (status, _, body) = get_page(app, uri, false).await;
     (status, serde_json::from_str(&body).unwrap())
@@ -2286,7 +2298,10 @@ async fn services_are_chosen_and_highlighted_on_title_pages() {
             < body.find(r#"value="8" checked>"#).unwrap(),
         "your services come first, under their own heading"
     );
-    assert!(body.contains("Your services: <strong>Netflix</strong>, <strong>Pluto TV</strong>"));
+    assert!(body.contains("Your services: <strong>Netflix</strong>, <strong>Pluto TV</strong>."));
+    assert!(!body.contains("Saved."), "only after an HTMX save");
+    assert!(body.contains(r##"hx-post="/services" hx-trigger="change""##));
+    assert!(body.contains(r#"<noscript><div class="service-save"><button type="submit">Save services</button></div></noscript>"#));
 
     let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
     assert!(body.contains(r#"<span class="on-my-services">On your services: Netflix</span>"#));
@@ -2313,6 +2328,14 @@ async fn services_are_chosen_and_highlighted_on_title_pages() {
     assert!(
         body.contains("On your services: Pluto TV"),
         "free with ads counts as included"
+    );
+
+    // HTMX saves on each change and gets the refreshed status back.
+    let (status, body) = post_htmx_form(t.app(), "/services", "service=1899").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"<div id="services-status" class="services-status" role="status">"#));
+    assert!(
+        body.contains(r#"Your services: <strong>Max</strong>. <span class="saved">Saved.</span>"#)
     );
 
     // An empty form clears the choice.

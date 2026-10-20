@@ -506,6 +506,8 @@ async fn favorite_titles(catalog: &Catalog) -> Option<HashSet<(MediaKind, u64)>>
 #[template(path = "services.html")]
 struct ServicesPage {
     s: ServicesDetail,
+    /// After an HTMX save: confirms it beside the status.
+    saved: bool,
 }
 
 #[derive(Template)]
@@ -944,7 +946,7 @@ async fn api_watchlist(
 
 async fn services_page(State(catalog): State<Catalog>) -> Response {
     match catalog.services().await {
-        Ok(s) => html(StatusCode::OK, ServicesPage { s }.render()),
+        Ok(s) => html(StatusCode::OK, ServicesPage { s, saved: false }.render()),
         Err(e) => {
             tracing::warn!(error = %e, "reading your services failed");
             error_page(
@@ -956,9 +958,11 @@ async fn services_page(State(catalog): State<Catalog>) -> Response {
     }
 }
 
-/// Replaces the user's services with the checked `service` boxes.
+/// Replaces the user's services with the checked `service` boxes. HTMX
+/// saves on each change and gets the page back to refresh the status.
 async fn save_services(
     State(catalog): State<Catalog>,
+    headers: HeaderMap,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Response {
     let ids = form
@@ -967,6 +971,14 @@ async fn save_services(
         .filter_map(|(_, id)| id.parse().ok())
         .collect();
     match catalog.set_services(&ids).await {
+        Ok(()) if is_htmx_fragment(&headers) => match catalog.services().await {
+            Ok(s) => html(StatusCode::OK, ServicesPage { s, saved: true }.render()),
+            Err(e) => {
+                // The save went through; only the status can't be refreshed.
+                tracing::warn!(error = %e, "reading your saved services failed");
+                Html(r#"<div id="services-status" class="services-status" role="status"><p><span class="saved">Saved.</span> Reload to see your services.</p></div>"#).into_response()
+            }
+        },
         Ok(()) => Redirect::to("/services").into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "saving your services failed");

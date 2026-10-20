@@ -4,11 +4,13 @@
 <section class="services" aria-labelledby="services-heading">
   <h1 id="services-heading">My services <span class="muted region">in {{ s.region }}</span></h1>
   <p class="hint">Choose the streaming services you subscribe to. Movie and TV pages highlight them, and your <a href="/watchlist">To watch</a> list can show just the titles on them.</p>
+  <div id="services-status" class="services-status" role="status">
   {% if s.chosen.is_empty() %}
-  <p class="muted" role="status">No services chosen yet.</p>
+  <p class="muted">No services chosen yet.{% if saved %} <span class="saved">Saved.</span>{% endif %}</p>
   {% else %}
-  <p role="status">Your services: {% for c in s.chosen %}{% if !loop.first %}, {% endif %}<strong>{{ c.name }}</strong>{% endfor %}</p>
+  <p>Your services: {% for c in s.chosen %}{% if !loop.first %}, {% endif %}<strong>{{ c.name }}</strong>{% endfor %}.{% if saved %} <span class="saved">Saved.</span>{% endif %}</p>
   {% endif %}
+  </div>
   {% if s.is_unavailable() %}
   <p class="rating-stale" role="status">TMDB's list of services couldn't be loaded right now{% if !s.chosen.is_empty() %}, so only your current services are listed. You can still remove them{% endif %}.</p>
   {% else if s.is_stale() %}
@@ -18,7 +20,10 @@
   <p class="muted">Only part of TMDB's list of services could be loaded, so some may be missing.</p>
   {% endif %}
   {% if !s.options.is_empty() %}
-  <form class="service-form" method="post" action="/services">
+  {# Each change saves the whole form; queued so the last state wins. Without
+     JavaScript the Save button submits it instead. #}
+  <form class="service-form" method="post" action="/services" hx-post="/services" hx-trigger="change" hx-sync="this:queue last" hx-target="#services-status" hx-select="#services-status" hx-swap="outerHTML" hx-on::before-on-load="if (event.detail.xhr.status >= 400) { event.preventDefault(); this.querySelector('[role=alert]').hidden = false; }" hx-on::after-on-load="if (event.detail.xhr.status < 400) this.querySelector('[role=alert]').hidden = true" hx-on::send-error="this.querySelector('[role=alert]').hidden = false" hx-on::timeout="this.querySelector('[role=alert]').hidden = false">
+    <p class="service-error" role="alert" hidden>Couldn't save your services. Please try again.</p>
     {% for (group, options) in s.groups() %}
     <h2 class="service-group">{{ group.heading() }}</h2>
     <ul class="service-options">
@@ -27,7 +32,7 @@
       {% endfor %}
     </ul>
     {% endfor %}
-    <div class="service-save"><button type="submit">Save services</button></div>
+    <noscript><div class="service-save"><button type="submit">Save services</button></div></noscript>
   </form>
   {% endif %}
   {% if !s.is_unavailable() %}
