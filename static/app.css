@@ -47,6 +47,9 @@ footer.site { margin-top: 3rem; padding-top: 1rem; padding-bottom: 2rem; border-
 .result a.selected { box-shadow: 0 0 0 1px var(--accent); }
 .result h2 { margin: .25rem 0; font-size: 1.1rem; }
 .overview { margin: 0; }
+.result.with-actions { position: relative; }
+.result.with-actions a { padding-right: 5.5rem; }
+.result .title-actions { position: absolute; top: .75rem; right: .75rem; }
 .result .overview { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .year { color: var(--muted); font-weight: 400; }
 

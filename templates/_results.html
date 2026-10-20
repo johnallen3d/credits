@@ -1,3 +1,5 @@
+{% import "_watchlist.html" as watchlist %}
+{% import "_favorite.html" as favorite %}
 {% match results %}
 {% when Results::Idle(recent) %}
 {% if recent.is_empty() %}
@@ -27,7 +29,8 @@
 {% when Results::Hits(hits) %}
 <ul class="results">
   {% for hit in hits %}
-  <li class="result">
+  {% let title_hit = hit.title() %}
+  <li class="result{% if title_hit.is_some() %} with-actions{% endif %}">
     <a href="{{ hit.detail_path() }}">
       {% if let Some(url) = hit.image_url() %}
       <img class="poster" src="{{ url }}" alt="" loading="lazy" width="92" height="138">
@@ -40,6 +43,14 @@
         {% if let Some(summary) = hit.summary() %}<p class="overview">{{ summary }}</p>{% endif %}
       </div>
     </a>
+    {% if let Some((media, t)) = title_hit %}
+    {% let watchlist_id = crate::web::title_toggle_id("watchlist", media, t.id) %}
+    {% let favorite_id = crate::web::title_toggle_id("favorite", media, t.id) %}
+    <div class="title-actions">
+    {% call watchlist::toggle(media.slug(), t.id, t.title, saved.is_listed(media, t.id), watchlist_id, saved.back(query, watchlist_id), "", true) %}{% endcall %}
+    {% call favorite::toggle(media.slug(), t.id, t.title, saved.is_favorite(media, t.id), favorite_id, saved.back(query, favorite_id), "", true) %}{% endcall %}
+    </div>
+    {% endif %}
   </li>
   {% endfor %}
 </ul>

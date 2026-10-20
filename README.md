@@ -48,7 +48,8 @@ they can't be read, spoilers stay hidden.
 ## To watch
 
 Movies and TV shows can be saved to a "To watch" list from their own page,
-or from any row of a person's filmography, with the bookmark toggle. The list
+from search results, or from any row of a person's filmography, with the
+bookmark toggle. The list
 page (linked from the header) shows the newest additions first and filters
 and sorts like a filmography: All / Movies / TV (`?kind=movie|tv`) and Added
 / Rating (`?sort=rating`). The list lives in the same SQLite database; each
@@ -58,8 +59,8 @@ showing it empty.
 
 ## Favorites
 
-Heart a movie or TV show on its detail page, beside a filmography credit, or
-in either saved list. Favorites are independent of To watch and persist in
+Heart a movie or TV show on its detail page, in search results, beside a
+filmography credit, or in either saved list. Favorites are independent of To watch and persist in
 SQLite. Open Favorites from the header; filter All / Movies / TV and sort by
 Added (newest first) or Rating, just like To watch. Unhearting removes a title
 from Favorites only. If favorite state cannot be read, hearts are disabled

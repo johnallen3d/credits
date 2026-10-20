@@ -141,6 +141,7 @@ pub enum Results {
 struct SearchPage {
     query: String,
     results: Results,
+    saved: SavedTitles,
 }
 
 #[derive(Template)]
@@ -148,6 +149,31 @@ struct SearchPage {
 struct ResultsPartial {
     query: String,
     results: Results,
+    saved: SavedTitles,
+}
+
+/// Which titles are on the To watch and Favorites lists, for toggles on
+/// search results. `favorited` is `None` when Favorites couldn't be read.
+struct SavedTitles {
+    listed: HashSet<(MediaKind, u64)>,
+    favorited: Option<HashSet<(MediaKind, u64)>>,
+}
+
+impl SavedTitles {
+    fn is_listed(&self, kind: &MediaKind, id: &u64) -> bool {
+        self.listed.contains(&(*kind, *id))
+    }
+
+    fn is_favorite(&self, kind: &MediaKind, id: &u64) -> Option<bool> {
+        self.favorited
+            .as_ref()
+            .map(|titles| titles.contains(&(*kind, *id)))
+    }
+
+    /// The search for `query`, scrolled to the toggle `id`.
+    fn back(&self, query: &str, id: &str) -> String {
+        format!("/?q={}#{id}", encode_query_value(query))
+    }
 }
 
 #[derive(Template)]
@@ -406,11 +432,29 @@ fn watchlist_href(sort: WatchlistSort, kind: KindFilter, favorites: bool) -> Str
 
 /// The element id of a title's watchlist toggle, unique on any page.
 fn watchlist_toggle_id(e: &FilmographyEntry) -> String {
-    format!("watchlist-{}-{}", e.kind.slug(), e.id)
+    title_toggle_id("watchlist", &e.kind, &e.id)
 }
 
 fn favorite_toggle_id(e: &FilmographyEntry) -> String {
-    format!("favorite-{}-{}", e.kind.slug(), e.id)
+    title_toggle_id("favorite", &e.kind, &e.id)
+}
+
+/// The element id of a title's toggle for `list` ("watchlist" or "favorite").
+fn title_toggle_id(list: &str, kind: &MediaKind, id: &u64) -> String {
+    format!("{list}-{}-{id}", kind.slug())
+}
+
+/// Percent-encodes `value` for use in a URL query string.
+fn encode_query_value(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// Unknown state disables hearts instead of offering a misleading toggle.
@@ -487,10 +531,31 @@ async fn search_page(
         }
     };
 
+    // Only title hits have toggles, so the lists are read only for them.
+    let saved = match &results {
+        Results::Hits(hits) if hits.iter().any(|h| h.title().is_some()) => SavedTitles {
+            listed: catalog.watchlist_titles().await,
+            favorited: favorite_titles(&catalog).await,
+        },
+        _ => SavedTitles {
+            listed: HashSet::new(),
+            favorited: Some(HashSet::new()),
+        },
+    };
     let body = if is_htmx_fragment(&headers) {
-        ResultsPartial { query, results }.render()
+        ResultsPartial {
+            query,
+            results,
+            saved,
+        }
+        .render()
     } else {
-        SearchPage { query, results }.render()
+        SearchPage {
+            query,
+            results,
+            saved,
+        }
+        .render()
     };
     let mut response = html(status, body);
     // Same URL serves a full page or an HTMX fragment.

@@ -72,6 +72,15 @@ pub struct KnownFor {
 }
 
 impl SearchHit {
+    /// The movie or TV show this hit is, or `None` for a person.
+    pub fn title(&self) -> Option<(MediaKind, &TitleHit)> {
+        match self {
+            SearchHit::Movie(t) => Some((MediaKind::Movie, t)),
+            SearchHit::Tv(t) => Some((MediaKind::Tv, t)),
+            SearchHit::Person(_) => None,
+        }
+    }
+
     pub fn detail_path(&self) -> String {
         match self {
             SearchHit::Movie(t) => title_path(MediaKind::Movie, t.id),

@@ -588,6 +588,39 @@ async fn htmx_search_returns_only_the_results_fragment() {
 }
 
 #[tokio::test]
+async fn title_results_offer_to_watch_and_favorite_toggles() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    post_form(t.app(), "/tv/1396/favorite", "listed=true").await;
+
+    let (_, _, body) = get_page(t.app(), "/?q=the%20matrix", true).await;
+    assert!(body.contains(r##"id="watchlist-movie-603" method="post" action="/movie/603/watchlist" hx-post="/movie/603/watchlist" hx-target="#watchlist-movie-603" hx-select="#watchlist-movie-603""##));
+    assert!(body.contains(r#"name="back" value="/?q=the%20matrix#watchlist-movie-603""#));
+    assert!(body.contains(r#"name="back" value="/?q=the%20matrix#favorite-tv-1396""#));
+    assert!(body.contains(r#"aria-pressed="true" aria-label="To watch: The Matrix""#));
+    assert!(body.contains(r#"aria-pressed="false" aria-label="Favorite: The Matrix""#));
+    assert!(body.contains(r#"aria-pressed="false" aria-label="To watch: Breaking Bad""#));
+    assert!(body.contains(r#"aria-pressed="true" aria-label="Favorite: Breaking Bad""#));
+    assert!(
+        !body.contains("/person/6384/watchlist") && !body.contains("/person/6384/favorite"),
+        "people have no list toggles"
+    );
+
+    let (_, headers) = post_form(
+        t.app(),
+        "/movie/603/favorite",
+        "listed=true&back=%2F%3Fq%3Dthe%2520matrix%23favorite-movie-603",
+    )
+    .await;
+    assert_eq!(
+        headers[header::LOCATION],
+        "/?q=the%20matrix#favorite-movie-603"
+    );
+    let (_, _, body) = get_page(t.app(), "/?q=the%20matrix", false).await;
+    assert!(body.contains(r#"aria-pressed="true" aria-label="Favorite: The Matrix""#));
+}
+
+#[tokio::test]
 async fn empty_results_and_provider_failure_have_clear_states() {
     let (status, _, body) = get_page(test_app().await, "/?q=nothing", true).await;
     assert_eq!(status, StatusCode::OK);
@@ -1788,7 +1821,7 @@ async fn favorites_persist_and_storage_failures_never_look_empty() {
     let (status, json) = get_json(t.app(), "/api/favorites").await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(json["error"].as_str().unwrap().contains("couldn't be read"));
-    for uri in ["/movie/603", "/person/6384", "/watchlist"] {
+    for uri in ["/movie/603", "/person/6384", "/watchlist", "/?q=matrix"] {
         let (status, _, body) = get_page(t.app(), uri, false).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("Favorites couldn't be read."));
