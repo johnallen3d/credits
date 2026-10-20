@@ -211,20 +211,24 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                                 "cast": [
                                     { "id": 603, "media_type": "movie", "title": "The Matrix",
                                       "release_date": "1999-03-31", "character": "Neo",
-                                      "poster_path": "/matrix.jpg" },
+                                      "poster_path": "/matrix.jpg", "vote_count": 26000 },
                                     { "id": 603, "media_type": "movie", "title": "The Matrix",
                                       "release_date": "1999-03-31", "character": "Thomas Anderson",
-                                      "poster_path": "/matrix.jpg" },
+                                      "poster_path": "/matrix.jpg", "vote_count": 26000 },
                                     { "id": 999001, "media_type": "movie", "title": "Untitled Project",
-                                      "release_date": "", "character": null, "poster_path": null },
+                                      "release_date": "", "character": null, "poster_path": null,
+                                      "vote_count": 0 },
                                     { "id": 1396, "media_type": "tv", "name": "Breaking Bad",
                                       "first_air_date": "2008-01-20", "character": "Himself",
-                                      "episode_count": 1 }
+                                      "episode_count": 1, "vote_count": 16000 },
+                                    { "id": 59941, "media_type": "tv", "name": "The Tonight Show",
+                                      "first_air_date": "2014-02-17", "character": "Guest",
+                                      "episode_count": 3, "vote_count": 30000, "genre_ids": [10767, 35] }
                                 ],
                                 "crew": [
                                     { "id": 777, "media_type": "movie", "title": "Man of Tai Chi",
                                       "release_date": "2013-07-05", "department": "Directing",
-                                      "job": "Director" }
+                                      "job": "Director", "vote_count": 500 }
                                 ]
                             }
                         })),
@@ -961,8 +965,9 @@ async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     let acting = body.find(r#"id="dept-acting""#).unwrap();
     let directing = body.find(r#"id="dept-directing""#).unwrap();
     assert!(acting < directing, "known-for department first");
-    let tba = body.find("TBA").unwrap();
-    let matrix = body.find(r#"<a href="/movie/603">"#).unwrap();
+    let filmography = &body[body.find(r#"id="filmography-heading""#).unwrap()..];
+    let tba = filmography.find("TBA").unwrap();
+    let matrix = filmography.find(r#"<a href="/movie/603">"#).unwrap();
     assert!(tba < matrix, "undated entries lead, then newest first");
 
     let (status, json) = get_json(test_app().await, "/api/person/6384").await;
@@ -970,9 +975,46 @@ async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     assert_eq!(json["metadata"]["state"], "fresh");
     let acting = &json["filmography"][0];
     assert_eq!(acting["department"], "Acting");
-    assert_eq!(acting["entries"].as_array().unwrap().len(), 3);
-    assert_eq!(acting["entries"][1]["kind"], "tv");
-    assert_eq!(acting["entries"][2]["role"], "Neo / Thomas Anderson");
+    assert_eq!(acting["entries"].as_array().unwrap().len(), 4);
+    assert_eq!(acting["entries"][2]["kind"], "tv");
+    assert_eq!(acting["entries"][3]["role"], "Neo / Thomas Anderson");
+}
+
+#[tokio::test]
+async fn person_page_shows_most_voted_titles_as_known_for() {
+    let (status, json) = get_json(test_app().await, "/api/person/6384").await;
+    assert_eq!(status, StatusCode::OK);
+    let titles: Vec<&str> = json["known_for_titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["title"].as_str().unwrap())
+        .collect();
+    // Main department by votes, then other departments; no talk shows or
+    // appearances as themselves.
+    assert_eq!(titles, ["The Matrix", "Untitled Project", "Man of Tai Chi"]);
+    assert_eq!(json["known_for_titles"][0]["role"], "Neo / Thomas Anderson");
+    assert_eq!(
+        json["known_for_titles"][0]["poster_url"],
+        "https://img.test/t/p/w342/matrix.jpg"
+    );
+
+    let (_, _, body) = get_page(test_app().await, "/person/6384", false).await;
+    let known_for = body
+        .find(r#"<h2 id="known-for-heading">Known for</h2>"#)
+        .unwrap();
+    let filmography = body.find(r#"id="filmography-heading""#).unwrap();
+    assert!(known_for < filmography);
+    let row = &body[known_for..filmography];
+    assert!(row.contains(r#"<li><a href="/movie/603">"#));
+    assert!(row.contains(r#"<img class="poster" src="https://img.test/t/p/w342/matrix.jpg""#));
+    assert!(row.contains(r#"<span class="role">1999 · Neo / Thomas Anderson</span>"#));
+    assert!(row.contains(r#"<span class="role">TBA</span>"#));
+    assert!(row.contains(r#"<div class="poster missing" aria-hidden="true">No artwork</div>"#));
+    assert!(!row.contains("/tv/1396") && !row.contains("/tv/59941"));
+
+    let (_, _, body) = get_page(test_app().await, "/person/1", false).await;
+    assert!(!body.contains("known-for-heading"));
 }
 
 #[tokio::test]

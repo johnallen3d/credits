@@ -333,4 +333,7 @@ pub struct PersonCredit {
     pub department: Option<String>,
     pub job: Option<String>,
     pub episode_count: Option<u32>,
+    pub vote_count: Option<u64>,
+    #[serde(default)]
+    pub genre_ids: Vec<u32>,
 }

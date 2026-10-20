@@ -34,6 +34,13 @@ const TOP_CAST: usize = 12;
 const TV_KEY_DIRECTORS: usize = 3;
 /// A TV cast member's characters listed before the rest are elided.
 const MAX_CHARACTERS: usize = 3;
+/// Titles in a person page's "Known for" row.
+const KNOWN_FOR_TITLES: usize = 8;
+/// TMDB's Talk and News genres: appearing on these says little about what
+/// someone is known for.
+const TALK_AND_NEWS_GENRES: &[u32] = &[10767, 10763];
+/// Characters that mean a person appeared as themselves.
+const SELF_ROLES: &[&str] = &["Self", "Himself", "Herself", "Themselves"];
 const WRITER_JOBS: &[&str] = &["Screenplay", "Writer", "Story", "Teleplay"];
 /// Credits pages list these departments first, in this order; the rest follow alphabetically.
 const DEPARTMENT_ORDER: &[&str] = &["Creators", "Directing", "Writing", "Production"];
@@ -60,6 +67,16 @@ pub struct Catalog {
 
 /// A filmography entry with its full release date, for sorting.
 type DatedEntry = (Option<String>, FilmographyEntry);
+
+/// A person's credits on one title in one department, roles merged.
+type MergedCredit = (String, Option<String>, FilmographyEntry, Separator);
+
+/// What a title's TMDB entry says about how well known it is.
+struct Notability {
+    votes: u64,
+    talk_or_news: bool,
+    poster_url: Option<String>,
+}
 
 /// People credited on a title, before trimming for the detail page.
 struct People {
@@ -250,9 +267,29 @@ impl Catalog {
 
     pub async fn person(&self, id: u64) -> Result<PersonDetail, CatalogError> {
         let (p, metadata): (tmdb::Person, _) = self
-            .cached(format!("person/{id}"), self.tmdb.person(id))
+            // v2: entries cached before vote counts were kept can't rank "Known for".
+            .cached(format!("person/{id}/v2"), self.tmdb.person(id))
             .await?;
         let known_for = non_empty(p.known_for_department);
+
+        let mut notability: HashMap<(MediaKind, u64), Notability> = HashMap::new();
+        for c in p
+            .combined_credits
+            .cast
+            .iter()
+            .chain(&p.combined_credits.crew)
+        {
+            let Some(kind) = media_kind(&c.media_type) else {
+                continue;
+            };
+            notability
+                .entry((kind, c.id))
+                .or_insert_with(|| Notability {
+                    votes: c.vote_count.unwrap_or(0),
+                    talk_or_news: c.genre_ids.iter().any(|g| TALK_AND_NEWS_GENRES.contains(g)),
+                    poster_url: self.image(POSTER_SIZE, c.poster_path.clone()),
+                });
+        }
 
         let credits = p
             .combined_credits
@@ -265,11 +302,7 @@ impl Catalog {
                 (department, c, Separator::Jobs)
             }))
             .filter_map(|(department, c, separator)| {
-                let kind = match c.media_type.as_str() {
-                    "movie" => MediaKind::Movie,
-                    "tv" => MediaKind::Tv,
-                    _ => return None,
-                };
+                let kind = media_kind(&c.media_type)?;
                 let date = non_empty(c.release_date.or(c.first_air_date));
                 let title = non_empty(c.title.or(c.name))?;
                 let role = match separator {
@@ -294,6 +327,7 @@ impl Catalog {
             join_role(&mut into.2.role, other.role, separator);
             into.2.episode_count = into.2.episode_count.max(other.episode_count);
         });
+        let known_for_titles = known_for_titles(&merged, known_for.as_deref(), &notability);
 
         let mut groups: Vec<(String, Vec<DatedEntry>)> = Vec::new();
         for (department, date, entry, _) in merged {
@@ -325,6 +359,7 @@ impl Catalog {
             tmdb_url: format!("https://www.themoviedb.org/person/{}", p.id),
             name: p.name,
             known_for,
+            known_for_titles,
             biography: non_empty(p.biography),
             birthday: non_empty(p.birthday),
             deathday: non_empty(p.deathday),
@@ -770,6 +805,52 @@ fn known_for(result: MultiResult) -> Option<KnownFor> {
         }),
         MultiResult::Person(_) | MultiResult::Other => None,
     }
+}
+
+fn media_kind(media_type: &str) -> Option<MediaKind> {
+    match media_type {
+        "movie" => Some(MediaKind::Movie),
+        "tv" => Some(MediaKind::Tv),
+        _ => None,
+    }
+}
+
+/// The person's most-voted titles, those in their main department ranked
+/// first, leaving out talk and news shows and appearances as themselves.
+fn known_for_titles(
+    credits: &[MergedCredit],
+    department: Option<&str>,
+    notability: &HashMap<(MediaKind, u64), Notability>,
+) -> Vec<FilmographyEntry> {
+    let mut ranked: Vec<(bool, u64, &FilmographyEntry, Option<String>)> = credits
+        .iter()
+        .filter_map(|(dept, _, entry, separator)| {
+            let n = notability.get(&(entry.kind, entry.id))?;
+            let as_self = matches!(separator, Separator::Characters)
+                && entry.role.as_deref().is_some_and(|role| {
+                    role.split(separator.as_str())
+                        .any(|r| SELF_ROLES.contains(&r))
+                });
+            (!n.talk_or_news && !as_self).then(|| {
+                let elsewhere = Some(dept.as_str()) != department;
+                (elsewhere, n.votes, entry, n.poster_url.clone())
+            })
+        })
+        .collect();
+    ranked.sort_by_key(|(elsewhere, votes, _, _)| (*elsewhere, Reverse(*votes)));
+    merge_by(
+        ranked
+            .into_iter()
+            .map(|(_, _, entry, poster_url)| ((entry.kind, entry.id), (entry, poster_url))),
+        |_, _| {},
+    )
+    .into_iter()
+    .take(KNOWN_FOR_TITLES)
+    .map(|(entry, poster_url)| FilmographyEntry {
+        poster_url,
+        ..entry.clone()
+    })
+    .collect()
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {

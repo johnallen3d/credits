@@ -25,6 +25,24 @@
       <p><a href="{{ p.tmdb_url }}" rel="noopener">View on TMDB</a></p>
     </div>
   </div>
+  {% if !p.known_for_titles.is_empty() %}
+  <section class="section" aria-labelledby="known-for-heading">
+    <h2 id="known-for-heading">Known for</h2>
+    <ul class="tiles">
+      {% for e in p.known_for_titles %}
+      <li><a href="{{ e.path() }}">
+        {% if let Some(url) = e.poster_url %}
+        <img class="poster" src="{{ url }}" alt="" loading="lazy" width="92" height="138">
+        {% else %}
+        <div class="poster missing" aria-hidden="true">No artwork</div>
+        {% endif %}
+        <span class="name">{{ e.title }}</span>
+        <span class="role">{% if let Some(year) = e.year %}{{ year }}{% else %}TBA{% endif %}{% if let Some(role) = e.role %} · {{ role }}{% endif %}</span>
+      </a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
   <section class="section" aria-labelledby="filmography-heading">
     <h2 id="filmography-heading">Filmography</h2>
     {% if p.filmography.is_empty() %}

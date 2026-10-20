@@ -519,6 +519,8 @@ pub struct PersonDetail {
     pub place_of_birth: Option<String>,
     pub profile_url: Option<String>,
     pub tmdb_url: String,
+    /// The person's most-voted titles, from their main department first.
+    pub known_for_titles: Vec<FilmographyEntry>,
     /// Grouped by department, the person's main department first.
     pub filmography: Vec<FilmographyGroup>,
     pub metadata: Metadata,
