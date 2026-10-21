@@ -1,8 +1,11 @@
-//! The terminal client's settings: a TOML file naming the credits server.
+//! The terminal client's settings: a TOML file naming the credits server
+//! and, optionally, a color theme.
 
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+
+use super::theme::Theme;
 
 /// Overrides where the config file is read from.
 pub const CONFIG_VAR: &str = "CREDITS_CONFIG";
@@ -13,6 +16,9 @@ const EXAMPLE: &str = "url = \"https://credits.jallen7usa.com\"";
 pub struct TuiConfig {
     /// Base URL of a running credits server, e.g. `https://credits.jallen7usa.com`.
     pub url: String,
+    /// `rose-pine` (default), `tokyo-night`, `catppuccin` or `classic`.
+    #[serde(default)]
+    pub theme: Theme,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -92,6 +98,15 @@ mod tests {
     }
 
     #[test]
+    fn theme_defaults_to_rose_pine_and_rejects_unknown_names() {
+        assert_eq!(parse("url = \"http://a\"").unwrap().theme, Theme::RosePine);
+        let config = parse("url = \"http://a\"\ntheme = \"tokyo-night\"").unwrap();
+        assert_eq!(config.theme, Theme::TokyoNight);
+        let err = parse("url = \"http://a\"\ntheme = \"solarized\"").unwrap_err();
+        assert!(err.to_string().contains("catppuccin"), "{err}");
+    }
+
+    #[test]
     fn rejects_missing_unknown_and_non_http_settings() {
         assert!(matches!(parse(""), Err(TuiConfigError::Invalid(..))));
         assert!(matches!(
@@ -108,7 +123,10 @@ mod tests {
     fn missing_file_explains_what_to_write() {
         let err = TuiConfig::from_file(Path::new("/nonexistent/credits/config.toml")).unwrap_err();
         assert!(matches!(err, TuiConfigError::Missing(_)));
-        assert!(err.to_string().contains("url = \"https://credits.jallen7usa.com\""));
+        assert!(
+            err.to_string()
+                .contains("url = \"https://credits.jallen7usa.com\"")
+        );
     }
 
     #[test]

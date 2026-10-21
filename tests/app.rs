@@ -926,6 +926,27 @@ async fn stylesheet_url_changes_with_its_content() {
 }
 
 #[tokio::test]
+async fn every_theme_in_the_picker_has_a_stylesheet_palette() {
+    let (_, _, body) = get_page(test_app().await, "/", false).await;
+    let (_, _, css) = get_page(test_app().await, "/static/app.css", false).await;
+    assert!(
+        body.contains(r#"<label class="theme-picker" hidden>"#),
+        "shown only by script"
+    );
+    for theme in ["rose-pine", "tokyo-night", "catppuccin", "classic"] {
+        assert!(
+            body.contains(&format!(r#"<option value="{theme}">"#)),
+            "{theme} offered"
+        );
+        assert!(
+            css.contains(&format!(r#":root[data-theme="{theme}"]"#)),
+            "{theme} styled"
+        );
+    }
+    assert!(css.starts_with(r#"/* Themes: Rosé Pine is the default"#));
+}
+
+#[tokio::test]
 async fn movie_prefers_rotten_tomatoes_and_tv_prefers_imdb() {
     let (_, _, body) = get_page(test_app().await, "/movie/603", false).await;
     assert!(body.contains(

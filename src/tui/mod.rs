@@ -5,6 +5,7 @@ pub mod api;
 pub mod app;
 pub mod client;
 pub mod config;
+pub mod theme;
 pub mod ui;
 
 use std::io;
@@ -24,6 +25,7 @@ use app::{Content, Request, Response, Target};
 /// Takes over the terminal until the user quits.
 pub async fn run(config: TuiConfig) -> io::Result<()> {
     let client = Client::new(&config.url);
+    theme::set(config.theme);
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, client).await;
     ratatui::restore();

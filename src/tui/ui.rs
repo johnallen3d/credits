@@ -4,7 +4,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
@@ -14,12 +14,8 @@ use super::api::{
     Ratings, SearchHit, Season, State, Title, UnavailableReason, Watched, WhereToWatch,
 };
 use super::app::{App, Content, Load, Screen, Target};
+use super::theme::palette;
 
-const ACCENT: Color = Color::Cyan;
-const WARN: Color = Color::Yellow;
-const MINE: Color = Color::Green;
-const SELECTED: Color = Color::Indexed(237);
-const DIM: Style = Style::new().fg(Color::DarkGray);
 /// Width the link list is built at when only the links matter.
 const LINK_WIDTH: u16 = 80;
 const BIO_LINES: usize = 6;
@@ -61,7 +57,10 @@ impl Page {
         if self.lines.last().is_some_and(|l| l.width() > 0) {
             self.blank();
         }
-        self.line(Line::styled(text.into(), Style::new().fg(ACCENT).bold()));
+        self.line(Line::styled(
+            text.into(),
+            Style::new().fg(palette().accent).bold(),
+        ));
     }
 
     /// A warning, wrapped under its own leading indent.
@@ -72,7 +71,7 @@ impl Page {
         for line in wrap(body, (width as usize).saturating_sub(indent.len())) {
             self.line(Line::styled(
                 format!("{indent}{line}"),
-                Style::new().fg(WARN),
+                Style::new().fg(palette().warn),
             ));
         }
     }
@@ -91,7 +90,19 @@ impl Page {
     }
 }
 
+fn dim() -> Style {
+    Style::new().fg(palette().dim)
+}
+
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    let mut base = Style::new();
+    if let Some(fg) = palette().fg {
+        base = base.fg(fg);
+    }
+    if let Some(bg) = palette().bg {
+        base = base.bg(bg);
+    }
+    frame.render_widget(Block::new().style(base), frame.area());
     let on_search = app.stack.is_empty();
     let [header, search, body, footer] = Layout::vertical([
         Constraint::Length(1),
@@ -120,7 +131,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let mut crumbs = vec!["Search".to_owned()];
     crumbs.extend(app.stack.iter().map(screen_name));
     trail.push(Span::raw(" "));
-    let server = Line::styled(format!("{} ", app.server), DIM).right_aligned();
+    let server = Line::styled(format!("{} ", app.server), dim()).right_aligned();
     // Deep trails lose their oldest crumbs rather than run into the server.
     let room = (area.width as usize).saturating_sub(trail[0].width() + 1 + server.width() + 1);
     let mut text = crumbs.join(" › ");
@@ -128,16 +139,16 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         crumbs.remove(0);
         text = format!("… › {}", crumbs.join(" › "));
     }
-    trail.push(Span::styled(pad(&text, room.min(text.width())), DIM));
+    trail.push(Span::styled(pad(&text, room.min(text.width())), dim()));
     frame.render_widget(Line::from(trail), area);
     frame.render_widget(server, area);
 }
 
 fn draw_search_box(frame: &mut Frame, app: &App, area: Rect) {
     let style = if app.editing {
-        Style::new().fg(ACCENT)
+        Style::new().fg(palette().accent)
     } else {
-        DIM
+        dim()
     };
     let block = Block::new()
         .borders(Borders::ALL)
@@ -152,7 +163,7 @@ fn draw_search_box(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
-    let block = Block::new().borders(Borders::ALL).border_style(DIM);
+    let block = Block::new().borders(Borders::ALL).border_style(dim());
     let inner = block.inner(area);
     let mut page = page(app, inner.width);
     let height = inner.height as usize;
@@ -186,7 +197,7 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
             format!(" {} ", page.title),
             Style::new().bold(),
         ))
-        .title_bottom(Line::styled(position, DIM).right_aligned());
+        .title_bottom(Line::styled(position, dim()).right_aligned());
     frame.render_widget(
         Paragraph::new(page.lines).scroll((scroll, 0)).block(block),
         area,
@@ -204,7 +215,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         }
         _ => "j/k move · Enter open · Esc back · / search · r reload · q quit",
     };
-    frame.render_widget(Line::styled(format!(" {hints}"), DIM), area);
+    frame.render_widget(Line::styled(format!(" {hints}"), dim()), area);
     let busy = match app.stack.last() {
         None if app.search.searching => "Searching… ",
         Some(Screen {
@@ -214,14 +225,14 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         _ => "",
     };
     frame.render_widget(
-        Line::styled(busy, Style::new().fg(ACCENT)).right_aligned(),
+        Line::styled(busy, Style::new().fg(palette().accent)).right_aligned(),
         area,
     );
 }
 
 /// Highlights a link line: a marker, and a full-width bar once keys move it.
 fn mark(line: Line<'static>, active: bool, width: u16) -> Line<'static> {
-    let mut spans = vec![Span::styled("▸", Style::new().fg(ACCENT).bold())];
+    let mut spans = vec![Span::styled("▸", Style::new().fg(palette().accent).bold())];
     // Link lines start with a two-space gutter; the marker takes its first cell.
     let mut rest = line.spans.into_iter();
     if let Some(first) = rest.next() {
@@ -240,10 +251,10 @@ fn mark(line: Line<'static>, active: bool, width: u16) -> Line<'static> {
     spans.push(Span::raw(" ".repeat((width as usize).saturating_sub(used))));
     for span in &mut spans {
         // Dim text would vanish on the bar, so it brightens a step.
-        if span.style.fg == DIM.fg {
-            span.style.fg = Some(Color::Gray);
+        if span.style.fg == Some(palette().dim) {
+            span.style.fg = Some(palette().dim_selected);
         }
-        span.style = span.style.bg(SELECTED);
+        span.style = span.style.bg(palette().selected);
     }
     Line::from(spans)
 }
@@ -280,9 +291,12 @@ fn status_page(title: String, failure: Option<&str>, width: u16) -> Page {
     match failure {
         Some(message) => {
             page.warn(message, width);
-            page.line(Line::styled("Press r to try again or Esc to go back.", DIM));
+            page.line(Line::styled(
+                "Press r to try again or Esc to go back.",
+                dim(),
+            ));
         }
-        None => page.line(Line::styled("Loading…", DIM)),
+        None => page.line(Line::styled("Loading…", dim())),
     }
     page
 }
@@ -291,8 +305,8 @@ fn search_page(app: &App) -> Page {
     let search = &app.search;
     let mut page = Page::new("Results");
     if let Some(error) = &search.error {
-        page.line(Line::styled(error.clone(), Style::new().fg(WARN)));
-        page.line(Line::styled("Press Enter to try again.", DIM));
+        page.line(Line::styled(error.clone(), Style::new().fg(palette().warn)));
+        page.line(Line::styled("Press Enter to try again.", dim()));
         return page;
     }
     if search.results.is_empty() {
@@ -303,7 +317,7 @@ fn search_page(app: &App) -> Page {
         } else {
             format!("No results for “{}”.", search.answered)
         };
-        page.line(Line::styled(text, DIM));
+        page.line(Line::styled(text, dim()));
         return page;
     }
     for hit in &search.results {
@@ -334,7 +348,7 @@ fn search_page(app: &App) -> Page {
         };
         page.link(
             Line::from(vec![
-                Span::styled(format!("  {kind:<7}"), Style::new().fg(ACCENT)),
+                Span::styled(format!("  {kind:<7}"), Style::new().fg(palette().accent)),
                 Span::raw(name).bold(),
                 Span::styled(
                     if detail.is_empty() {
@@ -342,7 +356,7 @@ fn search_page(app: &App) -> Page {
                     } else {
                         format!("  {detail}")
                     },
-                    DIM,
+                    dim(),
                 ),
             ]),
             target,
@@ -372,9 +386,9 @@ fn title_page(t: &Title, width: u16) -> Page {
     if let Some(status) = t.status.as_ref().filter(|s| *s != "Released") {
         facts.push(status.clone());
     }
-    page.line(Line::styled(facts.join(" · "), DIM));
+    page.line(Line::styled(facts.join(" · "), dim()));
     if let Some(tagline) = t.tagline.as_ref().filter(|s| !s.is_empty()) {
-        page.line(Line::styled(tagline.clone(), DIM.italic()));
+        page.line(Line::styled(tagline.clone(), dim().italic()));
     }
     stale_notice(&mut page, &t.metadata, width);
 
@@ -420,15 +434,15 @@ fn season_rows(page: &mut Page, t: &Title, width: u16) {
             .map(|n| plural(n, "episode"))
             .unwrap_or_default();
         let mut spans = vec![
-            Span::styled(format!("  {:>2}  ", s.number), DIM),
+            Span::styled(format!("  {:>2}  ", s.number), dim()),
             Span::raw(format!("{}  ", pad(&s.name, column))),
             Span::styled(
                 format!("{episodes:<13}{:<6}", s.year.as_deref().unwrap_or("")),
-                DIM,
+                dim(),
             ),
         ];
         if watched.is_some_and(|w| w.season(s.number)) {
-            spans.push(Span::styled("✓ Watched", Style::new().fg(MINE)));
+            spans.push(Span::styled("✓ Watched", Style::new().fg(palette().mine)));
         }
         page.link(Line::from(spans), Target::Season(t.id, s.number));
     }
@@ -447,7 +461,7 @@ fn season_page(s: &Season, screen: &Screen, width: u16) -> Page {
     if watched.is_some_and(|w| w.season(s.number)) {
         facts.push("✓ Watched".to_owned());
     }
-    page.line(Line::styled(facts.join(" · "), DIM));
+    page.line(Line::styled(facts.join(" · "), dim()));
     stale_notice(&mut page, &s.metadata, width);
     if let Some(overview) = s.overview.as_ref().filter(|o| !o.is_empty()) {
         page.blank();
@@ -458,7 +472,7 @@ fn season_page(s: &Season, screen: &Screen, width: u16) -> Page {
     if s.episodes.is_empty() {
         page.line(Line::styled(
             "  TMDB has no episodes listed for this season yet.",
-            DIM,
+            dim(),
         ));
         return page;
     }
@@ -474,7 +488,7 @@ fn season_page(s: &Season, screen: &Screen, width: u16) -> Page {
     {
         page.line(Line::styled(
             "  Scores of unwatched episodes are hidden; s peeks the highlighted one.",
-            DIM,
+            dim(),
         ));
     }
     episode_ratings_notes(&mut page, &s.episode_ratings, "episode ratings", width);
@@ -490,13 +504,13 @@ fn season_page(s: &Season, screen: &Screen, width: u16) -> Page {
             .unwrap_or_else(|| "Not announced".to_owned());
         let minutes = e.runtime_minutes.map(runtime).unwrap_or_default();
         let mut spans = vec![
-            Span::styled(format!("  {:>2}. ", e.number), DIM),
+            Span::styled(format!("  {:>2}. ", e.number), dim()),
             Span::raw(format!("{}  ", pad(&e.title, column))),
-            Span::styled(format!("{aired:<14}{minutes:<7} "), DIM),
+            Span::styled(format!("{aired:<14}{minutes:<7} "), dim()),
         ];
         spans.push(match &e.rating {
             Some(r) if shown => Span::raw(format!("{:<12}", score(r))),
-            Some(_) => Span::styled(format!("{:<12}", format!("IMDb {HIDDEN_SCORE}")), DIM),
+            Some(_) => Span::styled(format!("{:<12}", format!("IMDb {HIDDEN_SCORE}")), dim()),
             None => Span::raw(" ".repeat(12)),
         });
         if seen {
@@ -505,9 +519,9 @@ fn season_page(s: &Season, screen: &Screen, width: u16) -> Page {
             } else {
                 "✓"
             };
-            spans.push(Span::styled(mark, Style::new().fg(MINE)));
+            spans.push(Span::styled(mark, Style::new().fg(palette().mine)));
         } else if shown {
-            spans.push(Span::styled("peeking", Style::new().fg(WARN)));
+            spans.push(Span::styled("peeking", Style::new().fg(palette().warn)));
         }
         page.link(
             Line::from(spans),
@@ -525,7 +539,7 @@ fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
             "{} · {} · Episode {}",
             e.show_title, e.season_name, e.number
         ),
-        DIM,
+        dim(),
     ));
     let watched = e
         .watched
@@ -551,7 +565,7 @@ fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
             "✓ Watched".to_owned()
         });
     }
-    page.line(Line::styled(facts.join(" · "), DIM));
+    page.line(Line::styled(facts.join(" · "), dim()));
     let mut neighbours = Vec::new();
     if let Some(previous) = e.previous {
         neighbours.push(format!("[ Episode {previous}"));
@@ -560,7 +574,7 @@ fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
         neighbours.push(format!("] Episode {next}"));
     }
     if !neighbours.is_empty() {
-        page.line(Line::styled(neighbours.join("   "), DIM));
+        page.line(Line::styled(neighbours.join("   "), dim()));
     }
     stale_notice(&mut page, &e.metadata, width);
     if watched.is_none() {
@@ -575,16 +589,16 @@ fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
     if e.episode_ratings.state == State::Unavailable {
         page.line(Line::styled(
             format!("  {}", episode_ratings_message(&e.episode_ratings)),
-            DIM,
+            dim(),
         ));
     } else {
         match &e.rating {
             Some(r) if shown => page.line(Line::raw(format!("  {}", score(r))).bold()),
             Some(_) => page.line(Line::styled(
                 format!("  IMDb {HIDDEN_SCORE}  hidden until watched; s peeks"),
-                DIM,
+                dim(),
             )),
-            None => page.line(Line::styled("  No IMDb score", DIM)),
+            None => page.line(Line::styled("  No IMDb score", dim())),
         }
         episode_ratings_notes(&mut page, &e.episode_ratings, "ratings", width);
     }
@@ -596,7 +610,7 @@ fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
         } else {
             page.line(Line::styled(
                 "Summary hidden until you watch this episode; s peeks.",
-                DIM,
+                dim(),
             ));
         }
     }
@@ -606,7 +620,7 @@ fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
     if e.guest_stars.is_empty() {
         page.line(Line::styled(
             "  TMDB lists no guest stars for this episode.",
-            DIM,
+            dim(),
         ));
     }
     cast_rows(&mut page, &e.guest_stars);
@@ -614,7 +628,7 @@ fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
     if e.cast.is_empty() {
         page.line(Line::styled(
             "  TMDB lists no series regulars for this episode.",
-            DIM,
+            dim(),
         ));
     }
     cast_rows(&mut page, &e.cast);
@@ -645,7 +659,7 @@ fn episode_ratings_notes(page: &mut Page, r: &EpisodeRatings, what: &str, width:
     match r.state {
         State::Unavailable => page.line(Line::styled(
             format!("  {}", episode_ratings_message(r)),
-            DIM,
+            dim(),
         )),
         State::Stale => {
             let day = fetched_day(&r.fetched_at)
@@ -672,7 +686,7 @@ fn key_crew(page: &mut Page, key_crew: &[KeyCrew]) {
         previous = role;
         page.link(
             Line::from(vec![
-                Span::styled(format!("  {label:<13}"), DIM),
+                Span::styled(format!("  {label:<13}"), dim()),
                 Span::raw(person.name.clone()),
             ]),
             Target::Person(person.person_id),
@@ -690,7 +704,7 @@ fn cast_rows(page: &mut Page, cast: &[Credit]) {
         page.link(
             Line::from(vec![
                 Span::raw(format!("  {}  ", pad(&credit.name, column))),
-                Span::styled(role, DIM),
+                Span::styled(role, dim()),
             ]),
             Target::Person(credit.person_id),
         );
@@ -717,7 +731,7 @@ fn person_page(p: &Person, width: u16) -> Page {
     }
     facts.extend(p.place_of_birth.clone());
     if !facts.is_empty() {
-        page.line(Line::styled(facts.join(" · "), DIM));
+        page.line(Line::styled(facts.join(" · "), dim()));
     }
     stale_notice(&mut page, &p.metadata, width);
     if let Some(bio) = p.biography.as_ref().filter(|s| !s.is_empty()) {
@@ -736,7 +750,7 @@ fn person_page(p: &Person, width: u16) -> Page {
     }
     if p.known_for_titles.is_empty() && p.filmography.is_empty() {
         page.blank();
-        page.line(Line::styled("No credits listed on TMDB.", DIM));
+        page.line(Line::styled("No credits listed on TMDB.", dim()));
     }
     page
 }
@@ -751,10 +765,13 @@ fn credit_rows(page: &mut Page, credits: &[PersonCredit]) {
         }
         page.link(
             Line::from(vec![
-                Span::styled(format!("  {year:<4}  "), DIM),
-                Span::styled(format!("{:<5} ", c.kind.label()), Style::new().fg(ACCENT)),
+                Span::styled(format!("  {year:<4}  "), dim()),
+                Span::styled(
+                    format!("{:<5} ", c.kind.label()),
+                    Style::new().fg(palette().accent),
+                ),
                 Span::raw(format!("{}  ", pad(&c.title, column))),
-                Span::styled(role, DIM),
+                Span::styled(role, dim()),
             ]),
             Target::Title(c.kind, c.id),
         );
@@ -786,7 +803,7 @@ fn ratings(page: &mut Page, r: &Ratings, width: u16) {
                 "Ratings couldn't be loaded right now."
             }
         };
-        page.line(Line::styled(format!("  {message}"), DIM));
+        page.line(Line::styled(format!("  {message}"), dim()));
         return;
     }
     match &r.preferred {
@@ -796,19 +813,22 @@ fn ratings(page: &mut Page, r: &Ratings, width: u16) {
                 Span::raw(p.source.label()),
             ];
             if let Some(votes) = p.votes {
-                spans.push(Span::styled(format!(" ({} votes)", thousands(votes)), DIM));
+                spans.push(Span::styled(
+                    format!(" ({} votes)", thousands(votes)),
+                    dim(),
+                ));
             }
             page.line(Line::from(spans));
         }
         None => page.line(Line::styled(
             format!("  No {} score", r.preferred_source.label()),
-            DIM,
+            dim(),
         )),
     }
     for other in &r.others {
         page.line(Line::styled(
             format!("  {:<8}{}", other.display(), other.source.label()),
-            DIM,
+            dim(),
         ));
     }
     if r.state == State::Stale {
@@ -833,7 +853,7 @@ fn where_to_watch(page: &mut Page, w: &WhereToWatch, width: u16) {
                     "  No streaming, rental or purchase options are listed for {}.",
                     w.region
                 ),
-                DIM,
+                dim(),
             ));
         }
         return;
@@ -862,7 +882,7 @@ fn where_to_watch(page: &mut Page, w: &WhereToWatch, width: u16) {
             }
             used += cell;
             let style = if provider.mine {
-                Style::new().fg(MINE).bold()
+                Style::new().fg(palette().mine).bold()
             } else {
                 Style::new()
             };
@@ -872,7 +892,7 @@ fn where_to_watch(page: &mut Page, w: &WhereToWatch, width: u16) {
         }
         for (i, row) in rows.into_iter().enumerate() {
             let label = if i == 0 { group.kind.label() } else { "" };
-            let mut spans = vec![Span::styled(format!("  {label:<LABEL$}"), DIM)];
+            let mut spans = vec![Span::styled(format!("  {label:<LABEL$}"), dim())];
             spans.extend(row);
             page.line(Line::from(spans));
         }

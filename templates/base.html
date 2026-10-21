@@ -6,6 +6,7 @@
   <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"...","swap":true}]}'>
   <title>{% block title %}credits{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <script>try { var t = localStorage.getItem("credits-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
   <link rel="stylesheet" href="/static/app.css?v={{ crate::web::APP_CSS_VERSION }}">
   <script src="/static/htmx.min.js" defer></script>
 </head>
@@ -25,7 +26,28 @@
       <a href="/services">My services</a>
       <a href="/playback">Seen on Apple TV</a>
       <a href="/about">About</a>
+      <label class="theme-picker" hidden>Theme
+        <select id="theme">
+          <option value="rose-pine">Rosé Pine</option>
+          <option value="tokyo-night">Tokyo Night</option>
+          <option value="catppuccin">Catppuccin</option>
+          <option value="classic">Classic</option>
+        </select>
+      </label>
     </nav>
+    <script>
+      // Remembered per browser; without JavaScript the default theme shows.
+      (function () {
+        var select = document.getElementById("theme");
+        var current = document.documentElement.dataset.theme;
+        if (current && select.querySelector('option[value="' + current + '"]')) select.value = current;
+        select.addEventListener("change", function () {
+          document.documentElement.dataset.theme = select.value;
+          try { localStorage.setItem("credits-theme", select.value); } catch (e) {}
+        });
+        select.parentElement.hidden = false;
+      })();
+    </script>
   </footer>
 </body>
 </html>

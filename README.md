@@ -42,6 +42,7 @@ These configure `credits-web`. The terminal client reads only a TOML file:
 ```toml
 # ~/.config/credits/config.toml ($XDG_CONFIG_HOME/credits, or $CREDITS_CONFIG)
 url = "https://credits.jallen7usa.com"
+theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, classic
 ```
 
 ## Features
@@ -66,6 +67,17 @@ url = "https://credits.jallen7usa.com"
   - Filter All / Movies / TV and sort by date or rating (`?sort=rating`);
     tab, kind and sort live in the URL
 - Responsive layout down to phone width
+
+### Themes
+
+- Rosé Pine (default), Tokyo Night (Night), Catppuccin (Mocha), and
+  Classic (the original light/dark look that follows the system)
+- Web: Theme picker in the footer, remembered per browser (local
+  storage) and applied before the page paints; without JavaScript the
+  picker is hidden and Rosé Pine shows
+- Terminal client: `theme` in `config.toml`; Classic uses the terminal's
+  own colors, the others paint their background (truecolor); an unknown
+  name stops startup with the valid choices
 
 ### Ratings
 
@@ -190,6 +202,7 @@ out to Home Assistant.
   unknown, and watched marks unreadable (spoilers stay hidden)
 - Server unreachable, not found or provider errors are shown in place;
   `r` (or Enter on a failed search) retries
+- Colors follow the `theme` setting (see [Themes](#themes))
 - Not yet: lists and toggles, playback
 
 ## Routes
