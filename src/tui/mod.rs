@@ -5,6 +5,7 @@ pub mod api;
 pub mod app;
 pub mod client;
 pub mod config;
+mod help;
 pub mod theme;
 pub mod ui;
 

@@ -216,6 +216,10 @@ out to Home Assistant.
   `/` new search, `w`/`f`
   lists, `b`/`F`/`x`/`X` toggles, `r` reload, `s` peek, `[`/`]`
   previous/next episode, `q` or Ctrl-C quit
+- `?` opens a scrollable keyboard-help overlay from any screen (including
+  the search box); all keys are grouped by task, with inapplicable keys
+  dimmed. Esc or `?` closes it without changing the query or selection;
+  ↑/↓, Page Up/Down and Home/End scroll help on smaller terminals
 - Shows the server's degraded states: stale details, ratings, episode
   scores and offers with their date, ratings unavailable, availability
   unknown, and watched marks unreadable (spoilers stay hidden)

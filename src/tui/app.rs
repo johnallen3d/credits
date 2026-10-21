@@ -167,6 +167,13 @@ pub struct Search {
     pub cursor: Cursor,
 }
 
+/// The help overlay scrolls independently of the page underneath it.
+#[derive(Debug, Default)]
+pub struct Help {
+    pub scroll: usize,
+    pub max_scroll: usize,
+}
+
 #[derive(Debug)]
 pub struct App {
     pub server: String,
@@ -177,6 +184,7 @@ pub struct App {
     pub stack: Vec<Screen>,
     pub status: Option<Status>,
     pub quit: bool,
+    pub help: Option<Help>,
     next_seq: u64,
 }
 
@@ -189,6 +197,7 @@ impl App {
             stack: Vec::new(),
             status: None,
             quit: false,
+            help: None,
             next_seq: 0,
         }
     }
@@ -213,6 +222,31 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && key.code == KeyCode::Char('c') {
             self.quit = true;
+            return Vec::new();
+        }
+        // Help is modal, including while typing a search. It must not clear
+        // status, navigate, edit the query or send saves underneath the overlay.
+        if let Some(help) = &mut self.help {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('?') => self.help = None,
+                KeyCode::Down | KeyCode::Char('j') => {
+                    help.scroll = (help.scroll + 1).min(help.max_scroll);
+                }
+                KeyCode::Up | KeyCode::Char('k') => help.scroll = help.scroll.saturating_sub(1),
+                KeyCode::PageDown | KeyCode::Char('d') if ctrl || key.code == KeyCode::PageDown => {
+                    help.scroll = (help.scroll + PAGE_STEP).min(help.max_scroll);
+                }
+                KeyCode::PageUp | KeyCode::Char('u') if ctrl || key.code == KeyCode::PageUp => {
+                    help.scroll = help.scroll.saturating_sub(PAGE_STEP);
+                }
+                KeyCode::Home | KeyCode::Char('g') => help.scroll = 0,
+                KeyCode::End | KeyCode::Char('G') => help.scroll = help.max_scroll,
+                _ => {}
+            }
+            return Vec::new();
+        }
+        if key.code == KeyCode::Char('?') && !ctrl {
+            self.help = Some(Help::default());
             return Vec::new();
         }
         // A finished toggle's outcome stays until the next key.
@@ -477,7 +511,7 @@ impl App {
     }
 
     /// The title b and F act on: the one on screen, or the highlighted row.
-    fn title_target(&self) -> Option<Target> {
+    pub(super) fn title_target(&self) -> Option<Target> {
         match &self.stack.last()?.load {
             Load::Ready(Content::Title(t)) => Some(Target::Title(t.kind, t.id)),
             Load::Ready(Content::List(_)) => super::ui::selected_target(self),
@@ -701,7 +735,7 @@ impl App {
 
     /// The services filter only means something once services are chosen;
     /// it can always be turned back off.
-    fn can_filter_services(&self) -> bool {
+    pub(super) fn can_filter_services(&self) -> bool {
         match self.stack.last() {
             Some(Screen {
                 target: Target::List(ListName::Watchlist, view),

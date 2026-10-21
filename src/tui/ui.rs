@@ -121,6 +121,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_body(frame, app, body);
     draw_status(frame, app, status);
     draw_footer(frame, app, footer);
+    if app.help.is_some() {
+        super::help::draw(frame, app);
+    }
 }
 
 /// How the last toggle went.
@@ -174,7 +177,7 @@ fn draw_search_box(frame: &mut Frame, app: &App, area: Rect) {
         .title(" Search ");
     let inner = block.inner(area);
     frame.render_widget(Paragraph::new(app.search.query.as_str()).block(block), area);
-    if app.editing {
+    if app.editing && app.help.is_none() {
         let x = inner.x + (app.search.query.width() as u16).min(inner.width.saturating_sub(1));
         frame.set_cursor_position((x, inner.y));
     }
@@ -248,7 +251,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         }
         _ => "j/k move · Enter open · w/f lists · Esc back · / search · r reload · q quit",
     };
-    frame.render_widget(Line::styled(format!(" {hints}"), dim()), area);
+    frame.render_widget(Line::styled(format!(" ? help · {hints}"), dim()), area);
     let busy = match app.stack.last() {
         None if app.search.searching => "Searching… ",
         Some(Screen {
@@ -1188,7 +1191,7 @@ fn where_to_watch(page: &mut Page, w: &WhereToWatch, width: u16) {
 }
 
 /// Word-wraps to `width` columns, keeping paragraph breaks.
-fn wrap(text: &str, width: usize) -> Vec<String> {
+pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(10);
     let mut lines = Vec::new();
     for paragraph in text.lines() {

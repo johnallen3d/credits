@@ -9,7 +9,7 @@ use axum::{
     routing::get,
 };
 use credits::{Catalog, Config, app, cache::IN_MEMORY, tui};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use http_body_util::BodyExt;
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::{Value, json};
@@ -3769,6 +3769,206 @@ async fn terminal_client_searches_and_opens_titles_and_people_over_http() {
             ..
         }]
     ));
+}
+
+#[test]
+fn terminal_client_help_is_modal_and_restores_search_focus_and_selection() {
+    for editing in [true, false] {
+        for close in [KeyCode::Esc, KeyCode::Char('?')] {
+            let mut app = tui::App::new("http://localhost");
+            app.search.query = "matrix".to_owned();
+            app.search.answered = "matrix".to_owned();
+            app.search.results = (0..60)
+                .map(|id| {
+                    tui::api::SearchHit::Movie(tui::api::TitleHit {
+                        id,
+                        title: format!("Result {id}"),
+                        year: None,
+                    })
+                })
+                .collect();
+            app.editing = false;
+            screen(&mut app);
+            for _ in 0..45 {
+                press(&mut app, KeyCode::Down);
+            }
+            app.editing = editing;
+            app.status = Some(tui::app::Status::Done("Saved.".to_owned()));
+            let before = screen(&mut app);
+            let selected = app.search.cursor.selected;
+            let scroll = app.search.cursor.scroll;
+            assert!(before.contains("? help"));
+            assert!(press(&mut app, KeyCode::Char('?')).is_empty());
+            let help = screen(&mut app);
+            assert!(help.contains("Keyboard help"), "{help}");
+            assert!(help.contains("Navigation"), "{help}");
+            assert!(help.contains("Search"), "{help}");
+            for key in [
+                'b', 'F', 'x', 'X', 'w', 'f', 'r', '/', 'q', 't', 'o', 'm', 's', '[', ']',
+            ] {
+                assert!(press(&mut app, KeyCode::Char(key)).is_empty());
+            }
+            for key in [
+                KeyCode::Enter,
+                KeyCode::Tab,
+                KeyCode::BackTab,
+                KeyCode::Backspace,
+            ] {
+                assert!(press(&mut app, key).is_empty());
+            }
+            assert!(!app.quit);
+            assert!(app.stack.is_empty());
+            assert_eq!(app.search.query, "matrix");
+            assert!(app.search_due().is_none());
+            assert_eq!(app.search.cursor.selected, selected);
+            assert_eq!(app.search.cursor.scroll, scroll);
+            assert_eq!(app.editing, editing);
+            press(&mut app, close);
+            assert!(app.help.is_none());
+            assert_eq!(screen(&mut app), before);
+        }
+    }
+}
+
+#[test]
+fn terminal_client_help_scrolls_resizes_and_keeps_ctrl_c_available() {
+    let mut app = tui::App::new("http://localhost");
+    app.open(tui::app::Target::Person(6384));
+    app.stack.last_mut().unwrap().load = tui::app::Load::Failed("Provider unavailable".to_owned());
+    let before = screen(&mut app);
+    press(&mut app, KeyCode::Char('?'));
+    let mut terminal = Terminal::new(TestBackend::new(45, 16)).unwrap();
+    terminal
+        .draw(|frame| tui::ui::draw(frame, &mut app))
+        .unwrap();
+    assert!(app.help.as_ref().unwrap().max_scroll > 10);
+    press(&mut app, KeyCode::PageDown);
+    assert_eq!(app.help.as_ref().unwrap().scroll, 10);
+    press(&mut app, KeyCode::Up);
+    assert_eq!(app.help.as_ref().unwrap().scroll, 9);
+    press(&mut app, KeyCode::Home);
+    assert_eq!(app.help.as_ref().unwrap().scroll, 0);
+    press(&mut app, KeyCode::End);
+    let help = app.help.as_ref().unwrap();
+    assert_eq!(help.scroll, help.max_scroll);
+    terminal
+        .draw(|frame| tui::ui::draw(frame, &mut app))
+        .unwrap();
+    let bottom: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(bottom.contains("Previous / next episode"), "{bottom}");
+    // Resizing recalculates wrapping and clamps the independent help cursor.
+    screen(&mut app);
+    let help = app.help.as_ref().unwrap();
+    assert!(help.scroll <= help.max_scroll);
+    for size in [(1, 1), (10, 4), (30, 10), (120, 50)] {
+        let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+        terminal
+            .draw(|frame| tui::ui::draw(frame, &mut app))
+            .unwrap();
+    }
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(
+        screen(&mut app),
+        before,
+        "Esc closes help, not the failed page"
+    );
+    press(&mut app, KeyCode::Char('?'));
+    app.key(
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        std::time::Instant::now(),
+    );
+    assert!(app.quit);
+}
+
+#[tokio::test]
+async fn terminal_client_help_dims_keys_for_titles_people_lists_and_episodes() {
+    use tui::api::Kind;
+    use tui::app::{ListName, ListView, Target};
+    fn binding(app: &mut tui::App, keys: &str, active: bool) {
+        let mut terminal = Terminal::new(TestBackend::new(120, 70)).unwrap();
+        terminal.draw(|frame| tui::ui::draw(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let needle = format!("{keys} —");
+        let y = (0..buffer.area.height)
+            .find(|&y| {
+                let text: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
+                text.contains(&needle)
+            })
+            .expect("binding is listed");
+        // Popup starts at column 13; wrapping trims its two-space gutter.
+        let dim = tui::theme::palette().dim;
+        let color = buffer[(14, y)].fg;
+        assert_eq!(color != dim, active, "{keys}");
+    }
+    let base = serve(test_app().await).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    for (target, title, watched, peek, neighbour, list) in [
+        (
+            Target::Title(Kind::Movie, 603),
+            true,
+            true,
+            false,
+            false,
+            false,
+        ),
+        (
+            Target::Title(Kind::Tv, 1396),
+            true,
+            true,
+            false,
+            false,
+            false,
+        ),
+        (Target::Person(6384), false, false, false, false, false),
+        (Target::Season(1396, 1), false, true, true, false, false),
+        (Target::Episode(1396, 1, 1), false, true, true, true, false),
+        (
+            Target::List(ListName::Watchlist, ListView::default()),
+            false,
+            false,
+            false,
+            false,
+            true,
+        ),
+    ] {
+        let request = app.open(target);
+        fulfil(&client, &mut app, request).await;
+        assert!(matches!(
+            app.stack.last().unwrap().load,
+            tui::app::Load::Ready(_)
+        ));
+        press(&mut app, KeyCode::Char('?'));
+        for (keys, active) in [
+            ("b / F", title),
+            ("x", watched),
+            ("X", watched && !list),
+            ("s", peek),
+            ("[ / ]", neighbour),
+            ("t", list),
+        ] {
+            binding(&mut app, keys, active);
+        }
+        press(&mut app, KeyCode::Esc);
+    }
+    client
+        .set_listed(ListName::Watchlist, Kind::Movie, 603, true)
+        .await
+        .unwrap();
+    let request = app.open(Target::List(ListName::Watchlist, ListView::default()));
+    fulfil(&client, &mut app, request).await;
+    press(&mut app, KeyCode::Char('?'));
+    binding(&mut app, "b / F", true);
+    binding(&mut app, "x", true);
+    binding(&mut app, "X", false);
 }
 
 #[test]
