@@ -67,11 +67,10 @@
         {% if let Some(status) = d.status %}<dt>Status</dt><dd>{{ status }}</dd>{% endif %}
       </dl>
       {% if let Some(overview) = d.overview %}
-      <p class="overview">{{ overview }}</p>
+      <div class="collapsible" data-collapsible><p class="overview">{{ overview }}</p></div>
       {% else %}
       <p class="overview muted">No overview available.</p>
       {% endif %}
-      <p><a href="{{ d.tmdb_url }}" rel="noopener">View on TMDB</a></p>
     </div>
   </div>
   {% include "_where_to_watch.html" %}

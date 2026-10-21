@@ -61,6 +61,8 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
 - Season pages with episode list, air dates and IMDb episode scores
 - Episode pages with guest stars, series regulars credited on it,
   directors, writers, crew by department, and previous/next links
+- Long biographies (and the rare long overview) collapse to about the
+  photo's height behind **Show more**; without JavaScript they show whole
 - Person pages:
   - **Known for** row of up to eight titles, ranked from combined credits
     (talk shows and self appearances left out)

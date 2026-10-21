@@ -19,12 +19,15 @@
         {% else %}{% if let Some(place) = p.place_of_birth %}<dt>Born</dt><dd>{{ place }}</dd>{% endif %}{% endif %}
         {% if let Some(day) = p.deathday_display() %}<dt>Died</dt><dd>{{ day }}</dd>{% endif %}
       </dl>
-      {% for paragraph in p.biography_paragraphs() %}
-      <p class="biography">{{ paragraph }}</p>
-      {% else %}
+      {% if p.biography_paragraphs().is_empty() %}
       <p class="muted">No biography available.</p>
-      {% endfor %}
-      <p><a href="{{ p.tmdb_url }}" rel="noopener">View on TMDB</a></p>
+      {% else %}
+      <div class="collapsible" data-collapsible>
+        {% for paragraph in p.biography_paragraphs() %}
+        <p class="biography">{{ paragraph }}</p>
+        {% endfor %}
+      </div>
+      {% endif %}
     </div>
   </div>
   {% if !p.known_for_titles.is_empty() %}

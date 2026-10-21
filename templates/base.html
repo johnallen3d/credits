@@ -22,6 +22,31 @@
   <main>
     {% block content %}{% endblock %}
   </main>
+  <script>
+    // Long biographies and overviews collapse to about the poster's height
+    // (at least eight lines) behind Show more; without JavaScript they show whole.
+    document.querySelectorAll("[data-collapsible]").forEach(function (box) {
+      var line = parseFloat(getComputedStyle(box).lineHeight) || 24;
+      var body = box.closest(".detail-body");
+      var poster = body && body.querySelector(".poster.large");
+      var beside = poster ? poster.getBoundingClientRect().bottom - box.getBoundingClientRect().top : 0;
+      var limit = Math.max(8 * line, beside);
+      // Not worth hiding just a few lines.
+      if (box.scrollHeight <= limit + 3 * line) return;
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "show-more";
+      function collapse(collapsed) {
+        box.classList.toggle("collapsed", collapsed);
+        box.style.maxHeight = collapsed ? limit + "px" : "";
+        button.textContent = collapsed ? "Show more" : "Show less";
+        button.setAttribute("aria-expanded", String(!collapsed));
+      }
+      button.addEventListener("click", function () { collapse(!box.classList.contains("collapsed")); });
+      collapse(true);
+      box.after(button);
+    });
+  </script>
   <footer class="site">
     <nav class="site-nav" aria-label="Site">
       <a href="/services">My services</a>
