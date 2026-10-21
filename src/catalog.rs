@@ -238,7 +238,8 @@ impl Catalog {
     }
 
     /// Marks a whole TV show, a season or an episode as watched or not.
-    /// Marking rolls up to whatever that completes.
+    /// Marking rolls up to whatever that completes; a show marked watched
+    /// as a whole leaves To watch.
     pub async fn set_watched(
         &self,
         tv_id: u64,
@@ -247,10 +248,20 @@ impl Catalog {
     ) -> Result<(), sqlx::Error> {
         let at = Timestamp::now();
         self.watched.set(tv_id, target, watched, at).await?;
-        if watched && target != WatchTarget::Show {
-            self.roll_up_watched(tv_id, at).await;
+        match (watched, target) {
+            (false, _) => {}
+            (true, WatchTarget::Show) => self.leave_watchlist(MediaKind::Tv, tv_id).await,
+            (true, _) => self.roll_up_watched(tv_id, at).await,
         }
         Ok(())
+    }
+
+    /// Takes a title just marked watched off To watch. Failures are only
+    /// logged: the watched mark is already saved.
+    async fn leave_watchlist(&self, kind: MediaKind, id: u64) {
+        if let Err(e) = self.watchlist.remove(kind, id).await {
+            tracing::warn!(error = %e, ?kind, id, "taking a watched title off To watch failed");
+        }
     }
 
     /// Marks each season whose episodes are all marked, then the show once
@@ -280,6 +291,9 @@ impl Catalog {
                 tracing::warn!(error = %e, tv_id, ?target, "rolling up watched marks failed");
                 return;
             }
+        }
+        if show {
+            self.leave_watchlist(MediaKind::Tv, tv_id).await;
         }
     }
 
@@ -366,7 +380,9 @@ impl Catalog {
     pub(crate) async fn mark_movie_from_apple_tv(&self, movie_id: u64) -> Result<(), sqlx::Error> {
         self.watched
             .mark_movie(movie_id, "apple_tv", Timestamp::now())
-            .await
+            .await?;
+        self.leave_watchlist(MediaKind::Movie, movie_id).await;
+        Ok(())
     }
 
     /// Whether a movie is marked watched; not if that can't be read.
@@ -377,10 +393,15 @@ impl Catalog {
         })
     }
 
+    /// Marks a movie watched or not; marked watched, it leaves To watch.
     pub async fn set_movie_watched(&self, movie_id: u64, watched: bool) -> Result<(), sqlx::Error> {
         self.watched
             .set_movie(movie_id, watched, Timestamp::now())
-            .await
+            .await?;
+        if watched {
+            self.leave_watchlist(MediaKind::Movie, movie_id).await;
+        }
+        Ok(())
     }
 
     /// Every movie and show with a watched mark, named from their cached

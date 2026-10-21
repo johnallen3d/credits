@@ -705,8 +705,16 @@ impl App {
                 {
                     self.apply_marks(kind, id, update.marks);
                 }
-                if let Change::Listed { list, kind, id, .. } = change {
-                    self.drop_unlisted(list, kind, id, update.marks);
+                match change {
+                    Change::Listed { list, kind, id, .. } => {
+                        self.drop_unlisted(list, kind, id, update.marks);
+                    }
+                    // Watching a title takes it off To watch.
+                    Change::Watched {
+                        target: Target::Title(kind, id),
+                        ..
+                    } => self.drop_unlisted(ListName::Watchlist, kind, id, update.marks),
+                    _ => {}
                 }
                 if let (Some(show), Some(watched)) = (show, update.watched) {
                     self.apply_watched(show, watched);

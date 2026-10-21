@@ -1626,6 +1626,47 @@ async fn marking_the_last_episode_or_season_rolls_up_to_the_show() {
 }
 
 #[tokio::test]
+async fn watching_a_title_takes_it_off_to_watch() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    for path in ["/movie/603", "/tv/1396", "/tv/5150"] {
+        post_form(t.app(), &format!("{path}/watchlist"), "listed=true").await;
+    }
+    post_form(t.app(), "/movie/603/favorite", "listed=true").await;
+    let to_watch = |json: Value| -> Vec<String> {
+        json["titles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| format!("{}/{}", e["kind"].as_str().unwrap(), e["id"]))
+            .collect()
+    };
+
+    post_form(t.app(), "/movie/603/watched", "watched=true").await;
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(to_watch(json), ["tv/5150", "tv/1396"]);
+    let (_, json) = get_json(t.app(), "/api/favorites").await;
+    assert_eq!(json["titles"][0]["id"], 603, "favorites are untouched");
+
+    // A season alone keeps the show; the one that completes it doesn't.
+    post_form(t.app(), "/tv/1396/season/1/watched", "watched=true").await;
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(to_watch(json), ["tv/5150", "tv/1396"]);
+    post_form(t.app(), "/tv/1396/season/2/watched", "watched=true").await;
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(to_watch(json), ["tv/5150"]);
+
+    // Marking the whole show over JSON answers with it gone.
+    let (_, json) = put_json(t.app(), "/api/tv/5150/watched", json!({ "watched": true })).await;
+    assert_eq!(json["marks"]["to_watch"], false);
+
+    // Unwatching doesn't put anything back.
+    post_form(t.app(), "/movie/603/watched", "watched=false").await;
+    post_form(t.app(), "/tv/5150/watched", "watched=false").await;
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(json["titles"], json!([]));
+}
+
+#[tokio::test]
 async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     let (status, _, body) = get_page(test_app().await, "/person/6384", false).await;
     assert_eq!(status, StatusCode::OK);
@@ -2396,11 +2437,19 @@ async fn json_writes_mirror_the_forms_and_answer_with_the_new_state() {
     assert_eq!(json["watched"]["episodes"][0]["season"], 2);
     assert!(!t.catalog.watched(1396).await.show);
 
-    // Lists carry each row's marks.
-    put_json(
+    // Lists carry each row's marks. Watching takes a title off To watch;
+    // adding it back keeps both.
+    let (_, json) = put_json(
         t.app(),
         "/api/movie/603/watched",
         json!({ "watched": true }),
+    )
+    .await;
+    assert_eq!(json["marks"]["to_watch"], false);
+    put_json(
+        t.app(),
+        "/api/movie/603/watchlist",
+        json!({ "listed": true }),
     )
     .await;
     let (_, json) = get_json(t.app(), "/api/watchlist").await;
@@ -3401,8 +3450,11 @@ async fn a_movie_played_to_ninety_percent_is_marked_watched_on_its_page() {
         infuse_row(110, "playing", movie, 6962),
         infuse_row(65, "idle", "", 0),
     ]);
+    post_form(p.t.app(), "/movie/105/watchlist", "listed=true").await;
     p.sync().await.unwrap();
     assert!(p.t.catalog.movie_watched(105).await.apple_tv);
+    let (_, json) = get_json(p.t.app(), "/api/watchlist").await;
+    assert_eq!(json["titles"], json!([]), "watched leaves To watch");
     let body = p.page().await;
     assert!(body.contains(
         r#"<a href="/movie/105">Back to the Future</a> <span class="muted">· movie</span>"#
@@ -4657,8 +4709,8 @@ async fn terminal_client_toggles_to_watch_favorite_and_watched() {
     }
     let movie = screen(&mut app);
     assert!(
-        movie.contains("■ To watch b   ♥ Favorite F   ✓ Watched x"),
-        "{movie}"
+        movie.contains("□ To watch b   ♥ Favorite F   ✓ Watched x"),
+        "watching takes it off To watch: {movie}"
     );
     assert!(movie.contains("Movie marked watched."), "{movie}");
     press(&mut app, KeyCode::Char('j'));
@@ -4721,9 +4773,23 @@ async fn terminal_client_toggles_to_watch_favorite_and_watched() {
     // the list on screen drops it and highlights the row that took its place.
     press(&mut app, KeyCode::Esc);
     press(&mut app, KeyCode::Esc);
+    post_form(t.app(), "/movie/105/watchlist", "listed=true").await;
     post_form(t.app(), "/tv/1396/watchlist", "listed=true").await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
     let open = press(&mut app, KeyCode::Char('w'));
     fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    // Marking a row watched takes it off To watch.
+    let future = tui::app::Target::Title(tui::api::Kind::Movie, 105);
+    for _ in 0..2 {
+        screen(&mut app);
+        press(&mut app, KeyCode::Char('j'));
+    }
+    assert_eq!(tui::ui::selected_target(&app), Some(future));
+    let save = press(&mut app, KeyCode::Char('x'));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(!list.contains("Back to the Future"), "{list}");
+    assert!(list.contains("Movie marked watched."), "{list}");
     assert!(
         screen(&mut app).contains("1999  Movie The Matrix    ■♥✓"),
         "{}",
@@ -4732,7 +4798,7 @@ async fn terminal_client_toggles_to_watch_favorite_and_watched() {
     let matrix = tui::app::Target::Title(tui::api::Kind::Movie, 603);
     let show = tui::app::Target::Title(tui::api::Kind::Tv, 1396);
     while tui::ui::selected_target(&app) != Some(matrix) {
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('k'));
     }
     let save = press(&mut app, KeyCode::Char('x'));
     fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;

@@ -1318,7 +1318,7 @@
     },
     "/api/movie/{id}/watched": {
       "put": {
-        "summary": "Marks a movie watched or not. Unmarking one the Apple TV marked sticks.",
+        "summary": "Marks a movie watched or not. Marking takes it off To watch; unmarking\none the Apple TV marked sticks.",
         "operationId": "api_movie_watched",
         "parameters": [
           {
@@ -1415,7 +1415,7 @@
     },
     "/api/tv/{id}/watched": {
       "put": {
-        "summary": "Marks a whole TV show watched or not.",
+        "summary": "Marks a whole TV show watched or not. Marking takes it off To watch.",
         "operationId": "api_tv_watched",
         "parameters": [
           {

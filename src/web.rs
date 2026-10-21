@@ -1817,7 +1817,8 @@ async fn api_set_listed(
     }
 }
 
-/// Marks a movie watched or not. Unmarking one the Apple TV marked sticks.
+/// Marks a movie watched or not. Marking takes it off To watch; unmarking
+/// one the Apple TV marked sticks.
 #[utoipa::path(
     put,
     path = "/api/movie/{id}/watched",
@@ -1843,7 +1844,7 @@ async fn api_movie_watched(
     }
 }
 
-/// Marks a whole TV show watched or not.
+/// Marks a whole TV show watched or not. Marking takes it off To watch.
 #[utoipa::path(
     put,
     path = "/api/tv/{id}/watched",

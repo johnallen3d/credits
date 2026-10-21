@@ -127,6 +127,10 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
 - Favoriting a TV show marks its currently aired seasons watched
   (including specials); future and empty seasons stay unwatched
 - Unhearting only removes the favorite, keeping watched history
+- Watching a title takes it off To watch, by hand or from the Apple TV:
+  a movie once marked, a show once marked watched as a whole (directly
+  or by roll-up); a season or episode alone keeps it. Favorites stay;
+  unwatching doesn't put it back
 
 ### Watched and spoilers
 
@@ -244,6 +248,7 @@ out to Home Assistant.
     pages: `x` the highlighted episode, `X` the season; episode pages: `x`
   - Updates in place from the server's answer; favoriting a show lights
     the seasons the server marked watched
+  - Marking a To watch row watched drops it, as the server takes it off
   - Removing a title from the list on screen drops its row once saved;
     the highlight moves to the next row (no undo; re-add from its page)
 - Lists filter and sort like the web page: `t` cycles All / Movies / TV,
