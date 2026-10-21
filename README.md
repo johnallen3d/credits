@@ -263,7 +263,8 @@ out to Home Assistant.
   Esc leaves the box, j/k or ↑/↓ move, Enter/l open, Esc/Backspace/h back,
   `/` new search, `c` full credits, `w`/`f`/`v`
   lists, `t`/`o` filter/sort lists and filmographies, `b`/`F`/`x`/`X` toggles, `r` reload, `s` peek, `[`/`]`
-  previous/next episode, `q` or Ctrl-C quit
+  previous/next episode, `q` or Ctrl-C quit (Ctrl-D also quits from
+  the search box)
 - `?` opens a scrollable keyboard-help overlay from any screen (including
   the search box); all keys are grouped by task, with inapplicable keys
   dimmed. Esc or `?` closes it without changing the query or selection;

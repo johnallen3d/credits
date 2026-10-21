@@ -410,6 +410,8 @@ impl App {
 
     fn edit_key(&mut self, key: KeyEvent, ctrl: bool, now: Instant) -> Vec<Request> {
         match key.code {
+            // EOF in the box quits, as in a shell; elsewhere Ctrl-D pages down.
+            KeyCode::Char('d') if ctrl => self.quit = true,
             KeyCode::Char('u') if ctrl => {
                 self.search.query.clear();
                 self.query_changed(now);

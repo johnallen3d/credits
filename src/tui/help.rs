@@ -91,6 +91,12 @@ fn bindings(app: &App) -> Vec<Binding> {
         true,
     );
     add(
+        "Navigation",
+        "Ctrl-D",
+        "Quit from the search box",
+        app.editing,
+    );
+    add(
         "Search",
         "/",
         "Return to the search box, keeping the query",

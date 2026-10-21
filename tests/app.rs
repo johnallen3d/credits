@@ -4154,6 +4154,18 @@ fn terminal_client_help_scrolls_resizes_and_keeps_ctrl_c_available() {
     assert!(app.quit);
 }
 
+#[test]
+fn terminal_client_ctrl_d_quits_from_search_box_and_pages_elsewhere() {
+    let ctrl_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+    let mut app = tui::App::new("http://localhost");
+    app.editing = false;
+    app.key(ctrl_d, std::time::Instant::now());
+    assert!(!app.quit, "Ctrl-D pages down outside the search box");
+    app.editing = true;
+    app.key(ctrl_d, std::time::Instant::now());
+    assert!(app.quit);
+}
+
 #[tokio::test]
 async fn terminal_client_help_dims_keys_for_titles_people_lists_and_episodes() {
     use tui::api::Kind;
