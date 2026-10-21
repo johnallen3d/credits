@@ -1197,6 +1197,65 @@ async fn credits_page_lists_everyone_grouped_by_department() {
 }
 
 #[tokio::test]
+async fn cast_episode_counts_show_once_the_whole_show_is_watched() {
+    let database = temp_database("cast-episodes");
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, &database).await;
+
+    // A season alone isn't enough: the count spans the whole show.
+    post_form(t.app(), "/tv/1396/season/1/watched", "watched=true").await;
+    let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
+    assert!(!body.contains("62 episodes"));
+
+    // The show toggle swaps the cast in too, so counts appear without a reload.
+    assert!(body.contains(r##"<div class="watch-state" hx-select-oob="#cast">"##));
+    post_form(t.app(), "/tv/1396/watched", "watched=true").await;
+    let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
+    assert!(body.contains(r#"<section class="section" id="cast""#));
+    assert!(body.contains(r#"<span class="role">62 episodes</span>"#));
+    let (_, json) = get_json(t.app(), "/api/tv/1396").await;
+    assert_eq!(json["cast"][0]["episode_count"], 62);
+    let (_, _, body) = get_page(t.app(), "/tv/1396/credits", false).await;
+    assert!(body.contains("· 62 episodes"));
+    let (_, _, body) = get_page(t.app(), "/person/6384", false).await;
+    assert!(body.contains("· 1 episode"));
+    let (_, json) = get_json(t.app(), "/api/person/6384").await;
+    let acting = json["filmography"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["department"] == "Acting")
+        .unwrap();
+    let show = |id: u64| {
+        acting["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap()["episode_count"]
+            .clone()
+    };
+    assert_eq!(show(1396), 1);
+    assert!(show(59941).is_null(), "other shows stay hidden");
+
+    // Marks that can't be read keep them hidden.
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query("ALTER TABLE watched_shows RENAME TO watched_shows_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, json) = get_json(t.app(), "/api/tv/1396").await;
+    assert!(json["cast"][0]["episode_count"].is_null());
+    let (_, _, body) = get_page(t.app(), "/person/6384", false).await;
+    assert!(!body.contains("· 1 episode"));
+    drop(t);
+    let _ = std::fs::remove_file(&database);
+}
+
+#[tokio::test]
 async fn tv_page_shows_creators_directors_and_seasons() {
     let (status, _, body) = get_page(test_app().await, "/tv/1396", false).await;
     assert_eq!(status, StatusCode::OK);
@@ -1209,7 +1268,10 @@ async fn tv_page_shows_creators_directors_and_seasons() {
         ),
         "most episodes first"
     );
-    assert!(body.contains(r#"<span class="role">62 episodes</span>"#));
+    assert!(
+        !body.contains("62 episodes"),
+        "an actor's episode count waits for the show to be watched"
+    );
     let season1 = body.find(r#"href="/tv/1396/season/1""#).unwrap();
     let season2 = body.find(r#"href="/tv/1396/season/2""#).unwrap();
     let specials = body.find(r#"href="/tv/1396/season/0""#).unwrap();
@@ -1223,7 +1285,7 @@ async fn tv_page_shows_creators_directors_and_seasons() {
     let (_, json) = get_json(test_app().await, "/api/tv/1396").await;
     assert_eq!(json["key_crew"][0]["role"], "creator");
     assert_eq!(json["season_list"][0]["number"], 1);
-    assert_eq!(json["cast"][0]["episode_count"], 62);
+    assert!(json["cast"][0]["episode_count"].is_null());
 
     let (_, _, body) = get_page(test_app().await, "/tv/1396/credits", false).await;
     let creators = body.find(r#"id="dept-creators""#).unwrap();
@@ -1678,7 +1740,10 @@ async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     assert!(body.contains(r#"<a href="/movie/603">The Matrix</a>"#));
     assert!(body.contains(r#"<a href="/tv/1396">Breaking Bad</a>"#));
     assert!(body.contains("as Neo / Thomas Anderson"));
-    assert!(body.contains("· 1 episode"));
+    assert!(
+        !body.contains("· 1 episode"),
+        "acting episode counts wait for the show to be watched"
+    );
     assert!(body.contains(r#"<img class="poster thumb" src="https://img.test/t/p/w92/matrix.jpg" alt="" loading="lazy""#));
     assert!(body.contains(r#"<span class="poster thumb missing">No artwork</span>"#));
     assert!(

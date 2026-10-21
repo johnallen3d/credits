@@ -22,7 +22,7 @@ use crate::model::{
     ServiceOption, ServicesDetail, ServicesState, ShowProgress, SortRatings, TitleCredits,
     TitleDetail, TitleHit, TitleMarks, UnavailableReason, WatchProvider, WatchTarget, Watched,
     WatchedList, WatchedMarks, WatchedSort, WatchedSource, WatchedTitle, WatchlistDetail,
-    WatchlistSort, WhereToWatch, WhereToWatchState,
+    WatchlistSort, WhereToWatch, WhereToWatchState, hide_cast_episode_counts,
 };
 use crate::omdb::OmdbClient;
 use crate::playback::{
@@ -227,6 +227,16 @@ impl Catalog {
     /// be read.
     pub async fn watched_marks(&self, tv_id: u64) -> WatchedMarks {
         WatchedMarks::of(self.read_watched(tv_id).await)
+    }
+
+    /// Shows marked watched as a whole; `None` if they can't be read, so
+    /// spoilers stay hidden.
+    pub async fn watched_shows(&self) -> Option<HashSet<u64>> {
+        self.watched
+            .shows()
+            .await
+            .inspect_err(|e| tracing::warn!(error = %e, "reading watched shows failed"))
+            .ok()
     }
 
     async fn read_watched(&self, tv_id: u64) -> Option<Watched> {
@@ -949,6 +959,9 @@ impl Catalog {
         let mut d = self.title_detail(kind, id).await?;
         let mine = self.service_ids().await;
         d.where_to_watch.mark_services(mine.as_ref());
+        if !self.show_watched(kind, id).await {
+            hide_cast_episode_counts(&mut d.cast);
+        }
         Ok(d)
     }
 
@@ -999,15 +1012,24 @@ impl Catalog {
                 )
             }
         };
+        let mut cast = people.cast;
+        if !self.show_watched(kind, id).await {
+            hide_cast_episode_counts(&mut cast);
+        }
         Ok(TitleCredits {
             kind,
             id,
             title,
             year,
-            cast: people.cast,
+            cast,
             crew: departments(people.crew),
             metadata,
         })
+    }
+
+    /// Whether `kind` is TV and the show is marked watched as a whole.
+    async fn show_watched(&self, kind: MediaKind, id: u64) -> bool {
+        kind == MediaKind::Tv && self.watched(id).await.show
     }
 
     pub async fn season(&self, tv_id: u64, number: u32) -> Result<SeasonDetail, CatalogError> {
@@ -1229,7 +1251,7 @@ impl Catalog {
             }
         };
 
-        Ok(PersonDetail {
+        let mut person = PersonDetail {
             id: p.id,
             tmdb_url: format!("https://www.themoviedb.org/person/{}", p.id),
             name: p.name,
@@ -1244,7 +1266,9 @@ impl Catalog {
             sort,
             sort_ratings,
             metadata,
-        })
+        };
+        person.hide_acting_episode_counts(self.watched_shows().await.as_ref());
+        Ok(person)
     }
 
     /// Reorders each list (e.g. a filmography department) best rated first,

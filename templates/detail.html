@@ -80,7 +80,8 @@
   {% let show_action = d.watched_path() %}
   <section class="section" id="seasons" aria-labelledby="seasons-heading">
     <h2 id="seasons-heading">Seasons</h2>
-    <div class="watch-state">
+    {#- The cast's episode counts show only once the whole show is watched. #}
+    <div class="watch-state" hx-select-oob="#cast">
       {% call watch::toggle(show_action, watched.show, "Show watched", page, "seasons", "", "") %}{% endcall %}
       {% if !watched.show %}
       <p class="muted">Episode summaries and ratings stay blurred until you mark them, their season or the show watched.</p>
@@ -102,7 +103,7 @@
     </ul>
   </section>
   {% endif %}
-  <section class="section" aria-labelledby="cast-heading">
+  <section class="section" id="cast" aria-labelledby="cast-heading">
     <h2 id="cast-heading">Top cast</h2>
     {% if d.cast.is_empty() %}
     <p class="muted">TMDB has no cast listed for this title.</p>

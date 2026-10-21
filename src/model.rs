@@ -489,6 +489,14 @@ impl Metadata {
     }
 }
 
+/// How many episodes an actor is in gives away how long their character
+/// lasts, so cast counts wait until the whole show is watched.
+pub fn hide_cast_episode_counts(cast: &mut [PersonCredit]) {
+    for p in cast {
+        p.episode_count = None;
+    }
+}
+
 /// "1 episode", "62 episodes".
 pub fn episodes_label(count: u32) -> String {
     if count == 1 {
@@ -884,7 +892,8 @@ pub struct PersonCredit {
     pub person_id: u64,
     pub name: String,
     pub role: Option<String>,
-    /// TV only: episodes this person is credited on.
+    /// TV only: episodes this person is credited on. Left out for cast until
+    /// the show is watched as a whole (see `hide_cast_episode_counts`).
     pub episode_count: Option<u32>,
     pub profile_url: Option<String>,
 }
@@ -1133,6 +1142,26 @@ pub struct PersonDetail {
 impl PersonDetail {
     pub fn path(&self) -> String {
         person_path(self.id)
+    }
+
+    /// Leaves out episode counts of acting credits on shows not watched as a
+    /// whole (all of them if `watched` couldn't be read); see
+    /// `hide_cast_episode_counts`. Known-for entries don't say which credit
+    /// their count is from, so they're treated as acting.
+    pub fn hide_acting_episode_counts(&mut self, watched: Option<&HashSet<u64>>) {
+        let unwatched = |e: &FilmographyEntry| {
+            e.kind == MediaKind::Tv && !watched.is_some_and(|shows| shows.contains(&e.id))
+        };
+        let acting = self
+            .filmography
+            .iter_mut()
+            .filter(|g| g.is_acting())
+            .flat_map(|g| &mut g.entries);
+        for e in self.known_for_titles.iter_mut().chain(acting) {
+            if unwatched(e) {
+                e.episode_count = None;
+            }
+        }
     }
 
     pub fn biography_paragraphs(&self) -> Vec<&str> {

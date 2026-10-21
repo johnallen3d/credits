@@ -137,6 +137,10 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
 - Mark a movie, show, season or episode watched
 - Episode summaries and IMDb episode scores stay blurred until that
   episode, its season or the show is watched; select one to peek
+- Actors' episode counts (cast, full credits, acting filmography, terminal
+  client and JSON) stay hidden until the whole show is watched, since they
+  give away how long a character lasts; the show toggle reveals them on the
+  page without a reload. Crew keep theirs
 - Marks roll up, by hand or from the Apple TV: a season's last episode
   marks the season, and an ended or canceled show's last regular season
   marks the show (specials optional); returning shows never roll up

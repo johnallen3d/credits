@@ -1,7 +1,7 @@
 //! TV shows, seasons, episodes and movies marked as watched, stored next to
 //! the provider cache.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use jiff::Timestamp;
 use sqlx::sqlite::SqlitePool;
@@ -59,6 +59,17 @@ pub struct WatchedShows {
 impl WatchedShows {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    /// Shows marked watched as a whole.
+    pub async fn shows(&self) -> Result<HashSet<u64>, sqlx::Error> {
+        let shows: Vec<(i64,)> = sqlx::query_as("SELECT tv_id FROM watched_shows")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(shows
+            .into_iter()
+            .filter_map(|(id,)| u64::try_from(id).ok())
+            .collect())
     }
 
     pub async fn get(&self, tv_id: u64) -> Result<Watched, sqlx::Error> {

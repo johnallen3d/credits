@@ -2653,7 +2653,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "TV only: episodes this person is credited on.",
+            "description": "TV only: episodes this person is credited on. Left out for cast until\nthe show is watched as a whole (see `hide_cast_episode_counts`).",
             "minimum": 0
           },
           "profile_url": {
