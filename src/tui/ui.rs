@@ -10,10 +10,11 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::api::{
-    Credit, Episode, EpisodeRatings, KeyCrew, Kind, Metadata, Person, PersonCredit, Rating,
-    Ratings, SearchHit, Season, State, Title, UnavailableReason, Watched, WhereToWatch,
+    Availability, Credit, Episode, EpisodeRatings, KeyCrew, Kind, List, ListServices, Metadata,
+    Person, PersonCredit, Rating, RatingSource, Ratings, SearchHit, Season, ServicesState,
+    SortRatings, State, Title, UnavailableReason, Watched, WhereToWatch,
 };
-use super::app::{App, Content, Load, Screen, Target};
+use super::app::{App, Content, ListName, ListView, Load, Screen, Target};
 use super::theme::palette;
 
 /// Width the link list is built at when only the links matter.
@@ -206,14 +207,22 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hints = match app.stack.last().map(|s| s.target) {
-        _ if app.editing => "type to search · ↓/Enter results · Ctrl-U clear · Ctrl-C quit",
+        _ if app.editing => {
+            "type to search · ↓/Enter results · Esc then w/f lists · Ctrl-U clear · Ctrl-C quit"
+        }
+        Some(Target::List(ListName::Watchlist, _)) => {
+            "j/k move · Enter open · t kind · o sort · m services · f Favorites · Esc back · r reload · q quit"
+        }
+        Some(Target::List(ListName::Favorites, _)) => {
+            "j/k move · Enter open · t kind · o sort · w To watch · Esc back · r reload · q quit"
+        }
         Some(Target::Season(..)) => {
             "j/k move · Enter open · s peek · Esc back · / search · r reload · q quit"
         }
         Some(Target::Episode(..)) => {
             "j/k move · Enter open · s peek · [/] prev/next · Esc back · / search · r reload · q quit"
         }
-        _ => "j/k move · Enter open · Esc back · / search · r reload · q quit",
+        _ => "j/k move · Enter open · w/f lists · Esc back · / search · r reload · q quit",
     };
     frame.render_widget(Line::styled(format!(" {hints}"), dim()), area);
     let busy = match app.stack.last() {
@@ -269,6 +278,7 @@ fn screen_name(screen: &Screen) -> String {
         (_, Target::Person(_)) => "Person".to_owned(),
         (_, Target::Season(_, n)) => season_label(n),
         (_, Target::Episode(_, _, n)) => format!("Episode {n}"),
+        (_, Target::List(name, _)) => name.label().to_owned(),
     }
 }
 
@@ -281,6 +291,10 @@ fn page(app: &App, width: u16) -> Page {
         Load::Ready(Content::Person(p)) => person_page(p, width),
         Load::Ready(Content::Season(s)) => season_page(s, screen, width),
         Load::Ready(Content::Episode(e)) => episode_page(e, screen, width),
+        Load::Ready(Content::List(l)) => match screen.target {
+            Target::List(name, view) => list_page(l, name, view, width),
+            _ => Page::default(),
+        },
         Load::Failed(message) => status_page(screen_name(screen), Some(message), width),
         Load::Loading => status_page(screen_name(screen), None, width),
     }
@@ -776,6 +790,210 @@ fn credit_rows(page: &mut Page, credits: &[PersonCredit]) {
             Target::Title(c.kind, c.id),
         );
     }
+}
+
+fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
+    let mut page = Page::new(name.label());
+    if l.titles.is_empty() && view == ListView::default() {
+        page.line(Line::styled(
+            match name {
+                ListName::Watchlist => {
+                    "Nothing saved yet. Add a movie or TV show to To watch on the web and it will be listed here."
+                }
+                ListName::Favorites => {
+                    "No favorites yet. Heart a movie or TV show on the web and it will be listed here."
+                }
+            },
+            dim(),
+        ));
+        return page;
+    }
+    let chosen = l
+        .services
+        .as_ref()
+        .is_some_and(|s| s.state == ServicesState::Chosen);
+    let mut bar = Vec::new();
+    choices(
+        &mut bar,
+        "Show",
+        &[
+            ("All", view.kind.is_none()),
+            ("Movies", view.kind == Some(Kind::Movie)),
+            ("TV", view.kind == Some(Kind::Tv)),
+        ],
+    );
+    choices(
+        &mut bar,
+        "Sort",
+        &[("Added", !view.by_rating), ("Rating", view.by_rating)],
+    );
+    if chosen || view.mine {
+        choices(
+            &mut bar,
+            "Available",
+            &[("Anywhere", !view.mine), ("On my services", view.mine)],
+        );
+    }
+    page.line(Line::from(bar));
+    if let Some(svc) = &l.services {
+        services_notes(&mut page, svc, view.mine, width);
+    }
+    if let Some(r) = &l.sort_ratings {
+        sort_ratings_notes(&mut page, r, width);
+    }
+    page.blank();
+
+    if l.titles.is_empty() {
+        let what = match view.kind {
+            Some(Kind::Tv) => "TV shows",
+            Some(Kind::Movie) => "movies",
+            None => "titles",
+        };
+        let text = if view.mine {
+            format!("None of the {what} on your list are on your services.")
+        } else {
+            format!("No {what} on your list.")
+        };
+        page.line(Line::styled(format!("  {text}"), dim()));
+        return page;
+    }
+    let column = column_width(l.titles.iter().map(|e| e.title.as_str()), TITLE_COLUMN);
+    for e in &l.titles {
+        let mut spans = vec![
+            Span::styled(
+                format!("  {:<4}  ", e.year.as_deref().unwrap_or("TBA")),
+                dim(),
+            ),
+            Span::styled(
+                format!("{:<5} ", e.kind.label()),
+                Style::new().fg(palette().accent),
+            ),
+            Span::raw(format!("{}  ", pad(&e.title, column))),
+        ];
+        if let Some(r) = &e.rating {
+            spans.push(Span::raw(format!("{:<12}", short_score(r))));
+        }
+        if let Some(a) = &e.availability {
+            spans.extend(availability(a));
+        }
+        page.link(Line::from(spans), Target::Title(e.kind, e.id));
+    }
+    page
+}
+
+/// A row of options with the current one highlighted, like the web's tabs.
+fn choices(spans: &mut Vec<Span<'static>>, label: &str, options: &[(&str, bool)]) {
+    if !spans.is_empty() {
+        spans.push(Span::raw("   "));
+    }
+    spans.push(Span::styled(format!("{label} "), dim()));
+    for (i, (name, current)) in options.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", dim()));
+        }
+        spans.push(if *current {
+            Span::styled(name.to_string(), Style::new().fg(palette().accent).bold())
+        } else {
+            Span::styled(name.to_string(), dim())
+        });
+    }
+}
+
+fn services_notes(page: &mut Page, svc: &ListServices, mine: bool, width: u16) {
+    match svc.state {
+        ServicesState::Chosen => {
+            if svc.unknown > 0 {
+                let (titles, are, they) = if svc.unknown == 1 {
+                    ("title", "is", "it's")
+                } else {
+                    ("titles", "are", "they're")
+                };
+                let left_out = if mine {
+                    format!(", so {they} left out")
+                } else {
+                    String::new()
+                };
+                page.line(Line::styled(
+                    format!(
+                        "Couldn't check where {} {titles} {are} available right now{left_out}.",
+                        svc.unknown
+                    ),
+                    dim(),
+                ));
+            }
+            if let Some(day) = fetched_day(&svc.stale_since) {
+                page.warn(
+                    format!(
+                        "Couldn't refresh where some titles are available; using listings from as early as {day}."
+                    ),
+                    width,
+                );
+            }
+        }
+        ServicesState::Unreadable => page.warn(
+            "Your services couldn't be read, so titles can't be filtered by them.",
+            width,
+        ),
+        ServicesState::NotChosen => page.line(Line::styled(
+            "Choose your streaming services on the web to see which titles you can watch on them.",
+            dim(),
+        )),
+    }
+}
+
+fn sort_ratings_notes(page: &mut Page, r: &SortRatings, width: u16) {
+    match r.unavailable_reason {
+        Some(UnavailableReason::NotConfigured) => page.line(Line::styled(
+            "Ratings aren't configured on the server, so titles stay in the order they were added.",
+            dim(),
+        )),
+        Some(_) => page.line(Line::styled(
+            "Some ratings couldn't be loaded right now.",
+            dim(),
+        )),
+        None if r.unrated > 0 => page.line(Line::styled(
+            "Titles without a Rotten Tomatoes or IMDb score are listed last, most recently added first.",
+            dim(),
+        )),
+        None => {}
+    }
+    if let Some(day) = fetched_day(&r.stale_since) {
+        page.warn(
+            format!("Couldn't refresh some ratings; using scores from as early as {day}."),
+            width,
+        );
+    }
+}
+
+/// A list row's score, like `RT 94%` or `IMDb 8.7/10`.
+fn short_score(r: &Rating) -> String {
+    let source = match r.source {
+        RatingSource::RottenTomatoes => "RT",
+        other => other.label(),
+    };
+    format!("{source} {}", r.display())
+}
+
+/// The user's services that include a title, starred as on title pages.
+fn availability(a: &Availability) -> Vec<Span<'static>> {
+    if a.state == State::Unavailable {
+        return vec![Span::styled("Availability unknown", dim())];
+    }
+    if a.services.is_empty() {
+        return Vec::new();
+    }
+    let names: Vec<&str> = a.services.iter().map(|s| s.name.as_str()).collect();
+    let mut spans = vec![Span::styled(
+        format!("★ {}", names.join(", ")),
+        Style::new().fg(palette().mine),
+    )];
+    if a.state == State::Stale {
+        let listed = fetched_day(&a.fetched_at)
+            .map(|d| format!(" (listed {d})"))
+            .unwrap_or_else(|| " (may be out of date)".to_owned());
+        spans.push(Span::styled(listed, Style::new().fg(palette().warn)));
+    }
+    spans
 }
 
 fn stale_notice(page: &mut Page, metadata: &Metadata, width: u16) {

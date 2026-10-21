@@ -3759,3 +3759,198 @@ async fn terminal_client_browses_seasons_and_episodes_hiding_spoilers() {
     drop(t);
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn terminal_client_shows_to_watch_and_favorites_with_filters() {
+    let database = temp_database("tui-lists");
+    let t = build_with_database(
+        TOKEN,
+        Some(OMDB_KEY),
+        Duration::from_secs(3600),
+        Duration::ZERO,
+        &database,
+    )
+    .await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+
+    // Esc leaves an empty search box, and w opens the empty list.
+    press(&mut app, KeyCode::Esc);
+    let open = press(&mut app, KeyCode::Char('w'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let empty = screen(&mut app);
+    assert!(empty.contains("Search › To watch"), "{empty}");
+    assert!(empty.contains("Nothing saved yet."), "{empty}");
+    press(&mut app, KeyCode::Esc);
+
+    post_form(t.app(), "/services", "service=8").await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    post_form(t.app(), "/tv/1396/watchlist", "listed=true").await;
+    post_form(t.app(), "/movie/603/favorite", "listed=true").await;
+    let open = press(&mut app, KeyCode::Char('w'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(
+        list.contains(
+            "Show All · Movies · TV   Sort Added · Rating   Available Anywhere · On my services"
+        ),
+        "{list}"
+    );
+    let bb = list
+        .find("2008  TV    Breaking Bad")
+        .expect("Breaking Bad row");
+    let matrix = list
+        .find("1999  Movie The Matrix    ★ Netflix")
+        .expect("The Matrix row");
+    assert!(bb < matrix, "most recently added first: {list}");
+    assert!(list.contains("m services"), "{list}");
+
+    // t narrows to movies, o sorts by rating, m keeps only my services.
+    let movies = press(&mut app, KeyCode::Char('t'));
+    assert!(matches!(
+        movies.as_slice(),
+        [tui::app::Request::Page {
+            target: tui::app::Target::List(
+                tui::app::ListName::Watchlist,
+                tui::app::ListView {
+                    kind: Some(tui::api::Kind::Movie),
+                    ..
+                }
+            ),
+            ..
+        }]
+    ));
+    fulfil(&client, &mut app, movies.into_iter().next().unwrap()).await;
+    let rated = press(&mut app, KeyCode::Char('o'));
+    fulfil(&client, &mut app, rated.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(!list.contains("Breaking Bad"), "{list}");
+    assert!(list.contains("The Matrix  RT 83%      ★ Netflix"), "{list}");
+    let tv = press(&mut app, KeyCode::Char('t'));
+    fulfil(&client, &mut app, tv.into_iter().next().unwrap()).await;
+    let mine = press(&mut app, KeyCode::Char('m'));
+    fulfil(&client, &mut app, mine.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(
+        list.contains("None of the TV shows on your list are on your services."),
+        "{list}"
+    );
+
+    // Enter opens the title; f swaps To watch for Favorites, which has no
+    // services filter.
+    let all = press(&mut app, KeyCode::Char('t'));
+    fulfil(&client, &mut app, all.into_iter().next().unwrap()).await;
+    let open = press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        open.as_slice(),
+        [tui::app::Request::Page {
+            target: tui::app::Target::Title(tui::api::Kind::Movie, 603),
+            ..
+        }]
+    ));
+    press(&mut app, KeyCode::Esc);
+    let open = press(&mut app, KeyCode::Char('f'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let favorites = screen(&mut app);
+    assert!(favorites.contains("Search › Favorites"), "{favorites}");
+    assert!(favorites.contains("1999  Movie The Matrix"), "{favorites}");
+    assert!(!favorites.contains("Breaking Bad"), "{favorites}");
+    assert!(!favorites.contains("Available"), "{favorites}");
+    assert!(press(&mut app, KeyCode::Char('m')).is_empty());
+    assert!(
+        press(&mut app, KeyCode::Char('f')).is_empty(),
+        "already open"
+    );
+
+    // Offers TMDB can't refresh are stale; ones it never had are unknown.
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    t.tmdb.set_down(true);
+    let open = press(&mut app, KeyCode::Char('w'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(
+        list.contains("Couldn't refresh where some titles are available; using listings from"),
+        "{list}"
+    );
+    assert!(list.contains("★ Netflix (listed "), "{list}");
+    sqlx::query(
+        r#"UPDATE provider_cache SET payload = json_remove(payload, '$."watch/providers"') WHERE key = 'movie/603'"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let reload = press(&mut app, KeyCode::Char('r'));
+    fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(
+        list.contains("The Matrix    Availability unknown"),
+        "{list}"
+    );
+    assert!(
+        list.contains("Couldn't check where 1 title is available right now."),
+        "{list}"
+    );
+
+    // An unreadable list is an error, never an empty list.
+    sqlx::query("ALTER TABLE watchlist RENAME TO watchlist_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let reload = press(&mut app, KeyCode::Char('r'));
+    fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(list.contains("The watchlist couldn't be read"), "{list}");
+    assert!(list.contains("Press r to try again"), "{list}");
+    assert!(!list.contains("Nothing saved yet"), "{list}");
+    drop(t);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
+}
+
+#[tokio::test]
+async fn terminal_client_lists_say_when_ratings_are_stale_or_missing() {
+    let t = build_with(TOKEN, Some(OMDB_KEY), Duration::ZERO, Duration::ZERO).await;
+    post_form(t.app(), "/movie/603/favorite", "listed=true").await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    press(&mut app, KeyCode::Esc);
+    let open = press(&mut app, KeyCode::Char('f'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let rated = press(&mut app, KeyCode::Char('o'));
+    fulfil(&client, &mut app, rated.into_iter().next().unwrap()).await;
+    t.omdb.set_down(true);
+    let reload = press(&mut app, KeyCode::Char('r'));
+    fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(list.contains("The Matrix  RT 83%"), "{list}");
+    assert!(
+        list.contains("Couldn't refresh some ratings; using scores from as early as "),
+        "{list}"
+    );
+
+    let t = build(TOKEN, None, Duration::from_secs(3600)).await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    let base = serve(t.app()).await;
+    let mut app = tui::App::new(&base);
+    let open = app.open(tui::app::Target::List(
+        tui::app::ListName::Watchlist,
+        tui::app::ListView {
+            by_rating: true,
+            ..Default::default()
+        },
+    ));
+    fulfil(&tui::Client::new(&base), &mut app, open).await;
+    let list = screen(&mut app);
+    assert!(
+        list.contains(
+            "Ratings aren't configured on the server, so titles stay in the order they were added."
+        ),
+        "{list}"
+    );
+}

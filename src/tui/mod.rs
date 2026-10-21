@@ -88,5 +88,6 @@ pub async fn fetch(client: &Client, target: Target) -> Result<Content, ClientErr
         Target::Episode(show, season, number) => {
             Content::Episode(Box::new(client.episode(show, season, number).await?))
         }
+        Target::List(list, view) => Content::List(Box::new(client.list(list, view).await?)),
     })
 }

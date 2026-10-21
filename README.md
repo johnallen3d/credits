@@ -194,16 +194,24 @@ out to Home Assistant.
   `s` peeks the highlighted (or open) episode
 - Person pages: born/died, first paragraph of the biography, known for,
   filmography by department
-- Keys: type to search, ↓/Enter into results, j/k or ↑/↓ move, Enter/l
-  open, Esc/Backspace/h back, `/` new search, `r` reload, `s` peek,
-  `[`/`]` previous/next episode, `q` or Ctrl-C quit
+- To watch (`w`) and Favorites (`f`) list screens, read-only: year, kind,
+  title, score when sorted by rating, and your services on To watch
+- Lists filter and sort like the web page: `t` cycles All / Movies / TV,
+  `o` toggles Added / Rating, `m` toggles On my services (To watch, once
+  services are chosen)
+- Keys: type to search, ↓/Enter into results, Esc leaves the box, j/k or
+  ↑/↓ move, Enter/l open, Esc/Backspace/h back, `/` new search, `w`/`f`
+  lists, `r` reload, `s` peek, `[`/`]` previous/next episode, `q` or
+  Ctrl-C quit
 - Shows the server's degraded states: stale details, ratings, episode
   scores and offers with their date, ratings unavailable, availability
   unknown, and watched marks unreadable (spoilers stay hidden)
+- Lists: unreadable lists or services shown as errors (never empty),
+  titles of unknown availability, stale listings and ratings
 - Server unreachable, not found or provider errors are shown in place;
   `r` (or Enter on a failed search) retries
 - Colors follow the `theme` setting (see [Themes](#themes))
-- Not yet: lists and toggles, playback
+- Not yet: toggling To watch, Favorite and Watched; playback
 
 ## Routes
 

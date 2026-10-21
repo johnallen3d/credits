@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 
-use super::api::{ApiError, Episode, Kind, Person, SearchHit, SearchResults, Season, Title};
+use super::api::{ApiError, Episode, Kind, List, Person, SearchHit, SearchResults, Season, Title};
+use super::app::{ListName, ListView};
 
 #[derive(Clone)]
 pub struct Client {
@@ -72,6 +73,25 @@ impl Client {
             &[],
         )
         .await
+    }
+
+    /// The To watch list or Favorites, with the same filters as the web page.
+    pub async fn list(&self, list: ListName, view: ListView) -> Result<List, ClientError> {
+        let path = match list {
+            ListName::Watchlist => "/api/watchlist",
+            ListName::Favorites => "/api/favorites",
+        };
+        let mut query = Vec::new();
+        if let Some(kind) = view.kind {
+            query.push(("kind", kind.slug()));
+        }
+        if view.by_rating {
+            query.push(("sort", "rating"));
+        }
+        if view.mine && list == ListName::Watchlist {
+            query.push(("services", "mine"));
+        }
+        self.get(path, &query).await
     }
 
     async fn get<T: DeserializeOwned>(

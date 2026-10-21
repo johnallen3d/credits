@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use super::api::{Episode, Kind, Person, SearchHit, Season, Title};
+use super::api::{Episode, Kind, List, Person, SearchHit, Season, ServicesState, Title};
 use super::client::ClientError;
 
 /// Typing pause before a search goes out, so each keystroke isn't a request.
@@ -21,6 +21,32 @@ pub enum Target {
     Season(u64, u32),
     /// A TV show's episode by season and number.
     Episode(u64, u32, u32),
+    List(ListName, ListView),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListName {
+    Watchlist,
+    Favorites,
+}
+
+impl ListName {
+    pub fn label(self) -> &'static str {
+        match self {
+            ListName::Watchlist => "To watch",
+            ListName::Favorites => "Favorites",
+        }
+    }
+}
+
+/// A list's filters and order, as the web page's query parameters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ListView {
+    /// Only movies or only TV; `None` for all.
+    pub kind: Option<Kind>,
+    pub by_rating: bool,
+    /// Only titles on the user's services (To watch only).
+    pub mine: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +68,7 @@ pub enum Content {
     Person(Box<Person>),
     Season(Box<Season>),
     Episode(Box<Episode>),
+    List(Box<List>),
 }
 
 #[derive(Debug)]
@@ -224,11 +251,13 @@ impl App {
                 self.search.query.pop();
                 self.query_changed(now);
             }
-            KeyCode::Down | KeyCode::Tab | KeyCode::Esc => {
+            KeyCode::Down => {
                 if !self.search.results.is_empty() {
                     self.editing = false;
                 }
             }
+            // Leaves the box even without results, so w and f can open the lists.
+            KeyCode::Tab | KeyCode::Esc => self.editing = false,
             KeyCode::Enter => {
                 if self.search.due.is_some() {
                     self.editing = false;
@@ -286,6 +315,29 @@ impl App {
             KeyCode::Char('s') => self.peek(),
             KeyCode::Char('[') => return self.neighbour(false).into_iter().collect(),
             KeyCode::Char(']') => return self.neighbour(true).into_iter().collect(),
+            KeyCode::Char('w') => return self.open_list(ListName::Watchlist).into_iter().collect(),
+            KeyCode::Char('f') => return self.open_list(ListName::Favorites).into_iter().collect(),
+            KeyCode::Char('t') => {
+                return self
+                    .change_view(|v| {
+                        v.kind = match v.kind {
+                            None => Some(Kind::Movie),
+                            Some(Kind::Movie) => Some(Kind::Tv),
+                            Some(Kind::Tv) => None,
+                        };
+                    })
+                    .into_iter()
+                    .collect();
+            }
+            KeyCode::Char('o') => {
+                return self
+                    .change_view(|v| v.by_rating = !v.by_rating)
+                    .into_iter()
+                    .collect();
+            }
+            KeyCode::Char('m') if self.can_filter_services() => {
+                return self.change_view(|v| v.mine = !v.mine).into_iter().collect();
+            }
             _ => {}
         }
         Vec::new()
@@ -324,6 +376,56 @@ impl App {
         let target = Target::Episode(e.show_id, e.season_number, number);
         self.stack.pop();
         Some(self.open(target))
+    }
+
+    /// Opens a list over the current page; from the other list, swaps it.
+    fn open_list(&mut self, name: ListName) -> Option<Request> {
+        if let Some(Screen {
+            target: Target::List(open, _),
+            ..
+        }) = self.stack.last()
+        {
+            if *open == name {
+                return None;
+            }
+            self.stack.pop();
+        }
+        Some(self.open(Target::List(name, ListView::default())))
+    }
+
+    /// Refetches the list on screen with a changed filter or order.
+    fn change_view(&mut self, change: impl FnOnce(&mut ListView)) -> Option<Request> {
+        let seq = self.seq();
+        let screen = self.stack.last_mut()?;
+        let Target::List(name, mut view) = screen.target else {
+            return None;
+        };
+        change(&mut view);
+        screen.target = Target::List(name, view);
+        screen.seq = seq;
+        screen.load = Load::Loading;
+        screen.cursor = Cursor::default();
+        Some(Request::Page {
+            seq,
+            target: screen.target,
+        })
+    }
+
+    /// The services filter only means something once services are chosen;
+    /// it can always be turned back off.
+    fn can_filter_services(&self) -> bool {
+        match self.stack.last() {
+            Some(Screen {
+                target: Target::List(ListName::Watchlist, view),
+                load,
+                ..
+            }) => {
+                view.mine
+                    || matches!(load, Load::Ready(Content::List(l))
+                        if l.services.as_ref().is_some_and(|s| s.state == ServicesState::Chosen))
+            }
+            _ => false,
+        }
     }
 
     fn open_selected(&mut self) -> Option<Request> {
