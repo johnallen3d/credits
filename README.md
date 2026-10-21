@@ -1,366 +1,69 @@
 # credits
 
-A personal movie and TV browser: search TMDB, open a title or person, see
-ratings, where to watch, and what you've watched.
+A personal movie and TV browser: search TMDB, see ratings and where to
+watch, and keep track of what you've watched, without spoilers.
 
-- **Stack:** Rust (Axum + Tokio), Askama templates, HTMX (vendored in
-  `static/`, no Node build), SQLite (SQLx)
-- **Data:** TMDB (titles, people, offers), OMDb (ratings), Home Assistant
-  (optional, Apple TV playback)
-- **Every page has a JSON twin** under `/api/…` (see [Routes](#routes)),
-  described by the OpenAPI 3.1 spec in [`openapi.json`](openapi.json),
-  also served at `/api/openapi.json`
-- **Two binaries:** `credits-web` is the server; `credits` is a terminal
-  client for a running server (see [Terminal client](#terminal-client))
+![Recently viewed](docs/screenshots/home.webp)
+
+| | |
+|---|---|
+| ![Movie page](docs/screenshots/movie.webp) | ![Season with blurred spoilers](docs/screenshots/season.webp) |
+
+![Watched list](docs/screenshots/watched.webp)
+
+## Features
+
+- **Search and browse** movies, shows, seasons, episodes and people,
+  with full credits and filmographies
+- **Ratings** from Rotten Tomatoes and IMDb (via OMDb)
+- **Where to watch** in your region, highlighting your services
+- **To watch, Favorites and Watched** lists with filter and sort
+- **Spoiler guard:** unwatched episode summaries, scores and actors'
+  episode counts stay hidden
+- **Seen on Apple TV:** optional, marks what you watch via Home Assistant
+- **Survives outages:** serves stale cached data, and says when
+  something can't be loaded rather than showing it empty
+- **Themes:** Rosé Pine, Tokyo Night, Catppuccin, Classic
+- **Terminal client** (`credits`) with the same features over the API
+- **JSON API** under `/api/…` for every page, described by
+  [`openapi.json`](openapi.json)
 
 ## Run
 
 ```sh
-doppler secrets set TMDB_API_TOKEN --project credits --config dev   # TMDB "API Read Access Token"
-doppler secrets set OMDB_API_KEY --project credits --config dev     # optional, enables ratings
-mise run dev                                                        # credits-web on http://127.0.0.1:3000
-mise run tui                                                        # credits, the terminal client
+doppler secrets set TMDB_API_TOKEN --project credits --config dev
+doppler secrets set OMDB_API_KEY --project credits --config dev   # optional
+mise run dev   # web on http://127.0.0.1:3000
+mise run tui   # terminal client
 ```
-
-- Refuses to start without a real TMDB token
-- No authentication, so it only binds to loopback
-
-### Configuration
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `TMDB_API_TOKEN` | required | TMDB API Read Access Token |
-| `OMDB_API_KEY` | unset | Ratings; without it ratings show as unavailable |
-| `CREDITS_BIND` | `127.0.0.1:3000` | Listen address |
-| `CREDITS_DB` | `./credits.db` | SQLite database (cache and your lists) |
-| `CREDITS_REGION` | `US` | Two-letter country for where to watch and My services |
-| `HA_URL`, `HA_TOKEN` | unset | Home Assistant URL and long-lived token; enables Seen on Apple TV |
-| `CREDITS_HA_PLAYERS` | `media_player.living_room_appletv` | Comma-separated `media_player` entities to follow |
+| `OMDB_API_KEY` | unset | Ratings |
+| `CREDITS_BIND` | `127.0.0.1:3000` | Listen address (no auth: keep it local) |
+| `CREDITS_DB` | `./credits.db` | SQLite cache and lists |
+| `CREDITS_REGION` | `US` | Country for where to watch |
+| `HA_URL`, `HA_TOKEN` | unset | Home Assistant, enables Seen on Apple TV |
+| `CREDITS_HA_PLAYERS` | `media_player.living_room_appletv` | Players to follow |
 
-These configure `credits-web`. The terminal client reads only a TOML file:
+The terminal client reads `~/.config/credits/config.toml`:
 
 ```toml
-# ~/.config/credits/config.toml ($XDG_CONFIG_HOME/credits, or $CREDITS_CONFIG)
 url = "https://credits.jallen7usa.com"
-theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, classic
+theme = "rose-pine"   # optional; press ? in the app for keys
 ```
-
-## Features
-
-### Search and browsing
-
-- Search movies, TV shows and people from one box (HTMX, live results)
-- Header shows the app icon (the favicon) as the home link
-- Keyboard navigation: ↑/↓ move through results (or Recently viewed when
-  the box is empty), Enter opens the highlighted item
-- Home page shows the 50 most recently viewed titles and people,
-  including pages opened in the terminal client
-- Movie and TV pages: poster, key crew (directors and writers; for TV,
-  creators and most frequent directors), top-billed cast, season list
-- Full credits pages with the whole cast and crew by department
-- Season pages with episode list, air dates and IMDb episode scores
-- Episode pages with guest stars, series regulars credited on it,
-  directors, writers, crew by department, and previous/next links
-- Long biographies (and the rare long overview) collapse to about the
-  photo's height behind **Show more**; without JavaScript they show whole
-- Person pages:
-  - **Known for** row of up to eight titles, ranked from combined credits
-    (talk shows and self appearances left out)
-  - Filmography as department tabs (main department first) with poster
-    thumbnails
-  - Filter All / Movies / TV and sort by date or rating (`?sort=rating`);
-    tab, kind and sort live in the URL
-  - Rows in columns: year, poster, title over kind and role, rating
-    (score right-aligned, then source icon centred) on either sort; on
-    a phone the rating goes under the role
-- Sort and filter buttons (filmography, To watch, Watched) swap in the
-  new list over HTMX without a page reload: a spinner shows on the
-  clicked choice and the list dims while it loads; URL, title and Back
-  follow along, and without JavaScript they're ordinary links
-- Responsive layout down to phone width
-
-### Themes
-
-- Rosé Pine (default), Tokyo Night (Night), Catppuccin (Mocha), and
-  Classic (the original light/dark look that follows the system)
-- Web: Theme picker in the footer, remembered per browser (local
-  storage) and applied before the page paints; without JavaScript the
-  picker is hidden and Rosé Pine shows
-- Terminal client: `theme` in `config.toml`; Classic uses the terminal's
-  own colors, the others paint their background (truecolor); an unknown
-  name stops startup with the valid choices
-
-### Ratings
-
-- One preferred score per title: Rotten Tomatoes for movies, IMDb for TV
-- Other scores listed beneath, with source icons (fresh tomato at 60%+,
-  splat below)
-- A missing preferred score is shown as missing, never substituted
-- Looked up on OMDb by the IMDb ID TMDB reports, never by title
-- Rating sort uses the Tomatometer, else IMDb as a percentage; unscored
-  titles follow in date order
-  - First rating sort of a big filmography costs one TMDB + one OMDb
-    request per title, eight at a time
-
-### Where to watch
-
-- Offers for `CREDITS_REGION`: subscription, free, free with ads, rent,
-  buy, in TMDB's order (JustWatch data via TMDB)
-- Collapsed by default to one line counting each kind
-- Services link to TMDB's offers page, which links to each service
-- Comes in the same TMDB request and cache entry as the title
-
-### My services
-
-- Pick the streaming services you subscribe to (linked in the footer);
-  saved on each change
-- Options from TMDB's movie and TV service lists for the region, grouped:
-  yours, popular, everything else (each A to Z)
-  - Popular is a fixed list of major US services, or TMDB's top ten
-    elsewhere
-  - Add-on channels (Amazon Channel, Roku Premium Channel, Apple TV
-    channel) hidden unless already chosen
-- Title pages highlight your services among the offers; the collapsed
-  summary names the ones that include it (rent and buy excluded)
-- To watch shows a badge per title for each of your services, and an
-  **On my services** filter (`?services=mine`)
-- Nothing is highlighted or filtered until you choose a service
-
-### To watch and Favorites
-
-- Bookmark (To watch) and heart (Favorites) toggles on title pages,
-  search results, filmography rows and both lists
-- Both lists filter All / Movies / TV and sort by Added (newest first) or
-  Rating
-- Each entry snapshots name, year and poster when added
-- Favoriting a TV show marks its currently aired seasons watched
-  (including specials); future and empty seasons stay unwatched
-- Unhearting only removes the favorite, keeping watched history
-- Watching a title takes it off To watch, by hand or from the Apple TV:
-  a movie once marked, a show once marked watched as a whole (directly
-  or by roll-up); a season or episode alone keeps it. Favorites stay;
-  unwatching doesn't put it back
-
-### Watched and spoilers
-
-- Mark a movie, show, season or episode watched
-- Episode summaries and IMDb episode scores stay blurred until that
-  episode, its season or the show is watched; select one to peek
-- Actors' episode counts (cast, full credits, acting filmography, terminal
-  client and JSON) stay hidden until the whole show is watched, since they
-  give away how long a character lasts; the show toggle reveals them on the
-  page without a reload. Crew keep theirs
-- Marks roll up, by hand or from the Apple TV: a season's last episode
-  marks the season, and an ended or canceled show's last regular season
-  marks the show (specials optional); returning shows never roll up
-  to the whole show, so new seasons stay unwatched
-- A watched movie, or a show marked watched as a whole, tints the whole
-  page in the watched color with a stripe pinned to the top while
-  scrolling; partly watched shows don't
-- If watched marks can't be read, spoilers stay hidden
-- TV, season and episode JSON carry the show's `watched` marks, with
-  `state` `read` or `unreadable`
-
-### Watched list
-
-- `/watched` (header nav) lists every movie and show with a watched mark,
-  however it was made: by hand, by favoriting a show, or from the Apple TV
-- A show is listed once the show, any season or any episode is marked;
-  rows say what (whole show, seasons, episode count), when it was last
-  watched, and "Apple TV" if any mark came from it
-- Filter All / Movies / TV and by how it was marked (Any way / By hand /
-  Apple TV); sort by Last watched (newest first) or Title (A to Z)
-- Names, years and posters come from each title's cached TMDB entry,
-  eight lookups at a time; a title TMDB can't name shows as "TV show #id"
-  and is counted, and stale details give their date
-- Unreadable watched marks are an error, never an empty list
-
-### Seen on Apple TV
-
-Optional; on when `HA_URL` and `HA_TOKEN` are set. credits only connects
-out to Home Assistant.
-
-- Follows the players live over Home Assistant's WebSocket API, and on
-  each (re)connect catches up from the REST history where it left off
-  (up to the recorder's 10 days)
-- Reconnects with backoff from 5 seconds up to 5 minutes
-- Understands:
-  - **Infuse** episodes ("New Girl - S4 ∙ E8 - Teachers") and movies
-    (any other title, matched by TMDB search, year and runtime)
-  - **Apple TV app** episodes from the content ID (`A0178901003` is S1 E3,
-    checked against TMDB's runtime) and feature-length videos (40 min+)
-    as movies
-  - Movie titles drop trailing edition tags before the TMDB search
-    ("Superbad (Unrated)" is Superbad)
-  - Other apps (YouTube, Music, ESPN, trailers) are ignored and only
-    totalled
-- Marks watched when:
-  - Episodes: 90% played or reached, or 80% once a later episode starts
-  - Movies: 90%, or all but the last 10 minutes (at least 80%)
-- Play time adds up across sessions
-- Shows and movies with one fitting TMDB match are matched automatically;
-  others wait on `/playback` (footer) for a choice, a TMDB ID, or ignore
-- Each item is marked once; unmarking by hand sticks
-- Auto marks are labelled "Watched on Apple TV"; `/playback` and About
-  show the live connection and last history read
-
-### Caching and degraded states
-
-- TMDB title, season and person responses and OMDb ratings are cached in
-  SQLite for 24 hours; search is not cached
-- When a provider fails after that, the expired copy is shown and marked
-  stale with its fetch date; "not found" and token errors are never masked
-- Missing OMDb key or IMDb ID: ratings show as unavailable, page still
-  renders
-- A title whose offers can't be loaded is marked "Availability unknown"
-  and left out of On my services
-- If saved lists, favorites or services can't be read, pages say so
-  rather than showing them empty, and saving is refused
-- JSON carries the same state: `state` (`fresh` / `stale` /
-  `unavailable`) and `fetched_at` on `metadata`, `ratings`,
-  `where_to_watch` and `/api/services`
-- `marks` (`to_watch`, `favorite`, `watched`) on movie, TV and list JSON
-  is `null` per mark when it couldn't be read; JSON saves that can't be
-  written answer 500 with `error` and change nothing
-
-### Terminal client
-
-- `credits` browses a running server over its `/api/…` JSON; no database,
-  TMDB token or Doppler needed
-- Live search (debounced) for movies, TV shows and people
-- Empty search box lists the 50 most recently viewed titles and people shared
-  with the web home page; ↓/Enter move into and open them like results
-- Opening a title or person here counts as viewing it, as on the web
-- Movie and TV pages: facts, ratings, overview, where to watch (your
-  services starred), key crew and top cast
-- Full credits (`c` on movie and TV pages): whole cast in billing order
-  with characters, crew grouped by department; Enter opens a person
-- TV pages list seasons: number, name, episode count, year, watched mark
-- Season pages: episodes with air date, runtime, IMDb score and watched
-  mark
-- Episode pages: summary, directors and writers, guest stars and series
-  regulars credited on it
-- Unwatched episodes' summaries and scores stay hidden, as on the web;
-  `s` peeks the highlighted (or open) episode
-- Person pages: born/died, first paragraph of the biography, known for,
-  filmography by department
-  - `t` cycles All / Movies / TV (filtered locally), `o` toggles Date /
-    Rating (refetches `?sort=rating`); current choice shown above the
-    credits, score beside each credit when sorted by rating
-  - Rating sort notes unscored credits, stale scores (with their date) and
-    ratings unavailable or not configured, as on the list screens
-- Watched (`v`) list screen: year, kind, title, Apple TV, what of a show
-  is marked and when; `t` kind, `a` cycles Any way / By hand / Apple TV,
-  `o` Last watched / Title; unreadable marks shown as an error
-- To watch (`w`) and Favorites (`f`) list screens: year, kind, title,
-  marks (■ To watch, ♥ Favorite, ✓ Watched), score when sorted by rating,
-  and your services on To watch
-- Toggles on movie/TV pages and list rows: `b` To watch, `F` Favorite,
-  `x` Watched; current state shown on the page or row
-  - TV pages: `x` the highlighted season, `X` the whole show; season
-    pages: `x` the highlighted episode, `X` the season; episode pages: `x`
-  - Updates in place from the server's answer; favoriting a show lights
-    the seasons the server marked watched
-  - Marking a To watch row watched drops it, as the server takes it off
-  - Removing a title from the list on screen drops its row once saved;
-    the highlight moves to the next row (no undo; re-add from its page)
-- Lists filter and sort like the web page: `t` cycles All / Movies / TV,
-  `o` toggles Added / Rating, `m` toggles On my services (To watch, once
-  services are chosen)
-- Keys: type to search, Tab/↓/Enter into results, Tab/Shift-Tab back to
-  the box (keeps query and selected result; Tab returns to that row),
-  Esc leaves the box, j/k or ↑/↓ move, Enter/l open, Esc/Backspace/h back,
-  `/` new search, `c` full credits, `w`/`f`/`v`
-  lists, `t`/`o` filter/sort lists and filmographies, `b`/`F`/`x`/`X` toggles, `r` reload, `s` peek, `[`/`]`
-  previous/next episode, `q` or Ctrl-C quit (Ctrl-D also quits from
-  the search box)
-- `?` opens a scrollable keyboard-help overlay from any screen (including
-  the search box); all keys are grouped by task, with inapplicable keys
-  dimmed. Esc or `?` closes it without changing the query or selection;
-  ↑/↓, Page Up/Down and Home/End scroll help on smaller terminals
-- Shows the server's degraded states: stale details (including full
-  credits), ratings, episode
-  scores and offers with their date, ratings unavailable, availability
-  unknown, and watched marks unreadable (spoilers stay hidden)
-- Lists: unreadable lists or services shown as errors (never empty),
-  titles of unknown availability, stale listings and ratings
-- Unreadable recently viewed list shown as an error, never as empty
-- Server unreachable, not found or provider errors are shown in place;
-  `r` (or Enter on a failed search or recent list) retries
-- Toggle failures (server unreachable, refused save) show in a status
-  line and change nothing; marks the server couldn't read show as
-  unreadable (`?`) and can't be toggled
-- Colors follow the `theme` setting (see [Themes](#themes))
-- Not yet: playback
-
-## Routes
-
-| HTML | JSON |
-|------|------|
-| `/?q=…` (full page, or results fragment for HTMX) | `/api/search?q=…` |
-| `/` (Recently viewed while the box is empty) | `/api/recent` |
-| `/movie/{id}`, `/tv/{id}` | `/api/movie/{id}`, `/api/tv/{id}` |
-| `/movie/{id}/credits`, `/tv/{id}/credits` | `/api/movie/{id}/credits`, `/api/tv/{id}/credits` |
-| `/tv/{id}/season/{n}` | `/api/tv/{id}/season/{n}` |
-| `/tv/{id}/season/{n}/episode/{e}` | `/api/tv/{id}/season/{n}/episode/{e}` |
-| `/person/{id}` (`?sort=rating`) | `/api/person/{id}` (`?sort=rating`) |
-| `/watchlist` (`?kind=movie\|tv`, `?sort=rating`, `?services=mine`) | `/api/watchlist` (same parameters) |
-| `/favorites` (`?kind=movie\|tv`, `?sort=rating`) | `/api/favorites` (same parameters) |
-| `/watched` (`?kind=movie\|tv`, `?source=manual\|apple_tv`, `?sort=title`) | `/api/watched` (same parameters) |
-| `/services` | `/api/services` |
-| `/playback` | `/api/playback` |
-| `/about` | |
-| | `/api/openapi.json` (this API's OpenAPI spec) |
-
-Form posts:
-
-| Route | Form |
-|-------|------|
-| `POST /movie/{id}/watchlist`, `POST /tv/{id}/watchlist` | `listed=true\|false` |
-| `POST /movie/{id}/favorite`, `POST /tv/{id}/favorite` | `listed=true\|false` |
-| `POST /movie/{id}/watched`, `POST /tv/{id}/watched` | `watched=true\|false` |
-| `POST /tv/{id}/season/{n}/watched`, `POST /tv/{id}/season/{n}/episode/{e}/watched` | `watched=true\|false` |
-| `POST /services` | one `service={provider id}` per chosen service |
-| `POST /playback/decide` | `app`, `show`, `tv_id` or `other_id`, `action=use\|ignore` |
-
-JSON writes (same rules as the forms; answer with the new state):
-
-| Route | Body | Answer |
-|-------|------|--------|
-| `PUT /api/movie/{id}/watchlist`, `PUT /api/tv/{id}/watchlist` | `{"listed": bool}` | `marks` (+ `watched` for TV) |
-| `PUT /api/movie/{id}/favorite`, `PUT /api/tv/{id}/favorite` | `{"listed": bool}` | `marks` (+ `watched` for TV) |
-| `PUT /api/movie/{id}/watched`, `PUT /api/tv/{id}/watched` | `{"watched": bool}` | `marks` (+ `watched` for TV) |
-| `PUT /api/tv/{id}/season/{n}/watched`, `PUT /api/tv/{id}/season/{n}/episode/{e}/watched` | `{"watched": bool}` | the show's watched marks |
-| `POST /api/recent` (counts a page as viewed; `GET /api/…` reads never do) | `{"kind": "movie\|tv\|person", "id": n}` | the recently viewed list |
-
-HTML and JSON both go through `Catalog` (`src/catalog.rs`) and the types in
-`src/model.rs`.
-
-### OpenAPI
-
-- `openapi.json` is generated, never edited: each JSON handler's
-  `#[utoipa::path]` both registers the route and describes it, and the
-  response types derive `ToSchema` (doc comments become descriptions)
-- Served at `/api/openapi.json`, built from the same routes at startup
-- Regenerate with `mise run openapi`
-- `mise run hooks` once per clone enables a pre-commit hook that
-  regenerates it when `src/` or `Cargo.*` changes and stops the commit if
-  it changed, so the spec is staged with the code
-- The `openapi` test fails when the committed copy is out of date, so CI
-  does too
 
 ## Develop
 
 ```sh
-mise run test               # local fake TMDB and OMDb servers; no keys needed
-mise run openapi            # regenerate openapi.json
-mise run hooks              # enable the pre-commit hook (once per clone)
-nix build .#default         # crane-built credits-web (mainProgram) and credits
-nix flake check             # tests, as CI runs them
+mise run test      # fake TMDB and OMDb; no keys needed
+mise run openapi   # regenerate openapi.json (never edit it by hand)
+mise run hooks     # pre-commit hook that keeps openapi.json in sync
+nix flake check    # what CI runs
 ```
 
-- CI (`.github/workflows/ci.yml`) runs `nix flake check` and
-  `nix build .#default`, pushing to the `johnallen3d` Cachix cache
+Rust (Axum, Askama, SQLx) with vendored HTMX; no Node build.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.
 Ratings via the [OMDb API](https://www.omdbapi.com/).
