@@ -50,6 +50,7 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
 ### Search and browsing
 
 - Search movies, TV shows and people from one box (HTMX, live results)
+- Header shows the app icon (the favicon) as the home link
 - Keyboard navigation: ↑/↓ move through results (or Recently viewed when
   the box is empty), Enter opens the highlighted item
 - Home page shows the 12 most recently viewed titles and people,

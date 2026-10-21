@@ -647,7 +647,7 @@ async fn home_page_renders_search_form_and_footer_nav() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(r#"<form class="search" action="/" method="get""#));
     assert!(body.contains("Search TMDB for a movie, TV show or person."));
-    assert!(body.contains(r#"<a class="brand" href="/">credits</a>"#));
+    assert!(body.contains(r#"<a class="brand" href="/"><img src="/static/favicon.svg" alt="credits" width="32" height="32"></a>"#));
     assert!(
         !body.contains(r#"<a href="/">Search</a>"#),
         "the logo links home"
