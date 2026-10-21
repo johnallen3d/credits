@@ -4,7 +4,11 @@ doppler = "latest"
 
 [tasks.dev]
 description = "Run the server on localhost with secrets from Doppler (credits/dev)"
-run = "doppler run --project credits --config dev -- cargo run"
+run = "doppler run --project credits --config dev -- cargo run --bin credits-web"
+
+[tasks.tui]
+description = "Run the terminal client against the server in ~/.config/credits/config.toml"
+run = "cargo run --bin credits"
 
 [tasks.test]
 description = "Run tests (no TMDB access needed)"

@@ -10,13 +10,16 @@ ratings, where to watch, and what you've watched.
 - **Every page has a JSON twin** under `/api/…` (see [Routes](#routes)),
   described by the OpenAPI 3.1 spec in [`openapi.json`](openapi.json),
   also served at `/api/openapi.json`
+- **Two binaries:** `credits-web` is the server; `credits` is a terminal
+  client for a running server (see [Terminal client](#terminal-client))
 
 ## Run
 
 ```sh
 doppler secrets set TMDB_API_TOKEN --project credits --config dev   # TMDB "API Read Access Token"
 doppler secrets set OMDB_API_KEY --project credits --config dev     # optional, enables ratings
-mise run dev                                                        # http://127.0.0.1:3000
+mise run dev                                                        # credits-web on http://127.0.0.1:3000
+mise run tui                                                        # credits, the terminal client
 ```
 
 - Refuses to start without a real TMDB token
@@ -33,6 +36,13 @@ mise run dev                                                        # http://127
 | `CREDITS_REGION` | `US` | Two-letter country for where to watch and My services |
 | `HA_URL`, `HA_TOKEN` | unset | Home Assistant URL and long-lived token; enables Seen on Apple TV |
 | `CREDITS_HA_PLAYERS` | `media_player.living_room_appletv` | Comma-separated `media_player` entities to follow |
+
+These configure `credits-web`. The terminal client reads only a TOML file:
+
+```toml
+# ~/.config/credits/config.toml ($XDG_CONFIG_HOME/credits, or $CREDITS_CONFIG)
+url = "http://omarchy:3000"
+```
 
 ## Features
 
@@ -154,6 +164,23 @@ out to Home Assistant.
   `unavailable`) and `fetched_at` on `metadata`, `ratings`,
   `where_to_watch` and `/api/services`
 
+### Terminal client
+
+- `credits` browses a running server over its `/api/…` JSON; no database,
+  TMDB token or Doppler needed
+- Live search (debounced) for movies, TV shows and people
+- Movie and TV pages: facts, ratings, overview, where to watch (your
+  services starred), key crew and top cast
+- Person pages: born/died, first paragraph of the biography, known for,
+  filmography by department
+- Keys: type to search, ↓/Enter into results, j/k or ↑/↓ move, Enter/l
+  open, Esc/Backspace/h back, `/` new search, `r` reload, `q` or Ctrl-C quit
+- Shows the server's degraded states: stale details, ratings and offers
+  with their date, ratings unavailable, availability unknown
+- Server unreachable, not found or provider errors are shown in place;
+  `r` (or Enter on a failed search) retries
+- Not yet: seasons and episodes, lists and toggles, playback
+
 ## Routes
 
 | HTML | JSON |
@@ -204,7 +231,7 @@ HTML and JSON both go through `Catalog` (`src/catalog.rs`) and the types in
 mise run test               # local fake TMDB and OMDb servers; no keys needed
 mise run openapi            # regenerate openapi.json
 mise run hooks              # enable the pre-commit hook (once per clone)
-nix build .#default         # crane-built binary
+nix build .#default         # crane-built credits-web (mainProgram) and credits
 nix flake check             # tests, as CI runs them
 ```
 

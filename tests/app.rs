@@ -8,8 +8,10 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use credits::{Catalog, Config, app, cache::IN_MEMORY};
+use credits::{Catalog, Config, app, cache::IN_MEMORY, tui};
+use crossterm::event::{KeyCode, KeyEvent};
 use http_body_util::BodyExt;
+use ratatui::{Terminal, backend::TestBackend};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -3361,4 +3363,166 @@ async fn api_serves_its_openapi_spec() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json, serde_json::to_value(credits::web::openapi()).unwrap());
     assert!(json["paths"]["/api/movie/{id}"]["get"].is_object());
+}
+
+/// Serves the app on a loopback port, as the terminal client sees it.
+async fn serve(app: Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}")
+}
+
+async fn fulfil(client: &tui::Client, app: &mut tui::App, request: tui::app::Request) {
+    use tui::app::{Request, Response};
+    let (seq, response) = match request {
+        Request::Search { seq, query } => (seq, Response::Search(client.search(&query).await)),
+        Request::Title { seq, kind, id } => (
+            seq,
+            Response::Title(client.title(kind, id).await.map(Box::new)),
+        ),
+        Request::Person { seq, id } => {
+            (seq, Response::Person(client.person(id).await.map(Box::new)))
+        }
+    };
+    app.respond(seq, response);
+}
+
+fn press(app: &mut tui::App, code: KeyCode) -> Vec<tui::app::Request> {
+    app.key(KeyEvent::from(code), std::time::Instant::now())
+}
+
+fn screen(app: &mut tui::App) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+    terminal.draw(|frame| tui::ui::draw(frame, app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn terminal_client_searches_and_opens_titles_and_people_over_http() {
+    let base = serve(test_app().await).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+
+    for c in "matrix".chars() {
+        assert!(
+            press(&mut app, KeyCode::Char(c)).is_empty(),
+            "typing is debounced"
+        );
+    }
+    let search = app
+        .tick(std::time::Instant::now() + tui::app::SEARCH_DEBOUNCE)
+        .expect("search goes out after the pause");
+    fulfil(&client, &mut app, search).await;
+    let results = screen(&mut app);
+    assert!(results.contains("Movie  The Matrix (1999)"), "{results}");
+    assert!(
+        results.contains("Person Keanu Reeves  Acting · The Matrix"),
+        "{results}"
+    );
+    assert!(results.contains("TV     Breaking Bad (2008)"), "{results}");
+
+    // Enter opens the first result: the movie, with its ratings.
+    let open = press(&mut app, KeyCode::Enter);
+    assert_eq!(open.len(), 1);
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let movie = screen(&mut app);
+    assert!(movie.contains("The Matrix"), "{movie}");
+    assert!(movie.contains("Search › The Matrix"), "{movie}");
+    assert!(movie.contains("Ratings"), "{movie}");
+
+    // Back to the results, down to Keanu Reeves, and open his page.
+    press(&mut app, KeyCode::Esc);
+    press(&mut app, KeyCode::Char('j'));
+    let open = press(&mut app, KeyCode::Char('l'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let person = screen(&mut app);
+    assert!(person.contains("Keanu Reeves"), "{person}");
+    assert!(
+        person.contains("Born Sep 2, 1964 · Beirut, Lebanon"),
+        "{person}"
+    );
+    assert!(person.contains("Known for"), "{person}");
+    assert!(person.contains("Neo"), "{person}");
+    assert!(
+        !person.contains("He was born in Beirut"),
+        "only the first paragraph: {person}"
+    );
+
+    // A filmography entry links back to its title.
+    let open = press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        open.as_slice(),
+        [tui::app::Request::Title {
+            kind: tui::api::Kind::Movie,
+            id: 603,
+            ..
+        }]
+    ));
+}
+
+#[tokio::test]
+async fn terminal_client_shows_degraded_and_failed_states() {
+    // No OMDb key: ratings are unavailable but the page still renders.
+    let base = serve(build(TOKEN, None, Duration::from_secs(3600)).await.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    let open = app.open(tui::app::Target::Title(tui::api::Kind::Movie, 603));
+    fulfil(&client, &mut app, open).await;
+    let movie = screen(&mut app);
+    assert!(
+        movie.contains("Ratings aren't configured on the server."),
+        "{movie}"
+    );
+
+    let open = app.open(tui::app::Target::Person(424242));
+    fulfil(&client, &mut app, open).await;
+    let missing = screen(&mut app);
+    assert!(missing.contains("Not found on TMDB."), "{missing}");
+
+    // The server's own explanation of a provider failure comes through.
+    let err = client.search("boom").await.unwrap_err();
+    assert!(
+        matches!(err, tui::client::ClientError::Server(_)),
+        "{err:?}"
+    );
+
+    let offline = tui::Client::new("http://127.0.0.1:9");
+    let err = offline.search("matrix").await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "can't reach the credits server at http://127.0.0.1:9"
+    );
+}
+
+#[tokio::test]
+async fn terminal_client_retries_a_failed_search_with_enter() {
+    let mut app = tui::App::new("http://127.0.0.1:9");
+    for c in "matrix".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    let search = app
+        .tick(std::time::Instant::now() + tui::app::SEARCH_DEBOUNCE)
+        .unwrap();
+    fulfil(&tui::Client::new("http://127.0.0.1:9"), &mut app, search).await;
+    let failed = screen(&mut app);
+    assert!(
+        failed.contains("Can't reach the credits server at http://127.0.0.1:9"),
+        "{failed}"
+    );
+    assert!(failed.contains("Press Enter to try again."), "{failed}");
+
+    // Still typing in the box: Enter asks again rather than typing or opening.
+    let retry = press(&mut app, KeyCode::Enter);
+    assert!(
+        matches!(retry.as_slice(), [tui::app::Request::Search { query, .. }] if query == "matrix")
+    );
 }

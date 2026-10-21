@@ -8,6 +8,7 @@ mod ratings;
 pub mod recent;
 mod services;
 mod tmdb;
+pub mod tui;
 mod watched;
 mod watchlist;
 pub mod web;
