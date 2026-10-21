@@ -13,7 +13,7 @@
   <p class="hint">Nothing saved yet. Use the <svg class="bookmark inline" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg> To watch button on a movie or TV show, or beside any title in a person's filmography, and it will be listed here.</p>
   {% endif %}
   {% else %}
-  <div class="controls">
+  <div class="controls" hx-boost="true" hx-target="main" hx-select="main" hx-swap="outerHTML show:none" hx-sync="closest .controls:replace">
   <nav class="sort" aria-label="Sort titles">
     <span class="muted">Sort by</span>
     <span class="segments"><a href="{{ self.sort_href(WatchlistSort::Added) }}"{% if !w.sort.is_rating() %} aria-current="true"{% endif %}>Added</a><a href="{{ self.sort_href(WatchlistSort::Rating) }}"{% if w.sort.is_rating() %} aria-current="true"{% endif %}>Rating</a></span>
@@ -24,7 +24,7 @@
   </nav>
   {% if let Some(svc) = w.services %}{% if svc.state.is_chosen() %}
   <nav class="sort" aria-label="Filter by service">
-    <span class="sort-head"><span class="muted">Available</span> <a class="services-edit" href="/services">Edit services</a></span>
+    <span class="sort-head"><span class="muted">Available</span> <a class="services-edit" href="/services" hx-boost="false">Edit services</a></span>
     <span class="segments"><a href="{{ self.services_href(ServicesFilter::Any) }}"{% if !services.is_mine() %} aria-current="true"{% endif %}>Anywhere <span class="count">{{ self.services_count(ServicesFilter::Any) }}</span></a><a href="{{ self.services_href(ServicesFilter::Mine) }}"{% if services.is_mine() %} aria-current="true"{% endif %}>On my services <span class="count">{{ self.services_count(ServicesFilter::Mine) }}</span></a></span>
   </nav>
   {% endif %}{% endif %}

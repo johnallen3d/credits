@@ -6,7 +6,7 @@
   {% if w.titles.is_empty() %}
   <p class="hint">Nothing watched yet. Mark a movie, show, season or episode watched from its page, favorite a show, or let <a href="/playback">Seen on Apple TV</a> mark what plays, and it will be listed here.</p>
   {% else %}
-  <div class="controls">
+  <div class="controls" hx-boost="true" hx-target="main" hx-select="main" hx-swap="outerHTML show:none" hx-sync="closest .controls:replace">
   <nav class="sort" aria-label="Sort titles">
     <span class="muted">Sort by</span>
     <span class="segments"><a href="{{ self.sort_href(WatchedSort::Recent) }}"{% if !w.sort.is_title() %} aria-current="true"{% endif %}>Last watched</a><a href="{{ self.sort_href(WatchedSort::Title) }}"{% if w.sort.is_title() %} aria-current="true"{% endif %}>Title</a></span>

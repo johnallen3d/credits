@@ -54,7 +54,7 @@
     {% if p.filmography.is_empty() %}
     <p class="muted">TMDB has no credits listed for this person.</p>
     {% else %}
-    <div class="controls">
+    <div class="controls" hx-boost="true" hx-target="main" hx-select="main" hx-swap="outerHTML show:none" hx-sync="closest .controls:replace">
     <nav class="sort" aria-label="Sort credits">
       <span class="muted">Sort by</span>
       <span class="segments"><a href="{{ self.sort_href(FilmographySort::Date) }}"{% if !p.sort.is_rating() %} aria-current="true"{% endif %}>Date</a><a href="{{ self.sort_href(FilmographySort::Rating) }}"{% if p.sort.is_rating() %} aria-current="true"{% endif %}>Rating</a></span>
