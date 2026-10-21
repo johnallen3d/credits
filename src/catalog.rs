@@ -238,15 +238,49 @@ impl Catalog {
     }
 
     /// Marks a whole TV show, a season or an episode as watched or not.
+    /// Marking rolls up to whatever that completes.
     pub async fn set_watched(
         &self,
         tv_id: u64,
         target: WatchTarget,
         watched: bool,
     ) -> Result<(), sqlx::Error> {
-        self.watched
-            .set(tv_id, target, watched, Timestamp::now())
-            .await
+        let at = Timestamp::now();
+        self.watched.set(tv_id, target, watched, at).await?;
+        if watched && target != WatchTarget::Show {
+            self.roll_up_watched(tv_id, at).await;
+        }
+        Ok(())
+    }
+
+    /// Marks each season whose episodes are all marked, then the show once
+    /// it has ended and every regular season is marked. Failures are only
+    /// logged: the mark that prompted this is already saved.
+    async fn roll_up_watched(&self, tv_id: u64, at: Timestamp) {
+        let Some(watched) = self.read_watched(tv_id).await else {
+            return;
+        };
+        if watched.show {
+            return;
+        }
+        let t = match self.tv_raw(tv_id).await {
+            Ok((t, _)) => t,
+            Err(e) => {
+                tracing::warn!(error = %e, tv_id, "reading seasons to roll up watched marks failed");
+                return;
+            }
+        };
+        let (seasons, show) = completed_marks(&t, &watched);
+        let targets = seasons
+            .into_iter()
+            .map(WatchTarget::Season)
+            .chain(show.then_some(WatchTarget::Show));
+        for target in targets {
+            if let Err(e) = self.watched.set(tv_id, target, true, at).await {
+                tracing::warn!(error = %e, tv_id, ?target, "rolling up watched marks failed");
+                return;
+            }
+        }
     }
 
     /// Episodes and movies seen playing on the Apple TVs, and shows and
@@ -321,9 +355,12 @@ impl Catalog {
         season: u32,
         episode: u32,
     ) -> Result<(), sqlx::Error> {
+        let at = Timestamp::now();
         self.watched
-            .mark_episode(tv_id, season, episode, "apple_tv", Timestamp::now())
-            .await
+            .mark_episode(tv_id, season, episode, "apple_tv", at)
+            .await?;
+        self.roll_up_watched(tv_id, at).await;
+        Ok(())
     }
 
     pub(crate) async fn mark_movie_from_apple_tv(&self, movie_id: u64) -> Result<(), sqlx::Error> {
@@ -1780,6 +1817,35 @@ fn current_seasons(seasons: &[tmdb::SeasonSummary], today: jiff::civil::Date) ->
         .collect()
 }
 
+/// Seasons not yet marked whose every TMDB episode is, and whether the show
+/// is then complete: ended or canceled, with every regular season marked.
+/// Specials never hold the show back, and a returning show is never marked
+/// whole so its next season stays unwatched.
+fn completed_marks(t: &tmdb::Tv, watched: &Watched) -> (Vec<u32>, bool) {
+    let seasons: Vec<u32> = t
+        .seasons
+        .iter()
+        .filter(|s| !watched.season(s.season_number))
+        .filter(|s| {
+            s.episode_count.is_some_and(|count| {
+                count > 0 && (1..=count).all(|e| watched.episode(s.season_number, e))
+            })
+        })
+        .map(|s| s.season_number)
+        .collect();
+    let ended = matches!(t.status.as_deref(), Some("Ended" | "Canceled"));
+    let mut regular = t
+        .seasons
+        .iter()
+        .map(|s| s.season_number)
+        .filter(|&n| n > 0)
+        .peekable();
+    let show = ended
+        && regular.peek().is_some()
+        && regular.all(|n| watched.season(n) || seasons.contains(&n));
+    (seasons, show)
+}
+
 fn season_name(number: u32) -> String {
     if number == 0 {
         "Specials".to_owned()
@@ -1984,6 +2050,60 @@ mod tests {
         let today = "2026-01-01".parse().unwrap();
         assert_eq!(current_seasons(&seasons, today), [0, 1, 2, 3, 8]);
         assert!(current_seasons(&[], today).is_empty());
+    }
+
+    #[test]
+    fn watched_marks_roll_up_to_complete_seasons_and_ended_shows() {
+        let tv = |status: &str| -> tmdb::Tv {
+            serde_json::from_value(serde_json::json!({
+                "id": 1, "name": "Show", "status": status,
+                "seasons": [
+                    {"season_number": 0, "episode_count": 3},
+                    {"season_number": 1, "episode_count": 2},
+                    {"season_number": 2, "episode_count": 2},
+                    {"season_number": 3, "episode_count": null}
+                ]
+            }))
+            .unwrap()
+        };
+        let watched = |seasons: &[u32], episodes: &[(u32, u32)]| Watched {
+            seasons: seasons.to_vec(),
+            episodes: episodes.to_vec(),
+            ..Watched::default()
+        };
+
+        let partway = watched(&[], &[(1, 1), (2, 1), (2, 2)]);
+        assert_eq!(completed_marks(&tv("Ended"), &partway), (vec![2], false));
+        let marked_out_of_order = watched(&[1], &[(2, 2), (2, 1), (2, 3)]);
+        assert_eq!(
+            completed_marks(&tv("Ended"), &marked_out_of_order),
+            (vec![2], false),
+            "a season without an episode count never completes"
+        );
+        let all = watched(&[1, 3], &[(2, 1), (2, 2)]);
+        assert_eq!(completed_marks(&tv("Ended"), &all), (vec![2], true));
+        assert_eq!(completed_marks(&tv("Canceled"), &all), (vec![2], true));
+        assert_eq!(
+            completed_marks(&tv("Returning Series"), &all),
+            (vec![2], false),
+            "a returning show's next season stays unwatched"
+        );
+        assert_eq!(
+            completed_marks(&tv("Ended"), &watched(&[1, 2, 3], &[])),
+            (vec![], true),
+            "specials are optional"
+        );
+        let mut whole = watched(&[], &[]);
+        whole.show = true;
+        assert_eq!(completed_marks(&tv("Ended"), &whole).0, Vec::<u32>::new());
+        let no_regular_seasons: tmdb::Tv = serde_json::from_value(serde_json::json!({
+            "id": 1, "name": "Show", "status": "Ended", "seasons": []
+        }))
+        .unwrap();
+        assert_eq!(
+            completed_marks(&no_regular_seasons, &watched(&[], &[])),
+            (vec![], false)
+        );
     }
 
     #[test]

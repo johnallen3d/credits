@@ -133,6 +133,10 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
 - Mark a movie, show, season or episode watched
 - Episode summaries and IMDb episode scores stay blurred until that
   episode, its season or the show is watched; select one to peek
+- Marks roll up, by hand or from the Apple TV: a season's last episode
+  marks the season, and an ended or canceled show's last regular season
+  marks the show (specials optional); returning shows never roll up
+  to the whole show, so new seasons stay unwatched
 - A watched movie, or a show marked watched as a whole, tints the whole
   page in the watched color with a stripe pinned to the top while
   scrolling; partly watched shows don't

@@ -1576,6 +1576,56 @@ async fn episode_spoilers_are_blurred_until_watched() {
 }
 
 #[tokio::test]
+async fn marking_the_last_episode_or_season_rolls_up_to_the_show() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    // Breaking Bad has ended: specials (9), season 1 (7) and season 2 (13).
+    for e in 1..=6 {
+        post_form(
+            t.app(),
+            &format!("/tv/1396/season/1/episode/{e}/watched"),
+            "watched=true",
+        )
+        .await;
+    }
+    let watched = t.catalog.watched(1396).await;
+    assert!(watched.seasons.is_empty(), "one episode short");
+
+    let (_, json) = put_json(
+        t.app(),
+        "/api/tv/1396/season/1/episode/7/watched",
+        json!({ "watched": true }),
+    )
+    .await;
+    assert_eq!(
+        json["seasons"],
+        json!([1]),
+        "the last episode marks its season"
+    );
+    assert_eq!(json["show"], false);
+
+    post_form(t.app(), "/tv/1396/season/2/watched", "watched=true").await;
+    let watched = t.catalog.watched(1396).await;
+    assert!(watched.show, "the last regular season marks the show");
+    assert_eq!(watched.seasons, [1, 2], "specials aren't needed");
+    let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
+    assert!(body.contains(r#"name="watched" value="false""#));
+
+    // Unwatching the show sticks until another mark completes it again,
+    // from cached seasons while TMDB is down.
+    post_form(t.app(), "/tv/1396/watched", "watched=false").await;
+    assert!(!t.catalog.watched(1396).await.show);
+    t.tmdb.set_down(true);
+    post_form(t.app(), "/tv/1396/season/2/watched", "watched=true").await;
+    assert!(t.catalog.watched(1396).await.show);
+
+    // A show TMDB can't describe still saves the mark, without rolling up.
+    let (status, _) = post_form(t.app(), "/tv/500/season/1/watched", "watched=true").await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let watched = t.catalog.watched(500).await;
+    assert_eq!((watched.show, watched.seasons), (false, vec![1]));
+}
+
+#[tokio::test]
 async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     let (status, _, body) = get_page(test_app().await, "/person/6384", false).await;
     assert_eq!(status, StatusCode::OK);
@@ -4909,16 +4959,17 @@ async fn watched_page_lists_every_mark_and_filters_by_kind_and_source() {
     let (_, json) = get_json(t.app(), "/api/watched").await;
     assert_eq!(json["titles"], json!([]));
 
-    // By hand: a movie and two seasons; from the Apple TV: a movie and an
+    // By hand: a movie and two seasons (the second stored directly, so it
+    // doesn't roll up to the whole show); from the Apple TV: a movie and an
     // episode; and a show TMDB fails on.
     post_form(t.app(), "/movie/603/watched", "watched=true").await;
     post_form(t.app(), "/tv/1396/season/1/watched", "watched=true").await;
-    post_form(t.app(), "/tv/1396/season/2/watched", "watched=true").await;
     let pool = credits::cache::ProviderCache::open(database)
         .await
         .unwrap()
         .pool();
     for statement in [
+        "INSERT INTO watched_seasons (tv_id, season, watched_at) VALUES (1396, 2, 1)",
         "INSERT INTO watched_movies (movie_id, watched_at, source) VALUES (105, 4000000000, 'apple_tv')",
         "INSERT INTO watched_episodes (tv_id, season, episode, watched_at, source)
          VALUES (1396, 3, 1, 3000000000, 'apple_tv')",
