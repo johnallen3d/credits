@@ -10,10 +10,10 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::api::{
-    Credit, Kind, Metadata, Person, PersonCredit, Ratings, SearchHit, State, Title,
-    UnavailableReason, WhereToWatch,
+    Credit, Episode, EpisodeRatings, KeyCrew, Kind, Metadata, Person, PersonCredit, Rating,
+    Ratings, SearchHit, Season, State, Title, UnavailableReason, Watched, WhereToWatch,
 };
-use super::app::{App, Load, Screen, Target};
+use super::app::{App, Content, Load, Screen, Target};
 
 const ACCENT: Color = Color::Cyan;
 const WARN: Color = Color::Yellow;
@@ -25,6 +25,9 @@ const LINK_WIDTH: u16 = 80;
 const BIO_LINES: usize = 6;
 const NAME_COLUMN: usize = 28;
 const TITLE_COLUMN: usize = 40;
+const EPISODE_COLUMN: usize = 36;
+/// Stands in for an unwatched episode's score.
+const HIDDEN_SCORE: &str = "▒▒▒▒▒▒";
 
 #[derive(Default)]
 pub struct Page {
@@ -117,8 +120,15 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let mut crumbs = vec!["Search".to_owned()];
     crumbs.extend(app.stack.iter().map(screen_name));
     trail.push(Span::raw(" "));
-    trail.push(Span::styled(crumbs.join(" › "), DIM));
     let server = Line::styled(format!("{} ", app.server), DIM).right_aligned();
+    // Deep trails lose their oldest crumbs rather than run into the server.
+    let room = (area.width as usize).saturating_sub(trail[0].width() + 1 + server.width() + 1);
+    let mut text = crumbs.join(" › ");
+    while text.width() > room && crumbs.len() > 1 {
+        crumbs.remove(0);
+        text = format!("… › {}", crumbs.join(" › "));
+    }
+    trail.push(Span::styled(pad(&text, room.min(text.width())), DIM));
     frame.render_widget(Line::from(trail), area);
     frame.render_widget(server, area);
 }
@@ -184,19 +194,20 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let hints = if app.editing {
-        "type to search · ↓/Enter results · Ctrl-U clear · Ctrl-C quit"
-    } else {
-        "j/k move · Enter open · Esc back · / search · r reload · q quit"
+    let hints = match app.stack.last().map(|s| s.target) {
+        _ if app.editing => "type to search · ↓/Enter results · Ctrl-U clear · Ctrl-C quit",
+        Some(Target::Season(..)) => {
+            "j/k move · Enter open · s peek · Esc back · / search · r reload · q quit"
+        }
+        Some(Target::Episode(..)) => {
+            "j/k move · Enter open · s peek · [/] prev/next · Esc back · / search · r reload · q quit"
+        }
+        _ => "j/k move · Enter open · Esc back · / search · r reload · q quit",
     };
     frame.render_widget(Line::styled(format!(" {hints}"), DIM), area);
     let busy = match app.stack.last() {
         None if app.search.searching => "Searching… ",
-        Some(Screen::Title {
-            load: Load::Loading,
-            ..
-        })
-        | Some(Screen::Person {
+        Some(Screen {
             load: Load::Loading,
             ..
         }) => "Loading… ",
@@ -238,47 +249,29 @@ fn mark(line: Line<'static>, active: bool, width: u16) -> Line<'static> {
 }
 
 fn screen_name(screen: &Screen) -> String {
-    match screen {
-        Screen::Title {
-            load: Load::Ready(t),
-            ..
-        } => t.title.clone(),
-        Screen::Person {
-            load: Load::Ready(p),
-            ..
-        } => p.name.clone(),
-        Screen::Title {
-            target: (kind, _), ..
-        } => kind.label().to_owned(),
-        Screen::Person { .. } => "Person".to_owned(),
+    match (&screen.load, screen.target) {
+        (Load::Ready(Content::Title(t)), _) => t.title.clone(),
+        (Load::Ready(Content::Person(p)), _) => p.name.clone(),
+        (Load::Ready(Content::Season(s)), _) => s.name.clone(),
+        (Load::Ready(Content::Episode(e)), _) => format!("{}. {}", e.number, e.title),
+        (_, Target::Title(kind, _)) => kind.label().to_owned(),
+        (_, Target::Person(_)) => "Person".to_owned(),
+        (_, Target::Season(_, n)) => season_label(n),
+        (_, Target::Episode(_, _, n)) => format!("Episode {n}"),
     }
 }
 
 fn page(app: &App, width: u16) -> Page {
-    match app.stack.last() {
-        None => search_page(app),
-        Some(screen) => {
-            let name = screen_name(screen);
-            match screen {
-                Screen::Title {
-                    load: Load::Ready(t),
-                    ..
-                } => title_page(t, width),
-                Screen::Person {
-                    load: Load::Ready(p),
-                    ..
-                } => person_page(p, width),
-                Screen::Title { load, .. } => status_page(name, load_message(load), width),
-                Screen::Person { load, .. } => status_page(name, load_message(load), width),
-            }
-        }
-    }
-}
-
-fn load_message<T>(load: &Load<T>) -> Option<&str> {
-    match load {
-        Load::Failed(message) => Some(message),
-        _ => None,
+    let Some(screen) = app.stack.last() else {
+        return search_page(app);
+    };
+    match &screen.load {
+        Load::Ready(Content::Title(t)) => title_page(t, width),
+        Load::Ready(Content::Person(p)) => person_page(p, width),
+        Load::Ready(Content::Season(s)) => season_page(s, screen, width),
+        Load::Ready(Content::Episode(e)) => episode_page(e, screen, width),
+        Load::Failed(message) => status_page(screen_name(screen), Some(message), width),
+        Load::Loading => status_page(screen_name(screen), None, width),
     }
 }
 
@@ -391,27 +384,10 @@ fn title_page(t: &Title, width: u16) -> Page {
         page.para(overview, width, None);
     }
     where_to_watch(&mut page, &t.where_to_watch, width);
-
-    let crew: Vec<(&str, &Credit)> = t
-        .key_crew
-        .iter()
-        .flat_map(|k| k.people.iter().map(|p| (k.role.label(), p)))
-        .collect();
-    if !crew.is_empty() {
-        page.heading("Key crew");
-        let mut previous = "";
-        for (role, person) in crew {
-            let label = if role == previous { "" } else { role };
-            previous = role;
-            page.link(
-                Line::from(vec![
-                    Span::styled(format!("  {label:<13}"), DIM),
-                    Span::raw(person.name.clone()),
-                ]),
-                Target::Person(person.person_id),
-            );
-        }
+    if t.kind == Kind::Tv {
+        season_rows(&mut page, t, width);
     }
+    key_crew(&mut page, &t.key_crew);
 
     if !t.cast.is_empty() {
         let count = if t.cast_total > t.cast.len() {
@@ -420,22 +396,313 @@ fn title_page(t: &Title, width: u16) -> Page {
             "Cast".to_owned()
         };
         page.heading(count);
-        let column = column_width(t.cast.iter().map(|c| c.name.as_str()), NAME_COLUMN);
-        for credit in &t.cast {
-            let mut role = credit.role.clone().unwrap_or_default();
-            if let Some(n) = credit.episode_count {
-                role = join_dot(&role, &plural(n, "ep"));
-            }
-            page.link(
-                Line::from(vec![
-                    Span::raw(format!("  {}  ", pad(&credit.name, column))),
-                    Span::styled(role, DIM),
-                ]),
-                Target::Person(credit.person_id),
-            );
-        }
+        cast_rows(&mut page, &t.cast);
     }
     page
+}
+
+fn season_rows(page: &mut Page, t: &Title, width: u16) {
+    if t.season_list.is_empty() {
+        return;
+    }
+    page.heading("Seasons");
+    let watched = t
+        .watched
+        .as_ref()
+        .filter(|_| Watched::readable(t.watched.as_ref()));
+    if watched.is_none() {
+        page.warn("  Watched marks couldn't be read.", width);
+    }
+    let column = column_width(t.season_list.iter().map(|s| s.name.as_str()), NAME_COLUMN);
+    for s in &t.season_list {
+        let episodes = s
+            .episode_count
+            .map(|n| plural(n, "episode"))
+            .unwrap_or_default();
+        let mut spans = vec![
+            Span::styled(format!("  {:>2}  ", s.number), DIM),
+            Span::raw(format!("{}  ", pad(&s.name, column))),
+            Span::styled(
+                format!("{episodes:<13}{:<6}", s.year.as_deref().unwrap_or("")),
+                DIM,
+            ),
+        ];
+        if watched.is_some_and(|w| w.season(s.number)) {
+            spans.push(Span::styled("✓ Watched", Style::new().fg(MINE)));
+        }
+        page.link(Line::from(spans), Target::Season(t.id, s.number));
+    }
+}
+
+fn season_page(s: &Season, screen: &Screen, width: u16) -> Page {
+    let mut page = Page::new("Season");
+    page.line(Line::raw(format!("{} · {}", s.show_title, s.name)).bold());
+    let watched = s
+        .watched
+        .as_ref()
+        .filter(|_| Watched::readable(s.watched.as_ref()));
+    let mut facts = vec!["TV season".to_owned()];
+    facts.extend(s.air_date.as_deref().map(day));
+    facts.push(plural(s.episodes.len() as u32, "episode"));
+    if watched.is_some_and(|w| w.season(s.number)) {
+        facts.push("✓ Watched".to_owned());
+    }
+    page.line(Line::styled(facts.join(" · "), DIM));
+    stale_notice(&mut page, &s.metadata, width);
+    if let Some(overview) = s.overview.as_ref().filter(|o| !o.is_empty()) {
+        page.blank();
+        page.para(overview, width, None);
+    }
+
+    page.heading("Episodes");
+    if s.episodes.is_empty() {
+        page.line(Line::styled(
+            "  TMDB has no episodes listed for this season yet.",
+            DIM,
+        ));
+        return page;
+    }
+    if watched.is_none() {
+        page.warn(
+            "  Watched marks couldn't be read, so every episode's score stays hidden.",
+            width,
+        );
+    } else if s
+        .episodes
+        .iter()
+        .any(|e| e.rating.is_some() && !watched_episode(watched, s.number, e.number))
+    {
+        page.line(Line::styled(
+            "  Scores of unwatched episodes are hidden; s peeks the highlighted one.",
+            DIM,
+        ));
+    }
+    episode_ratings_notes(&mut page, &s.episode_ratings, "episode ratings", width);
+
+    let column = column_width(s.episodes.iter().map(|e| e.title.as_str()), EPISODE_COLUMN);
+    for e in &s.episodes {
+        let seen = watched_episode(watched, s.number, e.number);
+        let shown = seen || screen.peeking(s.number, e.number);
+        let aired = e
+            .air_date
+            .as_deref()
+            .map(day)
+            .unwrap_or_else(|| "Not announced".to_owned());
+        let minutes = e.runtime_minutes.map(runtime).unwrap_or_default();
+        let mut spans = vec![
+            Span::styled(format!("  {:>2}. ", e.number), DIM),
+            Span::raw(format!("{}  ", pad(&e.title, column))),
+            Span::styled(format!("{aired:<14}{minutes:<7} "), DIM),
+        ];
+        spans.push(match &e.rating {
+            Some(r) if shown => Span::raw(format!("{:<12}", score(r))),
+            Some(_) => Span::styled(format!("{:<12}", format!("IMDb {HIDDEN_SCORE}")), DIM),
+            None => Span::raw(" ".repeat(12)),
+        });
+        if seen {
+            let mark = if watched.is_some_and(|w| w.from_apple_tv(s.number, e.number)) {
+                "✓ Apple TV"
+            } else {
+                "✓"
+            };
+            spans.push(Span::styled(mark, Style::new().fg(MINE)));
+        } else if shown {
+            spans.push(Span::styled("peeking", Style::new().fg(WARN)));
+        }
+        page.link(
+            Line::from(spans),
+            Target::Episode(s.show_id, s.number, e.number),
+        );
+    }
+    page
+}
+
+fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
+    let mut page = Page::new("Episode");
+    page.line(Line::raw(e.title.clone()).bold());
+    page.line(Line::styled(
+        format!(
+            "{} · {} · Episode {}",
+            e.show_title, e.season_name, e.number
+        ),
+        DIM,
+    ));
+    let watched = e
+        .watched
+        .as_ref()
+        .filter(|_| Watched::readable(e.watched.as_ref()));
+    let seen = watched_episode(watched, e.season_number, e.number);
+    let shown = seen || screen.peeking(e.season_number, e.number);
+    let mut facts = vec![
+        e.air_date
+            .as_deref()
+            .map(day)
+            .unwrap_or_else(|| "Air date not announced".to_owned()),
+    ];
+    if let Some(minutes) = e.runtime_minutes.filter(|&m| m > 0) {
+        facts.push(runtime(minutes));
+    }
+    if let Some(w) = watched.filter(|_| seen) {
+        facts.push(if w.from_apple_tv(e.season_number, e.number) {
+            "✓ Watched on Apple TV".to_owned()
+        } else if w.season(e.season_number) {
+            "✓ Watched with the season".to_owned()
+        } else {
+            "✓ Watched".to_owned()
+        });
+    }
+    page.line(Line::styled(facts.join(" · "), DIM));
+    let mut neighbours = Vec::new();
+    if let Some(previous) = e.previous {
+        neighbours.push(format!("[ Episode {previous}"));
+    }
+    if let Some(next) = e.next {
+        neighbours.push(format!("] Episode {next}"));
+    }
+    if !neighbours.is_empty() {
+        page.line(Line::styled(neighbours.join("   "), DIM));
+    }
+    stale_notice(&mut page, &e.metadata, width);
+    if watched.is_none() {
+        page.blank();
+        page.warn(
+            "Watched marks couldn't be read, so this episode's summary and score stay hidden.",
+            width,
+        );
+    }
+
+    page.heading("Rating");
+    if e.episode_ratings.state == State::Unavailable {
+        page.line(Line::styled(
+            format!("  {}", episode_ratings_message(&e.episode_ratings)),
+            DIM,
+        ));
+    } else {
+        match &e.rating {
+            Some(r) if shown => page.line(Line::raw(format!("  {}", score(r))).bold()),
+            Some(_) => page.line(Line::styled(
+                format!("  IMDb {HIDDEN_SCORE}  hidden until watched; s peeks"),
+                DIM,
+            )),
+            None => page.line(Line::styled("  No IMDb score", DIM)),
+        }
+        episode_ratings_notes(&mut page, &e.episode_ratings, "ratings", width);
+    }
+
+    if let Some(overview) = e.overview.as_ref().filter(|o| !o.is_empty()) {
+        page.blank();
+        if shown {
+            page.para(overview, width, None);
+        } else {
+            page.line(Line::styled(
+                "Summary hidden until you watch this episode; s peeks.",
+                DIM,
+            ));
+        }
+    }
+
+    key_crew(&mut page, &e.key_crew);
+    page.heading("Guest stars");
+    if e.guest_stars.is_empty() {
+        page.line(Line::styled(
+            "  TMDB lists no guest stars for this episode.",
+            DIM,
+        ));
+    }
+    cast_rows(&mut page, &e.guest_stars);
+    page.heading("Series regulars");
+    if e.cast.is_empty() {
+        page.line(Line::styled(
+            "  TMDB lists no series regulars for this episode.",
+            DIM,
+        ));
+    }
+    cast_rows(&mut page, &e.cast);
+    page
+}
+
+fn watched_episode(watched: Option<&Watched>, season: u32, number: u32) -> bool {
+    watched.is_some_and(|w| w.episode(season, number))
+}
+
+/// An episode's IMDb score, like `IMDb 9.0/10`.
+fn score(r: &Rating) -> String {
+    format!("{} {}", r.source.label(), r.display())
+}
+
+fn episode_ratings_message(r: &EpisodeRatings) -> &'static str {
+    match r.unavailable_reason {
+        Some(UnavailableReason::NotConfigured) => "Ratings aren't configured on the server.",
+        Some(UnavailableReason::NoImdbId) => "No IMDb entry is linked to this show.",
+        Some(UnavailableReason::ProviderError) | None => {
+            "Episode ratings couldn't be loaded right now."
+        }
+    }
+}
+
+/// Says why scores are missing or old, if they are.
+fn episode_ratings_notes(page: &mut Page, r: &EpisodeRatings, what: &str, width: u16) {
+    match r.state {
+        State::Unavailable => page.line(Line::styled(
+            format!("  {}", episode_ratings_message(r)),
+            DIM,
+        )),
+        State::Stale => {
+            let day = fetched_day(&r.fetched_at)
+                .map(|d| format!("; showing scores from {d}"))
+                .unwrap_or_default();
+            page.warn(format!("  Couldn't refresh {what}{day}."), width);
+        }
+        _ => {}
+    }
+}
+
+fn key_crew(page: &mut Page, key_crew: &[KeyCrew]) {
+    let crew: Vec<(&str, &Credit)> = key_crew
+        .iter()
+        .flat_map(|k| k.people.iter().map(|p| (k.role.label(), p)))
+        .collect();
+    if crew.is_empty() {
+        return;
+    }
+    page.heading("Key crew");
+    let mut previous = "";
+    for (role, person) in crew {
+        let label = if role == previous { "" } else { role };
+        previous = role;
+        page.link(
+            Line::from(vec![
+                Span::styled(format!("  {label:<13}"), DIM),
+                Span::raw(person.name.clone()),
+            ]),
+            Target::Person(person.person_id),
+        );
+    }
+}
+
+fn cast_rows(page: &mut Page, cast: &[Credit]) {
+    let column = column_width(cast.iter().map(|c| c.name.as_str()), NAME_COLUMN);
+    for credit in cast {
+        let mut role = credit.role.clone().unwrap_or_default();
+        if let Some(n) = credit.episode_count {
+            role = join_dot(&role, &plural(n, "ep"));
+        }
+        page.link(
+            Line::from(vec![
+                Span::raw(format!("  {}  ", pad(&credit.name, column))),
+                Span::styled(role, DIM),
+            ]),
+            Target::Person(credit.person_id),
+        );
+    }
+}
+
+fn season_label(number: u32) -> String {
+    if number == 0 {
+        "Specials".to_owned()
+    } else {
+        format!("Season {number}")
+    }
 }
 
 fn person_page(p: &Person, width: u16) -> Page {

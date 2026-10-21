@@ -16,10 +16,10 @@ use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
 pub use app::App;
-pub use client::Client;
+pub use client::{Client, ClientError};
 pub use config::TuiConfig;
 
-use app::{Request, Response};
+use app::{Content, Request, Response, Target};
 
 /// Takes over the terminal until the user quits.
 pub async fn run(config: TuiConfig) -> io::Result<()> {
@@ -68,15 +68,23 @@ fn send(client: &Client, tx: &mpsc::UnboundedSender<(u64, Response)>, request: R
     tokio::spawn(async move {
         let answer = match request {
             Request::Search { seq, query } => (seq, Response::Search(client.search(&query).await)),
-            Request::Title { seq, kind, id } => (
-                seq,
-                Response::Title(client.title(kind, id).await.map(Box::new)),
-            ),
-            Request::Person { seq, id } => {
-                (seq, Response::Person(client.person(id).await.map(Box::new)))
-            }
+            Request::Page { seq, target } => (seq, Response::Page(fetch(&client, target).await)),
         };
         // The receiver only goes away when the app has quit.
         let _ = tx.send(answer);
     });
+}
+
+/// Loads the page `target` links to.
+pub async fn fetch(client: &Client, target: Target) -> Result<Content, ClientError> {
+    Ok(match target {
+        Target::Title(kind, id) => Content::Title(Box::new(client.title(kind, id).await?)),
+        Target::Person(id) => Content::Person(Box::new(client.person(id).await?)),
+        Target::Season(show, number) => {
+            Content::Season(Box::new(client.season(show, number).await?))
+        }
+        Target::Episode(show, season, number) => {
+            Content::Episode(Box::new(client.episode(show, season, number).await?))
+        }
+    })
 }

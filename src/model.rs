@@ -280,6 +280,86 @@ impl Watched {
     }
 }
 
+/// A TV show's watched marks as the JSON API reports them, so a client can
+/// hide spoilers the way the pages do.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct WatchedMarks {
+    pub state: WatchedState,
+    /// The whole show, every season included.
+    pub show: bool,
+    /// Seasons marked one at a time, ascending.
+    pub seasons: Vec<u32>,
+    /// Episodes marked one at a time, ascending.
+    pub episodes: Vec<EpisodeMark>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchedState {
+    Read,
+    /// The marks couldn't be read, so nothing is reported as watched and
+    /// spoilers should stay hidden.
+    Unreadable,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct EpisodeMark {
+    pub season: u32,
+    pub number: u32,
+    /// Marked from what played on an Apple TV.
+    pub apple_tv: bool,
+}
+
+impl WatchedMarks {
+    /// `None` when the marks couldn't be read.
+    pub fn of(watched: Option<Watched>) -> Self {
+        let state = if watched.is_some() {
+            WatchedState::Read
+        } else {
+            WatchedState::Unreadable
+        };
+        let w = watched.unwrap_or_default();
+        Self {
+            state,
+            show: w.show,
+            seasons: w.seasons.clone(),
+            episodes: w
+                .episodes
+                .iter()
+                .map(|&(season, number)| EpisodeMark {
+                    season,
+                    number,
+                    apple_tv: w.from_apple_tv(season, number),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A TV show with its watched marks.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct TvWithWatched {
+    #[serde(flatten)]
+    pub title: TitleDetail,
+    pub watched: WatchedMarks,
+}
+
+/// A season with its show's watched marks.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct SeasonWithWatched {
+    #[serde(flatten)]
+    pub season: SeasonDetail,
+    pub watched: WatchedMarks,
+}
+
+/// An episode with its show's watched marks.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct EpisodeWithWatched {
+    #[serde(flatten)]
+    pub episode: EpisodeDetail,
+    pub watched: WatchedMarks,
+}
+
 /// Whether a movie is marked watched.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, ToSchema)]
 pub struct MovieWatched {

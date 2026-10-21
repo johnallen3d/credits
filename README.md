@@ -120,6 +120,8 @@ url = "https://credits.jallen7usa.com"
 - Episode summaries and IMDb episode scores stay blurred until that
   episode, its season or the show is watched; select one to peek
 - If watched marks can't be read, spoilers stay hidden
+- TV, season and episode JSON carry the show's `watched` marks, with
+  `state` `read` or `unreadable`
 
 ### Seen on Apple TV
 
@@ -171,15 +173,24 @@ out to Home Assistant.
 - Live search (debounced) for movies, TV shows and people
 - Movie and TV pages: facts, ratings, overview, where to watch (your
   services starred), key crew and top cast
+- TV pages list seasons: number, name, episode count, year, watched mark
+- Season pages: episodes with air date, runtime, IMDb score and watched
+  mark
+- Episode pages: summary, directors and writers, guest stars and series
+  regulars credited on it
+- Unwatched episodes' summaries and scores stay hidden, as on the web;
+  `s` peeks the highlighted (or open) episode
 - Person pages: born/died, first paragraph of the biography, known for,
   filmography by department
 - Keys: type to search, ↓/Enter into results, j/k or ↑/↓ move, Enter/l
-  open, Esc/Backspace/h back, `/` new search, `r` reload, `q` or Ctrl-C quit
-- Shows the server's degraded states: stale details, ratings and offers
-  with their date, ratings unavailable, availability unknown
+  open, Esc/Backspace/h back, `/` new search, `r` reload, `s` peek,
+  `[`/`]` previous/next episode, `q` or Ctrl-C quit
+- Shows the server's degraded states: stale details, ratings, episode
+  scores and offers with their date, ratings unavailable, availability
+  unknown, and watched marks unreadable (spoilers stay hidden)
 - Server unreachable, not found or provider errors are shown in place;
   `r` (or Enter on a failed search) retries
-- Not yet: seasons and episodes, lists and toggles, playback
+- Not yet: lists and toggles, playback
 
 ## Routes
 

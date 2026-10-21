@@ -20,8 +20,8 @@ use crate::model::{
     MovieWatched, OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
     RecentView, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup, ServiceOption,
     ServicesDetail, ServicesState, SortRatings, TitleCredits, TitleDetail, TitleHit,
-    UnavailableReason, WatchProvider, WatchTarget, Watched, WatchlistDetail, WatchlistSort,
-    WhereToWatch, WhereToWatchState,
+    UnavailableReason, WatchProvider, WatchTarget, Watched, WatchedMarks, WatchlistDetail,
+    WatchlistSort, WhereToWatch, WhereToWatchState,
 };
 use crate::omdb::OmdbClient;
 use crate::playback::{
@@ -194,10 +194,21 @@ impl Catalog {
     /// Which parts of a TV show are marked watched; nothing if that can't be
     /// read, so spoilers stay hidden.
     pub async fn watched(&self, tv_id: u64) -> Watched {
-        self.watched.get(tv_id).await.unwrap_or_else(|e| {
-            tracing::warn!(error = %e, tv_id, "reading watched state failed");
-            Watched::default()
-        })
+        self.read_watched(tv_id).await.unwrap_or_default()
+    }
+
+    /// A TV show's watched marks for the JSON API, saying whether they could
+    /// be read.
+    pub async fn watched_marks(&self, tv_id: u64) -> WatchedMarks {
+        WatchedMarks::of(self.read_watched(tv_id).await)
+    }
+
+    async fn read_watched(&self, tv_id: u64) -> Option<Watched> {
+        self.watched
+            .get(tv_id)
+            .await
+            .inspect_err(|e| tracing::warn!(error = %e, tv_id, "reading watched state failed"))
+            .ok()
     }
 
     /// Marks a whole TV show, a season or an episode as watched or not.

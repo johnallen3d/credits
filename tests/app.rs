@@ -1220,6 +1220,69 @@ async fn episode_page_shows_episode_cast_and_crew() {
 }
 
 #[tokio::test]
+async fn tv_season_and_episode_json_carry_watched_marks() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "credits-watched-{}-{unique}.db",
+        std::process::id()
+    ));
+    let database = path.to_str().unwrap();
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, database).await;
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json.get("watched"), None, "movies carry no TV marks");
+    post_form(t.app(), "/tv/1396/season/2/watched", "watched=true").await;
+    post_form(
+        t.app(),
+        "/tv/1396/season/1/episode/1/watched",
+        "watched=true",
+    )
+    .await;
+    for uri in [
+        "/api/tv/1396",
+        "/api/tv/1396/season/1",
+        "/api/tv/1396/season/1/episode/1",
+    ] {
+        let (status, json) = get_json(t.app(), uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        assert_eq!(
+            json["watched"],
+            json!({
+                "state": "read",
+                "show": false,
+                "seasons": [2],
+                "episodes": [{"season": 1, "number": 1, "apple_tv": false}],
+            }),
+            "{uri}"
+        );
+    }
+    let (_, json) = get_json(t.app(), "/api/tv/1396/season/1").await;
+    assert_eq!(
+        json["episodes"][0]["title"], "Pilot",
+        "season fields stay top-level"
+    );
+
+    let pool = credits::cache::ProviderCache::open(database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query("ALTER TABLE watched_episodes RENAME TO watched_episodes_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, json) = get_json(t.app(), "/api/tv/1396/season/1/episode/1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["title"], "Pilot");
+    assert_eq!(json["watched"]["state"], "unreadable");
+    assert_eq!(json["watched"]["seasons"], json!([]));
+    drop(t);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn marking_an_episode_watched_from_its_page_returns_there() {
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
     let (status, headers) = post_form(
@@ -3377,13 +3440,7 @@ async fn fulfil(client: &tui::Client, app: &mut tui::App, request: tui::app::Req
     use tui::app::{Request, Response};
     let (seq, response) = match request {
         Request::Search { seq, query } => (seq, Response::Search(client.search(&query).await)),
-        Request::Title { seq, kind, id } => (
-            seq,
-            Response::Title(client.title(kind, id).await.map(Box::new)),
-        ),
-        Request::Person { seq, id } => {
-            (seq, Response::Person(client.person(id).await.map(Box::new)))
-        }
+        Request::Page { seq, target } => (seq, Response::Page(tui::fetch(client, target).await)),
     };
     app.respond(seq, response);
 }
@@ -3461,9 +3518,8 @@ async fn terminal_client_searches_and_opens_titles_and_people_over_http() {
     let open = press(&mut app, KeyCode::Enter);
     assert!(matches!(
         open.as_slice(),
-        [tui::app::Request::Title {
-            kind: tui::api::Kind::Movie,
-            id: 603,
+        [tui::app::Request::Page {
+            target: tui::app::Target::Title(tui::api::Kind::Movie, 603),
             ..
         }]
     ));
@@ -3525,4 +3581,160 @@ async fn terminal_client_retries_a_failed_search_with_enter() {
     assert!(
         matches!(retry.as_slice(), [tui::app::Request::Search { query, .. }] if query == "matrix")
     );
+}
+
+#[tokio::test]
+async fn terminal_client_browses_seasons_and_episodes_hiding_spoilers() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "credits-tui-seasons-{}-{unique}.db",
+        std::process::id()
+    ));
+    let database = path.to_str().unwrap();
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, database).await;
+    post_form(t.app(), "/tv/1396/season/2/watched", "watched=true").await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+
+    let open = app.open(tui::app::Target::Title(tui::api::Kind::Tv, 1396));
+    fulfil(&client, &mut app, open).await;
+    let show = screen(&mut app);
+    assert!(show.contains("Seasons"), "{show}");
+    assert!(show.contains("1  Season 1"), "{show}");
+    assert!(show.contains("7 episodes"), "{show}");
+    assert!(
+        show.contains("2  Season 2  13 episodes        ✓ Watched"),
+        "{show}"
+    );
+
+    // The first link on a TV page is its first season.
+    let open = press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        open.as_slice(),
+        [tui::app::Request::Page {
+            target: tui::app::Target::Season(1396, 1),
+            ..
+        }]
+    ));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let season = screen(&mut app);
+    assert!(season.contains("Breaking Bad · Season 1"), "{season}");
+    assert!(
+        season.contains("Search › Breaking Bad › Season 1"),
+        "{season}"
+    );
+    assert!(season.contains("1. Pilot"), "{season}");
+    assert!(season.contains("Jan 20, 2008"), "{season}");
+    assert!(season.contains("58m"), "{season}");
+    assert!(
+        season.contains("IMDb ▒▒▒▒▒▒"),
+        "unwatched score hidden: {season}"
+    );
+    assert!(!season.contains("9.0/10"), "{season}");
+    assert!(season.contains("s peeks the highlighted one"), "{season}");
+
+    // s peeks the highlighted episode, and again hides it.
+    press(&mut app, KeyCode::Char('s'));
+    let peeked = screen(&mut app);
+    assert!(peeked.contains("IMDb 9.0/10"), "{peeked}");
+    assert!(peeked.contains("peeking"), "{peeked}");
+    press(&mut app, KeyCode::Char('s'));
+    assert!(!screen(&mut app).contains("9.0/10"));
+
+    // Enter opens the episode, its summary hidden until peeked.
+    let open = press(&mut app, KeyCode::Enter);
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let episode = screen(&mut app);
+    assert!(
+        episode.contains("Breaking Bad · Season 1 · Episode 1"),
+        "{episode}"
+    );
+    assert!(
+        episode.contains("Summary hidden until you watch this episode"),
+        "{episode}"
+    );
+    assert!(!episode.contains("A chemistry teacher"), "{episode}");
+    assert!(episode.contains("Directed by"), "{episode}");
+    assert!(episode.contains("Guest stars"), "{episode}");
+    assert!(episode.contains("Steven Michael Quezada"), "{episode}");
+    assert!(episode.contains("Series regulars"), "{episode}");
+    assert!(episode.contains("Bryan Cranston"), "{episode}");
+    assert!(episode.contains("] Episode 2"), "{episode}");
+    press(&mut app, KeyCode::Char('s'));
+    let peeked = screen(&mut app);
+    assert!(
+        peeked.contains("A chemistry teacher is diagnosed."),
+        "{peeked}"
+    );
+    assert!(peeked.contains("IMDb 9.0/10"), "{peeked}");
+
+    // Enter on a credited person opens them.
+    let open = press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        open.as_slice(),
+        [tui::app::Request::Page {
+            target: tui::app::Target::Person(66633),
+            ..
+        }]
+    ));
+    press(&mut app, KeyCode::Esc);
+
+    // ] swaps in the next episode; [ has nowhere to go from the first.
+    assert!(press(&mut app, KeyCode::Char('[')).is_empty());
+    let next = press(&mut app, KeyCode::Char(']'));
+    assert!(matches!(
+        next.as_slice(),
+        [tui::app::Request::Page {
+            target: tui::app::Target::Episode(1396, 1, 2),
+            ..
+        }]
+    ));
+    press(&mut app, KeyCode::Esc);
+    assert!(screen(&mut app).contains("1. Pilot"), "back to the season");
+
+    // Watching the episode reveals it without a peek.
+    post_form(
+        t.app(),
+        "/tv/1396/season/1/episode/1/watched",
+        "watched=true",
+    )
+    .await;
+    let reload = press(&mut app, KeyCode::Char('r'));
+    fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
+    let season = screen(&mut app);
+    assert!(season.contains("IMDb 9.0/10"), "{season}");
+    assert!(season.contains("✓"), "{season}");
+
+    // Unreadable marks keep everything hidden, and say so.
+    let pool = credits::cache::ProviderCache::open(database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query("ALTER TABLE watched_episodes RENAME TO watched_episodes_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let reload = press(&mut app, KeyCode::Char('r'));
+    fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
+    let season = screen(&mut app);
+    assert!(
+        season.contains("Watched marks couldn't be read"),
+        "{season}"
+    );
+    assert!(!season.contains("9.0/10"), "{season}");
+    let open = app.open(tui::app::Target::Episode(1396, 1, 1));
+    fulfil(&client, &mut app, open).await;
+    let episode = screen(&mut app);
+    assert!(
+        episode.contains("Watched marks couldn't be read"),
+        "{episode}"
+    );
+    assert!(!episode.contains("A chemistry teacher"), "{episode}");
+    drop(t);
+    let _ = std::fs::remove_file(&path);
 }

@@ -128,7 +128,7 @@
     },
     "/api/tv/{id}": {
       "get": {
-        "summary": "A TV show: metadata, key crew, cast, seasons, ratings and where to watch.",
+        "summary": "A TV show: metadata, key crew, cast, seasons, ratings, where to watch and\nwatched marks.",
         "operationId": "api_tv",
         "parameters": [
           {
@@ -148,7 +148,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TitleDetail"
+                  "$ref": "#/components/schemas/TvWithWatched"
                 }
               }
             }
@@ -332,7 +332,7 @@
     },
     "/api/tv/{id}/season/{number}": {
       "get": {
-        "summary": "A season's episodes with air dates and IMDb episode scores.",
+        "summary": "A season's episodes with air dates, IMDb episode scores and the show's\nwatched marks.",
         "operationId": "api_season",
         "parameters": [
           {
@@ -363,7 +363,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SeasonDetail"
+                  "$ref": "#/components/schemas/SeasonWithWatched"
                 }
               }
             }
@@ -411,7 +411,7 @@
     },
     "/api/tv/{id}/season/{number}/episode/{episode}": {
       "get": {
-        "summary": "An episode: guest stars, regulars credited on it, crew, and neighbours.",
+        "summary": "An episode: guest stars, regulars credited on it, crew, neighbours and the\nshow's watched marks.",
         "operationId": "api_episode",
         "parameters": [
           {
@@ -453,7 +453,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EpisodeDetail"
+                  "$ref": "#/components/schemas/EpisodeWithWatched"
                 }
               }
             }
@@ -1138,6 +1138,30 @@
           }
         }
       },
+      "EpisodeMark": {
+        "type": "object",
+        "required": [
+          "season",
+          "number",
+          "apple_tv"
+        ],
+        "properties": {
+          "season": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "apple_tv": {
+            "type": "boolean",
+            "description": "Marked from what played on an Apple TV."
+          }
+        }
+      },
       "EpisodeRatings": {
         "type": "object",
         "description": "Provenance of a season's per-episode IMDb ratings.",
@@ -1178,6 +1202,25 @@
             "format": "date-time"
           }
         }
+      },
+      "EpisodeWithWatched": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EpisodeDetail"
+          },
+          {
+            "type": "object",
+            "required": [
+              "watched"
+            ],
+            "properties": {
+              "watched": {
+                "$ref": "#/components/schemas/WatchedMarks"
+              }
+            }
+          }
+        ],
+        "description": "An episode with its show's watched marks."
       },
       "FilmographyEntry": {
         "type": "object",
@@ -2095,6 +2138,25 @@
           }
         }
       },
+      "SeasonWithWatched": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SeasonDetail"
+          },
+          {
+            "type": "object",
+            "required": [
+              "watched"
+            ],
+            "properties": {
+              "watched": {
+                "$ref": "#/components/schemas/WatchedMarks"
+              }
+            }
+          }
+        ],
+        "description": "A season with its show's watched marks."
+      },
       "Service": {
         "type": "object",
         "description": "A streaming service, as TMDB lists it.",
@@ -2549,6 +2611,25 @@
           }
         }
       },
+      "TvWithWatched": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TitleDetail"
+          },
+          {
+            "type": "object",
+            "required": [
+              "watched"
+            ],
+            "properties": {
+              "watched": {
+                "$ref": "#/components/schemas/WatchedMarks"
+              }
+            }
+          }
+        ],
+        "description": "A TV show with its watched marks."
+      },
       "UnavailableReason": {
         "type": "string",
         "enum": [
@@ -2584,6 +2665,48 @@
             "description": "One of the user's services."
           }
         }
+      },
+      "WatchedMarks": {
+        "type": "object",
+        "description": "A TV show's watched marks as the JSON API reports them, so a client can\nhide spoilers the way the pages do.",
+        "required": [
+          "state",
+          "show",
+          "seasons",
+          "episodes"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/WatchedState"
+          },
+          "show": {
+            "type": "boolean",
+            "description": "The whole show, every season included."
+          },
+          "seasons": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "Seasons marked one at a time, ascending."
+          },
+          "episodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EpisodeMark"
+            },
+            "description": "Episodes marked one at a time, ascending."
+          }
+        }
+      },
+      "WatchedState": {
+        "type": "string",
+        "enum": [
+          "read",
+          "unreadable"
+        ]
       },
       "WatchlistDetail": {
         "type": "object",

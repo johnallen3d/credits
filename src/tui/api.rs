@@ -83,6 +83,132 @@ pub struct Title {
     pub cast: Vec<Credit>,
     #[serde(default)]
     pub cast_total: usize,
+    /// TV only.
+    #[serde(default)]
+    pub season_list: Vec<SeasonSummary>,
+    /// TV only; a server too old to send it can't say what's watched.
+    pub watched: Option<Watched>,
+    pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SeasonSummary {
+    pub number: u32,
+    pub name: String,
+    pub year: Option<String>,
+    pub episode_count: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchedState {
+    Read,
+    #[serde(other)]
+    Unreadable,
+}
+
+/// A show's watched marks. Spoilers stay hidden until an episode, its season
+/// or the show is watched, as on the web pages.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Watched {
+    pub state: WatchedState,
+    #[serde(default)]
+    pub show: bool,
+    #[serde(default)]
+    pub seasons: Vec<u32>,
+    #[serde(default)]
+    pub episodes: Vec<EpisodeMark>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EpisodeMark {
+    pub season: u32,
+    pub number: u32,
+    #[serde(default)]
+    pub apple_tv: bool,
+}
+
+impl Watched {
+    /// Whether the marks could be read; `None` (an older server) can't be.
+    pub fn readable(watched: Option<&Self>) -> bool {
+        watched.is_some_and(|w| w.state == WatchedState::Read)
+    }
+
+    pub fn season(&self, number: u32) -> bool {
+        self.show || self.seasons.contains(&number)
+    }
+
+    pub fn episode(&self, season: u32, number: u32) -> bool {
+        self.season(season) || self.mark(season, number).is_some()
+    }
+
+    /// Whether the episode's own mark came from the Apple TV.
+    pub fn from_apple_tv(&self, season: u32, number: u32) -> bool {
+        self.mark(season, number).is_some_and(|m| m.apple_tv)
+    }
+
+    fn mark(&self, season: u32, number: u32) -> Option<&EpisodeMark> {
+        self.episodes
+            .iter()
+            .find(|m| m.season == season && m.number == number)
+    }
+}
+
+/// Where a season's or episode's IMDb scores came from.
+#[derive(Clone, Debug, Deserialize)]
+pub struct EpisodeRatings {
+    pub state: State,
+    pub unavailable_reason: Option<UnavailableReason>,
+    pub fetched_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Season {
+    pub show_id: u64,
+    pub show_title: String,
+    pub number: u32,
+    pub name: String,
+    pub overview: Option<String>,
+    pub air_date: Option<String>,
+    #[serde(default)]
+    pub episodes: Vec<SeasonEpisode>,
+    pub episode_ratings: EpisodeRatings,
+    pub watched: Option<Watched>,
+    pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SeasonEpisode {
+    pub number: u32,
+    pub title: String,
+    pub air_date: Option<String>,
+    pub runtime_minutes: Option<u32>,
+    pub rating: Option<Rating>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Episode {
+    pub show_id: u64,
+    pub show_title: String,
+    pub season_number: u32,
+    pub season_name: String,
+    pub number: u32,
+    pub title: String,
+    pub air_date: Option<String>,
+    pub overview: Option<String>,
+    pub runtime_minutes: Option<u32>,
+    pub rating: Option<Rating>,
+    pub episode_ratings: EpisodeRatings,
+    #[serde(default)]
+    pub key_crew: Vec<KeyCrew>,
+    /// Series regulars credited on this episode.
+    #[serde(default)]
+    pub cast: Vec<Credit>,
+    #[serde(default)]
+    pub guest_stars: Vec<Credit>,
+    pub previous: Option<u32>,
+    pub next: Option<u32>,
+    pub watched: Option<Watched>,
     pub metadata: Metadata,
 }
 

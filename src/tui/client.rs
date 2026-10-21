@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 
-use super::api::{ApiError, Kind, Person, SearchHit, SearchResults, Title};
+use super::api::{ApiError, Episode, Kind, Person, SearchHit, SearchResults, Season, Title};
 
 #[derive(Clone)]
 pub struct Client {
@@ -54,6 +54,24 @@ impl Client {
 
     pub async fn person(&self, id: u64) -> Result<Person, ClientError> {
         self.get(&format!("/api/person/{id}"), &[]).await
+    }
+
+    pub async fn season(&self, show: u64, number: u32) -> Result<Season, ClientError> {
+        self.get(&format!("/api/tv/{show}/season/{number}"), &[])
+            .await
+    }
+
+    pub async fn episode(
+        &self,
+        show: u64,
+        season: u32,
+        number: u32,
+    ) -> Result<Episode, ClientError> {
+        self.get(
+            &format!("/api/tv/{show}/season/{season}/episode/{number}"),
+            &[],
+        )
+        .await
     }
 
     async fn get<T: DeserializeOwned>(

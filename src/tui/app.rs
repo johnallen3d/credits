@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use super::api::{Kind, Person, SearchHit, Title};
+use super::api::{Episode, Kind, Person, SearchHit, Season, Title};
 use super::client::ClientError;
 
 /// Typing pause before a search goes out, so each keystroke isn't a request.
@@ -17,26 +17,37 @@ const PAGE_STEP: usize = 10;
 pub enum Target {
     Title(Kind, u64),
     Person(u64),
+    /// A TV show's season by number.
+    Season(u64, u32),
+    /// A TV show's episode by season and number.
+    Episode(u64, u32, u32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
     Search { seq: u64, query: String },
-    Title { seq: u64, kind: Kind, id: u64 },
-    Person { seq: u64, id: u64 },
+    Page { seq: u64, target: Target },
 }
 
 #[derive(Debug)]
 pub enum Response {
     Search(Result<Vec<SearchHit>, ClientError>),
-    Title(Result<Box<Title>, ClientError>),
-    Person(Result<Box<Person>, ClientError>),
+    Page(Result<Content, ClientError>),
+}
+
+/// What a page shows once it has loaded.
+#[derive(Debug)]
+pub enum Content {
+    Title(Box<Title>),
+    Person(Box<Person>),
+    Season(Box<Season>),
+    Episode(Box<Episode>),
 }
 
 #[derive(Debug)]
-pub enum Load<T> {
+pub enum Load {
     Loading,
-    Ready(Box<T>),
+    Ready(Content),
     Failed(String),
 }
 
@@ -56,39 +67,30 @@ impl Cursor {
     }
 }
 
+/// A page opened from search or another page.
 #[derive(Debug)]
-pub enum Screen {
-    Title {
-        target: (Kind, u64),
-        seq: u64,
-        load: Load<Title>,
-        cursor: Cursor,
-    },
-    Person {
-        id: u64,
-        seq: u64,
-        load: Load<Person>,
-        cursor: Cursor,
-    },
+pub struct Screen {
+    pub target: Target,
+    seq: u64,
+    pub load: Load,
+    pub cursor: Cursor,
+    /// Unwatched episodes, by (season, number), whose spoilers are shown anyway.
+    pub peeked: Vec<(u32, u32)>,
 }
 
 impl Screen {
-    pub fn cursor(&self) -> &Cursor {
-        match self {
-            Screen::Title { cursor, .. } | Screen::Person { cursor, .. } => cursor,
+    fn new(target: Target, seq: u64) -> Self {
+        Self {
+            target,
+            seq,
+            load: Load::Loading,
+            cursor: Cursor::default(),
+            peeked: Vec::new(),
         }
     }
 
-    fn cursor_mut(&mut self) -> &mut Cursor {
-        match self {
-            Screen::Title { cursor, .. } | Screen::Person { cursor, .. } => cursor,
-        }
-    }
-
-    fn seq(&self) -> u64 {
-        match self {
-            Screen::Title { seq, .. } | Screen::Person { seq, .. } => *seq,
-        }
+    pub fn peeking(&self, season: u32, number: u32) -> bool {
+        self.peeked.contains(&(season, number))
     }
 }
 
@@ -177,14 +179,9 @@ impl App {
                     }
                 }
             }
-            Response::Title(result) => {
-                if let Some(Screen::Title { load, .. }) = self.screen_for(seq) {
-                    *load = loaded(result);
-                }
-            }
-            Response::Person(result) => {
-                if let Some(Screen::Person { load, .. }) = self.screen_for(seq) {
-                    *load = loaded(result);
+            Response::Page(result) => {
+                if let Some(screen) = self.stack.iter_mut().find(|s| s.seq == seq) {
+                    screen.load = loaded(result);
                 }
             }
         }
@@ -193,14 +190,14 @@ impl App {
     /// The highlighted link on the current page, once a renderer has drawn it.
     pub fn cursor(&self) -> &Cursor {
         match self.stack.last() {
-            Some(screen) => screen.cursor(),
+            Some(screen) => &screen.cursor,
             None => &self.search.cursor,
         }
     }
 
     pub fn cursor_mut(&mut self) -> &mut Cursor {
         match self.stack.last_mut() {
-            Some(screen) => screen.cursor_mut(),
+            Some(screen) => &mut screen.cursor,
             None => &mut self.search.cursor,
         }
     }
@@ -208,29 +205,9 @@ impl App {
     /// Opens a link from the current page.
     pub fn open(&mut self, target: Target) -> Request {
         let seq = self.seq();
-        let (screen, request) = match target {
-            Target::Title(kind, id) => (
-                Screen::Title {
-                    target: (kind, id),
-                    seq,
-                    load: Load::Loading,
-                    cursor: Cursor::default(),
-                },
-                Request::Title { seq, kind, id },
-            ),
-            Target::Person(id) => (
-                Screen::Person {
-                    id,
-                    seq,
-                    load: Load::Loading,
-                    cursor: Cursor::default(),
-                },
-                Request::Person { seq, id },
-            ),
-        };
-        self.stack.push(screen);
+        self.stack.push(Screen::new(target, seq));
         self.editing = false;
-        request
+        Request::Page { seq, target }
     }
 
     fn edit_key(&mut self, key: KeyEvent, ctrl: bool, now: Instant) -> Vec<Request> {
@@ -306,9 +283,47 @@ impl App {
                 }
             }
             KeyCode::Char('r') => return self.reload().into_iter().collect(),
+            KeyCode::Char('s') => self.peek(),
+            KeyCode::Char('[') => return self.neighbour(false).into_iter().collect(),
+            KeyCode::Char(']') => return self.neighbour(true).into_iter().collect(),
             _ => {}
         }
         Vec::new()
+    }
+
+    /// Shows or hides the spoilers of the episode on screen, or the one
+    /// highlighted on a season.
+    fn peek(&mut self) {
+        let selected = super::ui::selected_target(self);
+        let Some(screen) = self.stack.last_mut() else {
+            return;
+        };
+        let episode = match (screen.target, selected) {
+            (Target::Episode(_, season, number), _)
+            | (Target::Season(..), Some(Target::Episode(_, season, number))) => (season, number),
+            _ => return,
+        };
+        match screen.peeked.iter().position(|&e| e == episode) {
+            Some(i) => {
+                screen.peeked.remove(i);
+            }
+            None => screen.peeked.push(episode),
+        }
+    }
+
+    /// Swaps the episode on screen for the previous or next one in its season.
+    fn neighbour(&mut self, next: bool) -> Option<Request> {
+        let Some(Screen {
+            load: Load::Ready(Content::Episode(e)),
+            ..
+        }) = self.stack.last()
+        else {
+            return None;
+        };
+        let number = if next { e.next } else { e.previous }?;
+        let target = Target::Episode(e.show_id, e.season_number, number);
+        self.stack.pop();
+        Some(self.open(target))
     }
 
     fn open_selected(&mut self) -> Option<Request> {
@@ -324,26 +339,13 @@ impl App {
                 self.search.answered.clear();
                 self.send_search()
             }
-            Some(Screen::Title {
-                target: (kind, id),
-                seq: s,
-                load,
-                ..
-            }) => {
-                *s = seq;
-                *load = Load::Loading;
-                Some(Request::Title {
+            Some(screen) => {
+                screen.seq = seq;
+                screen.load = Load::Loading;
+                Some(Request::Page {
                     seq,
-                    kind: *kind,
-                    id: *id,
+                    target: screen.target,
                 })
-            }
-            Some(Screen::Person {
-                id, seq: s, load, ..
-            }) => {
-                *s = seq;
-                *load = Load::Loading;
-                Some(Request::Person { seq, id: *id })
             }
         }
     }
@@ -375,17 +377,13 @@ impl App {
         Some(Request::Search { seq, query })
     }
 
-    fn screen_for(&mut self, seq: u64) -> Option<&mut Screen> {
-        self.stack.iter_mut().find(|s| s.seq() == seq)
-    }
-
     fn seq(&mut self) -> u64 {
         self.next_seq += 1;
         self.next_seq
     }
 }
 
-fn loaded<T>(result: Result<Box<T>, ClientError>) -> Load<T> {
+fn loaded(result: Result<Content, ClientError>) -> Load {
     match result {
         Ok(value) => Load::Ready(value),
         Err(ClientError::NotFound) => Load::Failed("Not found on TMDB.".to_owned()),

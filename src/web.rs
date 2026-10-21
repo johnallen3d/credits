@@ -17,10 +17,10 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::catalog::{Catalog, CatalogError, ServicesError, WatchlistError};
 use crate::model::{
-    EpisodeDetail, FilmographyEntry, FilmographyGroup, FilmographySort, KindFilter, MediaKind,
-    MovieWatched, PersonDetail, RecentView, SearchHit, SeasonDetail, ServicesDetail,
-    ServicesFilter, TitleCredits, TitleDetail, WatchTarget, Watched, WatchlistDetail,
-    WatchlistSort, title_path,
+    EpisodeDetail, EpisodeWithWatched, FilmographyEntry, FilmographyGroup, FilmographySort,
+    KindFilter, MediaKind, MovieWatched, PersonDetail, RecentView, SearchHit, SeasonDetail,
+    SeasonWithWatched, ServicesDetail, ServicesFilter, TitleCredits, TitleDetail, TvWithWatched,
+    WatchTarget, Watched, WatchlistDetail, WatchlistSort, title_path,
 };
 use crate::playback::{App, Kind, LiveStatus, PlaybackDetail};
 
@@ -1280,15 +1280,26 @@ async fn api_movie(state: State<Catalog>, id: Path<String>) -> Response {
     api_detail(state, id, MediaKind::Movie).await
 }
 
-/// A TV show: metadata, key crew, cast, seasons, ratings and where to watch.
+/// A TV show: metadata, key crew, cast, seasons, ratings, where to watch and
+/// watched marks.
 #[utoipa::path(
     get,
     path = "/api/tv/{id}",
     params(("id" = u64, Path, description = "TMDB TV ID")),
-    responses((status = OK, body = TitleDetail), LookupErrors)
+    responses((status = OK, body = TvWithWatched), LookupErrors)
 )]
-async fn api_tv(state: State<Catalog>, id: Path<String>) -> Response {
-    api_detail(state, id, MediaKind::Tv).await
+async fn api_tv(State(catalog): State<Catalog>, Path(id): Path<String>) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return api_not_found();
+    };
+    let result = match catalog.title(MediaKind::Tv, id).await {
+        Ok(title) => Ok(TvWithWatched {
+            title,
+            watched: catalog.watched_marks(id).await,
+        }),
+        Err(e) => Err(e),
+    };
+    api_result(result, "title")
 }
 
 async fn api_detail(
@@ -1335,7 +1346,8 @@ async fn api_credits(
     api_result(catalog.credits(kind, id).await, "credits")
 }
 
-/// A season's episodes with air dates and IMDb episode scores.
+/// A season's episodes with air dates, IMDb episode scores and the show's
+/// watched marks.
 #[utoipa::path(
     get,
     path = "/api/tv/{id}/season/{number}",
@@ -1343,7 +1355,7 @@ async fn api_credits(
         ("id" = u64, Path, description = "TMDB TV ID"),
         ("number" = u32, Path, description = "Season number; 0 is specials"),
     ),
-    responses((status = OK, body = SeasonDetail), LookupErrors)
+    responses((status = OK, body = SeasonWithWatched), LookupErrors)
 )]
 async fn api_season(
     State(catalog): State<Catalog>,
@@ -1352,10 +1364,18 @@ async fn api_season(
     let (Ok(id), Ok(number)) = (id.parse::<u64>(), number.parse::<u32>()) else {
         return api_not_found();
     };
-    api_result(catalog.season(id, number).await, "season")
+    let result = match catalog.season(id, number).await {
+        Ok(season) => Ok(SeasonWithWatched {
+            season,
+            watched: catalog.watched_marks(id).await,
+        }),
+        Err(e) => Err(e),
+    };
+    api_result(result, "season")
 }
 
-/// An episode: guest stars, regulars credited on it, crew, and neighbours.
+/// An episode: guest stars, regulars credited on it, crew, neighbours and the
+/// show's watched marks.
 #[utoipa::path(
     get,
     path = "/api/tv/{id}/season/{number}/episode/{episode}",
@@ -1364,7 +1384,7 @@ async fn api_season(
         ("number" = u32, Path, description = "Season number; 0 is specials"),
         ("episode" = u32, Path, description = "Episode number within the season"),
     ),
-    responses((status = OK, body = EpisodeDetail), LookupErrors)
+    responses((status = OK, body = EpisodeWithWatched), LookupErrors)
 )]
 async fn api_episode(
     State(catalog): State<Catalog>,
@@ -1373,7 +1393,14 @@ async fn api_episode(
     let Some((id, season, number)) = episode_ids(&id, &season, &number) else {
         return api_not_found();
     };
-    api_result(catalog.episode(id, season, number).await, "episode")
+    let result = match catalog.episode(id, season, number).await {
+        Ok(episode) => Ok(EpisodeWithWatched {
+            episode,
+            watched: catalog.watched_marks(id).await,
+        }),
+        Err(e) => Err(e),
+    };
+    api_result(result, "episode")
 }
 
 /// A person: known for, and filmography by department.
