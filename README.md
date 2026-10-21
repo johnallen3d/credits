@@ -53,7 +53,7 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
 - Header shows the app icon (the favicon) as the home link
 - Keyboard navigation: ↑/↓ move through results (or Recently viewed when
   the box is empty), Enter opens the highlighted item
-- Home page shows the 12 most recently viewed titles and people,
+- Home page shows the 50 most recently viewed titles and people,
   including pages opened in the terminal client
 - Movie and TV pages: poster, key crew (directors and writers; for TV,
   creators and most frequent directors), top-billed cast, season list
@@ -215,7 +215,7 @@ out to Home Assistant.
 - `credits` browses a running server over its `/api/…` JSON; no database,
   TMDB token or Doppler needed
 - Live search (debounced) for movies, TV shows and people
-- Empty search box lists the recently viewed titles and people shared
+- Empty search box lists the 50 most recently viewed titles and people shared
   with the web home page; ↓/Enter move into and open them like results
 - Opening a title or person here counts as viewing it, as on the web
 - Movie and TV pages: facts, ratings, overview, where to watch (your

@@ -6,7 +6,7 @@ use sqlx::sqlite::SqlitePool;
 use crate::model::{RecentKind, RecentView};
 
 /// Most entries kept; older ones are dropped as new pages are viewed.
-pub const CAPACITY: i64 = 12;
+pub const CAPACITY: i64 = 50;
 
 /// kind, id, name, year, image_url
 type Row = (String, i64, String, Option<String>, Option<String>);
@@ -96,7 +96,12 @@ mod tests {
 
         let ids: Vec<u64> = recent.list().await.unwrap().iter().map(|r| r.id).collect();
         assert_eq!(ids.len(), CAPACITY as usize);
-        assert_eq!(ids[..3], [5, 15, 14], "same-second visits keep their order");
+        let newest = CAPACITY as u64 + 3;
+        assert_eq!(
+            ids[..3],
+            [5, newest, newest - 1],
+            "same-second visits keep their order"
+        );
         assert_eq!(ids.last(), Some(&4), "the three oldest are dropped");
         assert_eq!(ids.iter().filter(|&&id| id == 5).count(), 1);
     }
