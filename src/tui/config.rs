@@ -6,12 +6,12 @@ use serde::Deserialize;
 
 /// Overrides where the config file is read from.
 pub const CONFIG_VAR: &str = "CREDITS_CONFIG";
-const EXAMPLE: &str = "url = \"http://omarchy:3000\"";
+const EXAMPLE: &str = "url = \"https://credits.jallen7usa.com\"";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TuiConfig {
-    /// Base URL of a running credits server, e.g. `http://omarchy:3000`.
+    /// Base URL of a running credits server, e.g. `https://credits.jallen7usa.com`.
     pub url: String,
 }
 
@@ -87,8 +87,8 @@ mod tests {
 
     #[test]
     fn reads_the_server_url_without_a_trailing_slash() {
-        let config = parse("url = \"http://omarchy:3000/\"\n").unwrap();
-        assert_eq!(config.url, "http://omarchy:3000");
+        let config = parse("url = \"https://credits.jallen7usa.com/\"\n").unwrap();
+        assert_eq!(config.url, "https://credits.jallen7usa.com");
     }
 
     #[test]
@@ -99,7 +99,7 @@ mod tests {
             Err(TuiConfigError::Invalid(..))
         ));
         assert!(matches!(
-            parse("url = \"omarchy:3000\""),
+            parse("url = \"credits.jallen7usa.com\""),
             Err(TuiConfigError::InvalidUrl(..))
         ));
     }
@@ -108,7 +108,7 @@ mod tests {
     fn missing_file_explains_what_to_write() {
         let err = TuiConfig::from_file(Path::new("/nonexistent/credits/config.toml")).unwrap_err();
         assert!(matches!(err, TuiConfigError::Missing(_)));
-        assert!(err.to_string().contains("url = \"http://"));
+        assert!(err.to_string().contains("url = \"https://credits.jallen7usa.com\""));
     }
 
     #[test]

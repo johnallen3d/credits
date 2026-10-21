@@ -41,7 +41,7 @@ These configure `credits-web`. The terminal client reads only a TOML file:
 
 ```toml
 # ~/.config/credits/config.toml ($XDG_CONFIG_HOME/credits, or $CREDITS_CONFIG)
-url = "http://omarchy:3000"
+url = "https://credits.jallen7usa.com"
 ```
 
 ## Features
