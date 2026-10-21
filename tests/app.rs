@@ -2317,8 +2317,12 @@ async fn services_are_chosen_and_highlighted_on_title_pages() {
     assert_eq!(status, StatusCode::OK);
     assert!(
         body.contains(r#"<a href="/services">My services</a>"#),
-        "linked from the header"
+        "linked from the footer"
     );
+    let footer = &body[body.find("<footer").unwrap()..];
+    assert!(footer.contains(r#"<a href="/services">My services</a>"#));
+    let header = &body[..body.find("</header>").unwrap()];
+    assert!(!header.contains(r#"href="/services""#));
     assert!(body.contains("No services chosen yet."));
     let at = |needle: &str| body.find(needle).unwrap();
     let order = [
