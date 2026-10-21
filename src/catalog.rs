@@ -19,7 +19,7 @@ use crate::model::{
     FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
     MovieWatched, OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
     RecentView, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup, ServiceOption,
-    ServicesDetail, ServicesState, SortRatings, TitleCredits, TitleDetail, TitleHit,
+    ServicesDetail, ServicesState, SortRatings, TitleCredits, TitleDetail, TitleHit, TitleMarks,
     UnavailableReason, WatchProvider, WatchTarget, Watched, WatchedMarks, WatchlistDetail,
     WatchlistSort, WhereToWatch, WhereToWatchState,
 };
@@ -467,6 +467,60 @@ impl Catalog {
         self.favorites.titles().await
     }
 
+    /// Whether a title is saved and watched, each `None` if it couldn't be read.
+    pub async fn title_marks(&self, kind: MediaKind, id: u64) -> TitleMarks {
+        let (to_watch, favorites) = self.saved_titles().await;
+        TitleMarks {
+            to_watch: to_watch.map(|t| t.contains(&(kind, id))),
+            favorite: favorites.map(|t| t.contains(&(kind, id))),
+            watched: self.title_watched(kind, id).await,
+        }
+    }
+
+    /// Fills in each list entry's marks.
+    pub async fn mark_entries(&self, entries: &mut [FilmographyEntry]) {
+        let (to_watch, favorites) = self.saved_titles().await;
+        for e in entries {
+            let key = (e.kind, e.id);
+            e.marks = Some(TitleMarks {
+                to_watch: to_watch.as_ref().map(|t| t.contains(&key)),
+                favorite: favorites.as_ref().map(|t| t.contains(&key)),
+                watched: self.title_watched(e.kind, e.id).await,
+            });
+        }
+    }
+
+    /// Titles on To watch and on Favorites; each `None` if it couldn't be read.
+    async fn saved_titles(
+        &self,
+    ) -> (
+        Option<HashSet<(MediaKind, u64)>>,
+        Option<HashSet<(MediaKind, u64)>>,
+    ) {
+        let (to_watch, favorites) = tokio::join!(self.watchlist.titles(), self.favorites.titles());
+        let to_watch = to_watch
+            .inspect_err(|e| tracing::warn!(error = %e, "reading the watchlist failed"))
+            .ok();
+        let favorites = favorites
+            .inspect_err(|e| tracing::warn!(error = %e, "reading favorites failed"))
+            .ok();
+        (to_watch, favorites)
+    }
+
+    /// A movie's watched mark, or a show's mark as a whole.
+    async fn title_watched(&self, kind: MediaKind, id: u64) -> Option<bool> {
+        match kind {
+            MediaKind::Movie => self
+                .watched
+                .movie(id)
+                .await
+                .inspect_err(|e| tracing::warn!(error = %e, id, "reading watched state failed"))
+                .ok()
+                .map(|m| m.watched),
+            MediaKind::Tv => self.read_watched(id).await.map(|w| w.show),
+        }
+    }
+
     async fn title_to_save(
         &self,
         kind: MediaKind,
@@ -494,6 +548,7 @@ impl Catalog {
             poster_url: self.image(THUMB_SIZE, poster_path),
             rating: None,
             availability: None,
+            marks: None,
         };
         Ok((entry, seasons))
     }
@@ -949,6 +1004,7 @@ impl Catalog {
                     poster_url: self.image(THUMB_SIZE, c.poster_path),
                     rating: None,
                     availability: None,
+                    marks: None,
                 };
                 Some((
                     (department.clone(), kind, c.id),

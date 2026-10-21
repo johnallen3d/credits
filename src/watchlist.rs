@@ -109,6 +109,7 @@ impl Watchlist {
                     poster_url,
                     rating: None,
                     availability: None,
+                    marks: None,
                 })
             })
             .collect())
@@ -143,6 +144,7 @@ mod tests {
             poster_url: None,
             rating: None,
             availability: None,
+            marks: None,
         }
     }
 

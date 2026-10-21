@@ -177,6 +177,9 @@ out to Home Assistant.
 - JSON carries the same state: `state` (`fresh` / `stale` /
   `unavailable`) and `fetched_at` on `metadata`, `ratings`,
   `where_to_watch` and `/api/services`
+- `marks` (`to_watch`, `favorite`, `watched`) on movie, TV and list JSON
+  is `null` per mark when it couldn't be read; JSON saves that can't be
+  written answer 500 with `error` and change nothing
 
 ### Terminal client
 
@@ -194,15 +197,23 @@ out to Home Assistant.
   `s` peeks the highlighted (or open) episode
 - Person pages: born/died, first paragraph of the biography, known for,
   filmography by department
-- To watch (`w`) and Favorites (`f`) list screens, read-only: year, kind,
-  title, score when sorted by rating, and your services on To watch
+- To watch (`w`) and Favorites (`f`) list screens: year, kind, title,
+  marks (■ To watch, ♥ Favorite, ✓ Watched), score when sorted by rating,
+  and your services on To watch
+- Toggles on movie/TV pages and list rows: `b` To watch, `F` Favorite,
+  `x` Watched; current state shown on the page or row
+  - TV pages: `x` the highlighted season, `X` the whole show; season
+    pages: `x` the highlighted episode, `X` the season; episode pages: `x`
+  - Updates in place from the server's answer; favoriting a show lights
+    the seasons the server marked watched
+  - Removing from a list keeps the row (unmarked) until reload
 - Lists filter and sort like the web page: `t` cycles All / Movies / TV,
   `o` toggles Added / Rating, `m` toggles On my services (To watch, once
   services are chosen)
 - Keys: type to search, ↓/Enter into results, Esc leaves the box, j/k or
   ↑/↓ move, Enter/l open, Esc/Backspace/h back, `/` new search, `w`/`f`
-  lists, `r` reload, `s` peek, `[`/`]` previous/next episode, `q` or
-  Ctrl-C quit
+  lists, `b`/`F`/`x`/`X` toggles, `r` reload, `s` peek, `[`/`]`
+  previous/next episode, `q` or Ctrl-C quit
 - Shows the server's degraded states: stale details, ratings, episode
   scores and offers with their date, ratings unavailable, availability
   unknown, and watched marks unreadable (spoilers stay hidden)
@@ -210,8 +221,11 @@ out to Home Assistant.
   titles of unknown availability, stale listings and ratings
 - Server unreachable, not found or provider errors are shown in place;
   `r` (or Enter on a failed search) retries
+- Toggle failures (server unreachable, refused save) show in a status
+  line and change nothing; marks the server couldn't read show as
+  unreadable (`?`) and can't be toggled
 - Colors follow the `theme` setting (see [Themes](#themes))
-- Not yet: toggling To watch, Favorite and Watched; playback
+- Not yet: playback
 
 ## Routes
 
@@ -240,6 +254,15 @@ Form posts:
 | `POST /tv/{id}/season/{n}/watched`, `POST /tv/{id}/season/{n}/episode/{e}/watched` | `watched=true\|false` |
 | `POST /services` | one `service={provider id}` per chosen service |
 | `POST /playback/decide` | `app`, `show`, `tv_id` or `other_id`, `action=use\|ignore` |
+
+JSON writes (same rules as the forms; answer with the new state):
+
+| Route | Body | Answer |
+|-------|------|--------|
+| `PUT /api/movie/{id}/watchlist`, `PUT /api/tv/{id}/watchlist` | `{"listed": bool}` | `marks` (+ `watched` for TV) |
+| `PUT /api/movie/{id}/favorite`, `PUT /api/tv/{id}/favorite` | `{"listed": bool}` | `marks` (+ `watched` for TV) |
+| `PUT /api/movie/{id}/watched`, `PUT /api/tv/{id}/watched` | `{"watched": bool}` | `marks` (+ `watched` for TV) |
+| `PUT /api/tv/{id}/season/{n}/watched`, `PUT /api/tv/{id}/season/{n}/episode/{e}/watched` | `{"watched": bool}` | the show's watched marks |
 
 HTML and JSON both go through `Catalog` (`src/catalog.rs`) and the types in
 `src/model.rs`.

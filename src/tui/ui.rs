@@ -10,11 +10,11 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::api::{
-    Availability, Credit, Episode, EpisodeRatings, KeyCrew, Kind, List, ListServices, Metadata,
-    Person, PersonCredit, Rating, RatingSource, Ratings, SearchHit, Season, ServicesState,
-    SortRatings, State, Title, UnavailableReason, Watched, WhereToWatch,
+    Availability, Credit, Episode, EpisodeRatings, KeyCrew, Kind, List, ListServices, Marks,
+    Metadata, Person, PersonCredit, Rating, RatingSource, Ratings, SearchHit, Season,
+    ServicesState, SortRatings, State, Title, UnavailableReason, Watched, WhereToWatch,
 };
-use super::app::{App, Content, ListName, ListView, Load, Screen, Target};
+use super::app::{App, Content, ListName, ListView, Load, Screen, Status, Target};
 use super::theme::palette;
 
 /// Width the link list is built at when only the links matter.
@@ -105,10 +105,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     frame.render_widget(Block::new().style(base), frame.area());
     let on_search = app.stack.is_empty();
-    let [header, search, body, footer] = Layout::vertical([
+    let [header, search, body, status, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(if on_search { 3 } else { 0 }),
         Constraint::Min(3),
+        Constraint::Length(u16::from(app.status.is_some())),
         Constraint::Length(1),
     ])
     .areas(frame.area());
@@ -118,7 +119,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_search_box(frame, app, search);
     }
     draw_body(frame, app, body);
+    draw_status(frame, app, status);
     draw_footer(frame, app, footer);
+}
+
+/// How the last toggle went.
+fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
+    let line = match &app.status {
+        None => return,
+        Some(Status::Saving) => Line::styled(" Saving…", Style::new().fg(palette().accent)),
+        Some(Status::Done(message)) => {
+            Line::styled(format!(" {message}"), Style::new().fg(palette().mine))
+        }
+        Some(Status::Failed(message)) => {
+            Line::styled(format!(" {message}"), Style::new().fg(palette().warn))
+        }
+    };
+    frame.render_widget(line, area);
 }
 
 /// The link the highlighted line points at, if any.
@@ -211,16 +228,22 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             "type to search · ↓/Enter results · Esc then w/f lists · Ctrl-U clear · Ctrl-C quit"
         }
         Some(Target::List(ListName::Watchlist, _)) => {
-            "j/k move · Enter open · t kind · o sort · m services · f Favorites · Esc back · r reload · q quit"
+            "j/k move · Enter open · b/F/x toggle · t/o kind/sort · m services · f Favorites · Esc back · q quit"
         }
         Some(Target::List(ListName::Favorites, _)) => {
-            "j/k move · Enter open · t kind · o sort · w To watch · Esc back · r reload · q quit"
+            "j/k move · Enter open · b/F/x toggle · t kind · o sort · w To watch · Esc back · r reload · q quit"
+        }
+        Some(Target::Title(Kind::Tv, _)) => {
+            "j/k move · Enter open · b/F toggle · x season · X show · w/f lists · Esc back · r reload · q quit"
+        }
+        Some(Target::Title(..)) => {
+            "j/k move · Enter open · b/F/x toggle · w/f lists · Esc back · / search · r reload · q quit"
         }
         Some(Target::Season(..)) => {
-            "j/k move · Enter open · s peek · Esc back · / search · r reload · q quit"
+            "j/k move · Enter open · x episode · X season · s peek · Esc back · r reload · q quit"
         }
         Some(Target::Episode(..)) => {
-            "j/k move · Enter open · s peek · [/] prev/next · Esc back · / search · r reload · q quit"
+            "j/k move · Enter open · x watched · s peek · [/] prev/next · Esc back · r reload · q quit"
         }
         _ => "j/k move · Enter open · w/f lists · Esc back · / search · r reload · q quit",
     };
@@ -403,6 +426,9 @@ fn title_page(t: &Title, width: u16) -> Page {
     page.line(Line::styled(facts.join(" · "), dim()));
     if let Some(tagline) = t.tagline.as_ref().filter(|s| !s.is_empty()) {
         page.line(Line::styled(tagline.clone(), dim().italic()));
+    }
+    if let Some(marks) = &t.marks {
+        page.line(Line::from(mark_spans(marks, true)));
     }
     stale_notice(&mut page, &t.metadata, width);
 
@@ -798,10 +824,10 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
         page.line(Line::styled(
             match name {
                 ListName::Watchlist => {
-                    "Nothing saved yet. Add a movie or TV show to To watch on the web and it will be listed here."
+                    "Nothing saved yet. Press b on a movie or TV show to add it to To watch."
                 }
                 ListName::Favorites => {
-                    "No favorites yet. Heart a movie or TV show on the web and it will be listed here."
+                    "No favorites yet. Press F on a movie or TV show to heart it."
                 }
             },
             dim(),
@@ -870,6 +896,10 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
             ),
             Span::raw(format!("{}  ", pad(&e.title, column))),
         ];
+        if let Some(marks) = &e.marks {
+            spans.extend(mark_spans(marks, false));
+            spans.push(Span::raw("  "));
+        }
         if let Some(r) = &e.rating {
             spans.push(Span::raw(format!("{:<12}", short_score(r))));
         }
@@ -879,6 +909,39 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
         page.link(Line::from(spans), Target::Title(e.kind, e.id));
     }
     page
+}
+
+/// To watch, Favorite and Watched, each lit when set and flagged when it
+/// couldn't be read. `labels` spells them out; list rows show just the glyphs.
+fn mark_spans(marks: &Marks, labels: bool) -> Vec<Span<'static>> {
+    let on = Style::new().fg(palette().mine);
+    let marks = [
+        (marks.to_watch, "■", "□", "To watch", "b"),
+        (marks.favorite, "♥", "♡", "Favorite", "F"),
+        (marks.watched, "✓", "·", "Watched", "x"),
+    ];
+    let mut spans = Vec::new();
+    for (state, set, unset, label, key) in marks {
+        if labels && !spans.is_empty() {
+            spans.push(Span::raw("   "));
+        }
+        let (glyph, style) = match state {
+            Some(true) => (set, on),
+            Some(false) => (unset, dim()),
+            None => ("?", Style::new().fg(palette().warn)),
+        };
+        if !labels {
+            spans.push(Span::styled(glyph, style));
+            continue;
+        }
+        let text = match state {
+            None => format!("{glyph} {label} unreadable"),
+            _ => format!("{glyph} {label}"),
+        };
+        spans.push(Span::styled(text, style));
+        spans.push(Span::styled(format!(" {key}"), dim()));
+    }
+    spans
 }
 
 /// A row of options with the current one highlighted, like the web's tabs.

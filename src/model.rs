@@ -336,12 +336,40 @@ impl WatchedMarks {
     }
 }
 
+/// A movie with whether it's saved and watched.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct MovieWithMarks {
+    #[serde(flatten)]
+    pub title: TitleDetail,
+    pub marks: TitleMarks,
+}
+
 /// A TV show with its watched marks.
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct TvWithWatched {
     #[serde(flatten)]
     pub title: TitleDetail,
     pub watched: WatchedMarks,
+    pub marks: TitleMarks,
+}
+
+/// Whether a title is on To watch and Favorites and marked watched (a TV
+/// show as a whole). Each is `null` when it couldn't be read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
+pub struct TitleMarks {
+    pub to_watch: Option<bool>,
+    pub favorite: Option<bool>,
+    pub watched: Option<bool>,
+}
+
+/// A title's marks after a change. TV shows also carry the show's watched
+/// marks, since favoriting one marks its aired seasons.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct TitleMarksUpdate {
+    pub marks: TitleMarks,
+    /// TV only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watched: Option<WatchedMarks>,
 }
 
 /// A season with its show's watched marks.
@@ -1277,6 +1305,9 @@ pub struct FilmographyEntry {
     /// To watch only, once services are chosen: which of them include it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub availability: Option<Availability>,
+    /// Lists only: whether it's saved and watched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marks: Option<TitleMarks>,
 }
 
 impl FilmographyEntry {

@@ -88,7 +88,25 @@ pub struct Title {
     pub season_list: Vec<SeasonSummary>,
     /// TV only; a server too old to send it can't say what's watched.
     pub watched: Option<Watched>,
+    /// A server too old to send them can't say what's saved.
+    pub marks: Option<Marks>,
     pub metadata: Metadata,
+}
+
+/// Whether a title is on To watch and Favorites and watched (a TV show as a
+/// whole); each `None` when the server couldn't read it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct Marks {
+    pub to_watch: Option<bool>,
+    pub favorite: Option<bool>,
+    pub watched: Option<bool>,
+}
+
+/// A title's marks after a change; a TV show's also carry its watched marks.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MarksUpdate {
+    pub marks: Marks,
+    pub watched: Option<Watched>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -419,6 +437,7 @@ pub struct ListEntry {
     pub rating: Option<Rating>,
     /// To watch only, once services are chosen.
     pub availability: Option<Availability>,
+    pub marks: Option<Marks>,
 }
 
 /// Which of the user's services include a title.

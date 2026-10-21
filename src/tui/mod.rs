@@ -20,7 +20,7 @@ pub use app::App;
 pub use client::{Client, ClientError};
 pub use config::TuiConfig;
 
-use app::{Content, Request, Response, Target};
+use app::{Change, Content, Request, Response, Saved, Target};
 
 /// Takes over the terminal until the user quits.
 pub async fn run(config: TuiConfig) -> io::Result<()> {
@@ -71,10 +71,41 @@ fn send(client: &Client, tx: &mpsc::UnboundedSender<(u64, Response)>, request: R
         let answer = match request {
             Request::Search { seq, query } => (seq, Response::Search(client.search(&query).await)),
             Request::Page { seq, target } => (seq, Response::Page(fetch(&client, target).await)),
+            Request::Save(change) => (0, Response::Saved(change, save(&client, change).await)),
         };
         // The receiver only goes away when the app has quit.
         let _ = tx.send(answer);
     });
+}
+
+/// Sends a toggle; the answer is the new state.
+pub async fn save(client: &Client, change: Change) -> Result<Saved, ClientError> {
+    Ok(match change {
+        Change::Listed {
+            list,
+            kind,
+            id,
+            listed,
+        } => Saved::Title(client.set_listed(list, kind, id, listed).await?),
+        Change::Watched { target, watched } => match target {
+            Target::Title(kind, id) => {
+                Saved::Title(client.set_title_watched(kind, id, watched).await?)
+            }
+            Target::Season(show, number) => {
+                Saved::Show(client.set_watched(show, number, None, watched).await?)
+            }
+            Target::Episode(show, season, number) => Saved::Show(
+                client
+                    .set_watched(show, season, Some(number), watched)
+                    .await?,
+            ),
+            Target::Person(_) | Target::List(..) => {
+                return Err(ClientError::Server(
+                    "that can't be marked watched".to_owned(),
+                ));
+            }
+        },
+    })
 }
 
 /// Loads the page `target` links to.

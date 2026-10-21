@@ -80,7 +80,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TitleDetail"
+                  "$ref": "#/components/schemas/MovieWithMarks"
                 }
               }
             }
@@ -746,6 +746,815 @@
           }
         }
       }
+    },
+    "/api/movie/{id}/watchlist": {
+      "put": {
+        "summary": "Puts a movie on To watch or takes it off.",
+        "operationId": "api_movie_watchlist",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB movie ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleMarksUpdate"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be read or updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}/watchlist": {
+      "put": {
+        "summary": "Puts a TV show on To watch or takes it off.",
+        "operationId": "api_tv_watchlist",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleMarksUpdate"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be read or updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/movie/{id}/favorite": {
+      "put": {
+        "summary": "Hearts a movie or unhearts it.",
+        "operationId": "api_movie_favorite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB movie ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleMarksUpdate"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be read or updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}/favorite": {
+      "put": {
+        "summary": "Hearts a TV show, marking its aired seasons watched, or unhearts it,\nkeeping what's watched.",
+        "operationId": "api_tv_favorite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleMarksUpdate"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be read or updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/movie/{id}/watched": {
+      "put": {
+        "summary": "Marks a movie watched or not. Unmarking one the Apple TV marked sticks.",
+        "operationId": "api_movie_watched",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB movie ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleMarksUpdate"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be read or updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}/watched": {
+      "put": {
+        "summary": "Marks a whole TV show watched or not.",
+        "operationId": "api_tv_watched",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleMarksUpdate"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be read or updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}/season/{number}/watched": {
+      "put": {
+        "summary": "Marks a season watched or not, answering with the show's watched marks.",
+        "operationId": "api_season_watched",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "description": "Season number; 0 is specials",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchedMarks"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be read or updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}/season/{number}/episode/{episode}/watched": {
+      "put": {
+        "summary": "Marks an episode watched or not, answering with the show's watched marks.\nUnmarking one the Apple TV marked sticks.",
+        "operationId": "api_episode_watched",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "description": "Season number; 0 is specials",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "episode",
+            "in": "path",
+            "description": "Episode number within the season",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchedMarks"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be read or updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1289,6 +2098,17 @@
                 "type": "null"
               }
             ]
+          },
+          "marks": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TitleMarks",
+                "description": "Lists only: whether it's saved and watched."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -1406,6 +2226,18 @@
           }
         }
       },
+      "ListedBody": {
+        "type": "object",
+        "description": "Puts a title on a list or takes it off.",
+        "required": [
+          "listed"
+        ],
+        "properties": {
+          "listed": {
+            "type": "boolean"
+          }
+        }
+      },
       "LiveStatus": {
         "oneOf": [
           {
@@ -1514,6 +2346,25 @@
           "fresh",
           "stale"
         ]
+      },
+      "MovieWithMarks": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TitleDetail"
+          },
+          {
+            "type": "object",
+            "required": [
+              "marks"
+            ],
+            "properties": {
+              "marks": {
+                "$ref": "#/components/schemas/TitleMarks"
+              }
+            }
+          }
+        ],
+        "description": "A movie with whether it's saved and watched."
       },
       "OfferGroup": {
         "type": "object",
@@ -2611,6 +3462,53 @@
           }
         }
       },
+      "TitleMarks": {
+        "type": "object",
+        "description": "Whether a title is on To watch and Favorites and marked watched (a TV\nshow as a whole). Each is `null` when it couldn't be read.",
+        "properties": {
+          "to_watch": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "favorite": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "watched": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "TitleMarksUpdate": {
+        "type": "object",
+        "description": "A title's marks after a change. TV shows also carry the show's watched\nmarks, since favoriting one marks its aired seasons.",
+        "required": [
+          "marks"
+        ],
+        "properties": {
+          "marks": {
+            "$ref": "#/components/schemas/TitleMarks"
+          },
+          "watched": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WatchedMarks",
+                "description": "TV only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "TvWithWatched": {
         "allOf": [
           {
@@ -2619,11 +3517,15 @@
           {
             "type": "object",
             "required": [
-              "watched"
+              "watched",
+              "marks"
             ],
             "properties": {
               "watched": {
                 "$ref": "#/components/schemas/WatchedMarks"
+              },
+              "marks": {
+                "$ref": "#/components/schemas/TitleMarks"
               }
             }
           }
@@ -2663,6 +3565,18 @@
           "mine": {
             "type": "boolean",
             "description": "One of the user's services."
+          }
+        }
+      },
+      "WatchedBody": {
+        "type": "object",
+        "description": "Marks something watched or not.",
+        "required": [
+          "watched"
+        ],
+        "properties": {
+          "watched": {
+            "type": "boolean"
           }
         }
       },

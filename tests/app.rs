@@ -2196,6 +2196,218 @@ async fn favorites_persist_and_storage_failures_never_look_empty() {
     }
 }
 
+async fn put_json(app: Router, uri: &str, body: Value) -> (StatusCode, Value) {
+    let request = Request::put(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
+#[tokio::test]
+async fn json_writes_mirror_the_forms_and_answer_with_the_new_state() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(
+        json["marks"],
+        json!({ "to_watch": false, "favorite": false, "watched": false })
+    );
+
+    let (status, json) = put_json(
+        t.app(),
+        "/api/movie/603/watchlist",
+        json!({ "listed": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json,
+        json!({ "marks": { "to_watch": true, "favorite": false, "watched": false } }),
+        "movies carry no show marks"
+    );
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json["marks"]["to_watch"], true);
+
+    // Favoriting a show marks its aired seasons, as the form does.
+    put_json(
+        t.app(),
+        "/api/tv/1396/season/2/episode/1/watched",
+        json!({ "watched": true }),
+    )
+    .await;
+    let (status, json) =
+        put_json(t.app(), "/api/tv/1396/favorite", json!({ "listed": true })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json["marks"],
+        json!({ "to_watch": false, "favorite": true, "watched": false })
+    );
+    assert_eq!(json["watched"]["seasons"], json!([0, 1, 2]));
+    assert_eq!(json["watched"]["episodes"][0]["season"], 2);
+    assert!(!t.catalog.watched(1396).await.show);
+
+    // Lists carry each row's marks.
+    put_json(
+        t.app(),
+        "/api/movie/603/watched",
+        json!({ "watched": true }),
+    )
+    .await;
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(
+        json["titles"][0]["marks"],
+        json!({ "to_watch": true, "favorite": false, "watched": true })
+    );
+    let (_, json) = get_json(t.app(), "/api/favorites").await;
+    assert_eq!(
+        json["titles"][0]["marks"],
+        json!({ "to_watch": false, "favorite": true, "watched": false })
+    );
+    let (_, json) = get_json(t.app(), "/api/tv/1396").await;
+    assert_eq!(json["marks"]["favorite"], true);
+
+    // Unhearting keeps watched history; removing needs no provider.
+    t.tmdb.set_down(true);
+    let (status, json) =
+        put_json(t.app(), "/api/tv/1396/favorite", json!({ "listed": false })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["marks"]["favorite"], false);
+    assert_eq!(json["watched"]["seasons"], json!([0, 1, 2]));
+    let (_, json) = put_json(
+        t.app(),
+        "/api/movie/603/watchlist",
+        json!({ "listed": false }),
+    )
+    .await;
+    assert_eq!(json["marks"]["to_watch"], false);
+    t.tmdb.set_down(false);
+
+    let (_, json) = put_json(t.app(), "/api/tv/1396/watched", json!({ "watched": true })).await;
+    assert_eq!(json["marks"]["watched"], true);
+    assert_eq!(json["watched"]["show"], true);
+    let (status, json) = put_json(
+        t.app(),
+        "/api/tv/1396/season/3/watched",
+        json!({ "watched": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["state"], "read");
+    assert_eq!(json["seasons"], json!([0, 1, 2, 3]));
+    let (_, json) = put_json(
+        t.app(),
+        "/api/tv/1396/season/2/episode/1/watched",
+        json!({ "watched": false }),
+    )
+    .await;
+    assert_eq!(json["episodes"], json!([]));
+    let (_, json) = put_json(
+        t.app(),
+        "/api/movie/603/watched",
+        json!({ "watched": false }),
+    )
+    .await;
+    assert_eq!(json["marks"]["watched"], false);
+
+    // Failures answer with the API's error body.
+    for uri in ["/api/movie/1/favorite", "/api/movie/not-an-id/watchlist"] {
+        let (status, json) = put_json(t.app(), uri, json!({ "listed": true })).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        assert!(json["error"].is_string());
+    }
+    let (status, json) = put_json(t.app(), "/api/tv/500/favorite", json!({ "listed": true })).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(json["error"].as_str().unwrap().contains("TMDB"));
+    let (status, json) = put_json(
+        t.app(),
+        "/api/movie/603/favorite",
+        json!({ "listed": "maybe" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(json["error"].is_string());
+    let (status, _) = put_json(
+        t.app(),
+        "/api/tv/1396/season/x/watched",
+        json!({ "watched": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn json_writes_are_refused_when_storage_fails() {
+    let database = temp_database("api-writes");
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, &database).await;
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    for table in ["favorites", "watched_movies", "watched_seasons"] {
+        sqlx::query(&format!(
+            "ALTER TABLE {table} RENAME TO {table}_unavailable"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    for listed in [true, false] {
+        let (status, json) = put_json(
+            t.app(),
+            "/api/movie/603/favorite",
+            json!({ "listed": listed }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("nothing was saved"),
+            "{json}"
+        );
+    }
+    let (status, json) = put_json(
+        t.app(),
+        "/api/movie/603/watched",
+        json!({ "watched": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(json["error"].as_str().unwrap().contains("watched marks"));
+    let (status, _) = put_json(
+        t.app(),
+        "/api/tv/1396/season/1/watched",
+        json!({ "watched": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+
+    // Unreadable marks are null, never passed off as false.
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(
+        json["marks"],
+        json!({ "to_watch": false, "favorite": null, "watched": null })
+    );
+    let (status, json) = put_json(
+        t.app(),
+        "/api/movie/603/watchlist",
+        json!({ "listed": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "To watch still works");
+    assert_eq!(json["marks"]["favorite"], Value::Null);
+    drop(t);
+    pool.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
+}
+
 #[tokio::test]
 async fn watchlist_sorts_by_rating_and_reports_problems() {
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
@@ -3056,6 +3268,18 @@ async fn a_movie_played_to_ninety_percent_is_marked_watched_on_its_page() {
     assert!(page.contains(r#"aria-pressed="true""#));
     assert!(page.contains("Marked watched from what played on the Apple TV."));
 
+    // Unmarking over the JSON API sticks too.
+    let (status, json) = put_json(
+        p.t.app(),
+        "/api/movie/105/watched",
+        json!({ "watched": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["marks"]["watched"], false);
+    p.sync().await.unwrap();
+    assert!(!p.t.catalog.movie_watched(105).await.watched);
+
     // Unmarking from the page sticks, and marking again is a manual mark.
     let (status, headers) = post_form(p.t.app(), "/movie/105/watched", "watched=false").await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -3462,6 +3686,7 @@ async fn fulfil(client: &tui::Client, app: &mut tui::App, request: tui::app::Req
     let (seq, response) = match request {
         Request::Search { seq, query } => (seq, Response::Search(client.search(&query).await)),
         Request::Page { seq, target } => (seq, Response::Page(tui::fetch(client, target).await)),
+        Request::Save(change) => (0, Response::Saved(change, tui::save(client, change).await)),
     };
     app.respond(seq, response);
 }
@@ -3801,7 +4026,7 @@ async fn terminal_client_shows_to_watch_and_favorites_with_filters() {
         .find("2008  TV    Breaking Bad")
         .expect("Breaking Bad row");
     let matrix = list
-        .find("1999  Movie The Matrix    ★ Netflix")
+        .find("1999  Movie The Matrix    ■♥·  ★ Netflix")
         .expect("The Matrix row");
     assert!(bb < matrix, "most recently added first: {list}");
     assert!(list.contains("m services"), "{list}");
@@ -3826,7 +4051,10 @@ async fn terminal_client_shows_to_watch_and_favorites_with_filters() {
     fulfil(&client, &mut app, rated.into_iter().next().unwrap()).await;
     let list = screen(&mut app);
     assert!(!list.contains("Breaking Bad"), "{list}");
-    assert!(list.contains("The Matrix  RT 83%      ★ Netflix"), "{list}");
+    assert!(
+        list.contains("The Matrix  ■♥·  RT 83%      ★ Netflix"),
+        "{list}"
+    );
     let tv = press(&mut app, KeyCode::Char('t'));
     fulfil(&client, &mut app, tv.into_iter().next().unwrap()).await;
     let mine = press(&mut app, KeyCode::Char('m'));
@@ -3887,7 +4115,7 @@ async fn terminal_client_shows_to_watch_and_favorites_with_filters() {
     fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
     let list = screen(&mut app);
     assert!(
-        list.contains("The Matrix    Availability unknown"),
+        list.contains("The Matrix    ■♥·  Availability unknown"),
         "{list}"
     );
     assert!(
@@ -3928,7 +4156,7 @@ async fn terminal_client_lists_say_when_ratings_are_stale_or_missing() {
     let reload = press(&mut app, KeyCode::Char('r'));
     fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
     let list = screen(&mut app);
-    assert!(list.contains("The Matrix  RT 83%"), "{list}");
+    assert!(list.contains("The Matrix  □♥·  RT 83%"), "{list}");
     assert!(
         list.contains("Couldn't refresh some ratings; using scores from as early as "),
         "{list}"
@@ -3953,4 +4181,172 @@ async fn terminal_client_lists_say_when_ratings_are_stale_or_missing() {
         ),
         "{list}"
     );
+}
+
+#[tokio::test]
+async fn terminal_client_toggles_to_watch_favorite_and_watched() {
+    let database = temp_database("tui-toggles");
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, &database).await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+
+    // A movie's marks, toggled in place from the server's answer.
+    let open = app.open(tui::app::Target::Title(tui::api::Kind::Movie, 603));
+    fulfil(&client, &mut app, open).await;
+    let movie = screen(&mut app);
+    assert!(
+        movie.contains("□ To watch b   ♡ Favorite F   · Watched x"),
+        "{movie}"
+    );
+    let save = press(&mut app, KeyCode::Char('b'));
+    assert!(matches!(
+        save.as_slice(),
+        [tui::app::Request::Save(tui::app::Change::Listed {
+            list: tui::app::ListName::Watchlist,
+            listed: true,
+            ..
+        })]
+    ));
+    assert!(screen(&mut app).contains("Saving…"));
+    assert!(
+        press(&mut app, KeyCode::Char('F')).is_empty(),
+        "one save at a time"
+    );
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    let movie = screen(&mut app);
+    assert!(movie.contains("■ To watch b"), "{movie}");
+    assert!(movie.contains("Added to To watch."), "{movie}");
+    for key in ['F', 'x'] {
+        let save = press(&mut app, KeyCode::Char(key));
+        fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    }
+    let movie = screen(&mut app);
+    assert!(
+        movie.contains("■ To watch b   ♥ Favorite F   ✓ Watched x"),
+        "{movie}"
+    );
+    assert!(movie.contains("Movie marked watched."), "{movie}");
+    press(&mut app, KeyCode::Char('j'));
+    assert!(
+        !screen(&mut app).contains("Movie marked watched."),
+        "the outcome clears on the next key"
+    );
+
+    // Favoriting a show shows the seasons the server marked watched.
+    let open = app.open(tui::app::Target::Title(tui::api::Kind::Tv, 1396));
+    fulfil(&client, &mut app, open).await;
+    assert!(!screen(&mut app).contains("✓ Watched"));
+    let save = press(&mut app, KeyCode::Char('F'));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    let show = screen(&mut app);
+    assert!(show.contains("♥ Favorite F"), "{show}");
+    assert!(
+        show.contains("2  Season 2  13 episodes        ✓ Watched"),
+        "{show}"
+    );
+    assert!(show.contains("· Watched x"), "not the whole show: {show}");
+
+    // x unmarks the highlighted season; X marks the whole show, which
+    // still covers it.
+    let save = press(&mut app, KeyCode::Char('x'));
+    assert!(matches!(
+        save.as_slice(),
+        [tui::app::Request::Save(tui::app::Change::Watched {
+            target: tui::app::Target::Season(1396, 1),
+            watched: false,
+        })]
+    ));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    assert!(!t.catalog.watched(1396).await.season(1));
+    let save = press(&mut app, KeyCode::Char('X'));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    assert!(screen(&mut app).contains("✓ Watched x"));
+    let save = press(&mut app, KeyCode::Char('x'));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    let show = screen(&mut app);
+    assert!(
+        show.contains("Season unmarked, but still watched with its show."),
+        "{show}"
+    );
+    let save = press(&mut app, KeyCode::Char('X'));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+
+    // On a season, x marks the highlighted episode, revealing its score.
+    let open = app.open(tui::app::Target::Season(1396, 1));
+    fulfil(&client, &mut app, open).await;
+    assert!(screen(&mut app).contains("IMDb ▒▒▒▒▒▒"));
+    let save = press(&mut app, KeyCode::Char('x'));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    let season = screen(&mut app);
+    assert!(season.contains("IMDb 9.0/10"), "{season}");
+    assert!(season.contains("Episode marked watched."), "{season}");
+    assert!(t.catalog.watched(1396).await.episode(1, 1));
+
+    // List rows carry their marks and toggle in place.
+    press(&mut app, KeyCode::Esc);
+    press(&mut app, KeyCode::Esc);
+    let open = press(&mut app, KeyCode::Char('w'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    assert!(
+        screen(&mut app).contains("1999  Movie The Matrix  ■♥✓"),
+        "{}",
+        screen(&mut app)
+    );
+    for key in ['x', 'b'] {
+        let save = press(&mut app, KeyCode::Char(key));
+        fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    }
+    let list = screen(&mut app);
+    assert!(
+        list.contains("The Matrix  □♥·"),
+        "kept until reload: {list}"
+    );
+    assert!(list.contains("Removed from To watch."), "{list}");
+
+    // Failures leave the state alone and say why.
+    press(&mut app, KeyCode::Esc);
+    let save = press(&mut app, KeyCode::Char('b'));
+    fulfil(
+        &tui::Client::new("http://127.0.0.1:9"),
+        &mut app,
+        save.into_iter().next().unwrap(),
+    )
+    .await;
+    let movie = screen(&mut app);
+    assert!(
+        movie.contains("Couldn't save: can't reach the credits server at http://127.0.0.1:9"),
+        "{movie}"
+    );
+    assert!(movie.contains("□ To watch b"), "{movie}");
+
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query("ALTER TABLE favorites RENAME TO favorites_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let save = press(&mut app, KeyCode::Char('F'));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    let movie = screen(&mut app);
+    assert!(
+        movie.contains("Couldn't save: your favorites couldn't be updated, so nothing was saved"),
+        "{movie}"
+    );
+    assert!(movie.contains("♥ Favorite F"), "{movie}");
+    let reload = press(&mut app, KeyCode::Char('r'));
+    fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
+    assert!(screen(&mut app).contains("? Favorite unreadable F"));
+    assert!(press(&mut app, KeyCode::Char('F')).is_empty());
+    assert!(
+        screen(&mut app).contains("Favorites couldn't be read, so it can't be changed; r reloads.")
+    );
+    drop(t);
+    pool.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
 }

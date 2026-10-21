@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use super::api::{Episode, Kind, List, Person, SearchHit, Season, ServicesState, Title};
+use super::api::{
+    Episode, Kind, List, Marks, MarksUpdate, Person, SearchHit, Season, ServicesState, Title,
+    Watched,
+};
 use super::client::ClientError;
 
 /// Typing pause before a search goes out, so each keystroke isn't a request.
@@ -53,12 +56,42 @@ pub struct ListView {
 pub enum Request {
     Search { seq: u64, query: String },
     Page { seq: u64, target: Target },
+    Save(Change),
 }
 
 #[derive(Debug)]
 pub enum Response {
     Search(Result<Vec<SearchHit>, ClientError>),
     Page(Result<Content, ClientError>),
+    Saved(Change, Result<Saved, ClientError>),
+}
+
+/// A toggle sent to the server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    Listed {
+        list: ListName,
+        kind: Kind,
+        id: u64,
+        listed: bool,
+    },
+    /// A movie, a TV show as a whole (`Target::Title`), a season or an episode.
+    Watched { target: Target, watched: bool },
+}
+
+/// The server's answer to a `Change`: the new state.
+#[derive(Debug)]
+pub enum Saved {
+    Title(MarksUpdate),
+    Show(Watched),
+}
+
+/// The line under the page saying how the last toggle went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Status {
+    Saving,
+    Done(String),
+    Failed(String),
 }
 
 /// What a page shows once it has loaded.
@@ -142,6 +175,7 @@ pub struct App {
     pub editing: bool,
     /// Pages opened from search, most recent last.
     pub stack: Vec<Screen>,
+    pub status: Option<Status>,
     pub quit: bool,
     next_seq: u64,
 }
@@ -153,6 +187,7 @@ impl App {
             search: Search::default(),
             editing: true,
             stack: Vec::new(),
+            status: None,
             quit: false,
             next_seq: 0,
         }
@@ -179,6 +214,10 @@ impl App {
         if ctrl && key.code == KeyCode::Char('c') {
             self.quit = true;
             return Vec::new();
+        }
+        // A finished toggle's outcome stays until the next key.
+        if self.status != Some(Status::Saving) {
+            self.status = None;
         }
         if self.editing {
             self.edit_key(key, ctrl, now)
@@ -211,6 +250,7 @@ impl App {
                     screen.load = loaded(result);
                 }
             }
+            Response::Saved(change, result) => self.saved(change, result),
         }
     }
 
@@ -338,6 +378,10 @@ impl App {
             KeyCode::Char('m') if self.can_filter_services() => {
                 return self.change_view(|v| v.mine = !v.mine).into_iter().collect();
             }
+            KeyCode::Char('b') => return self.toggle_listed(ListName::Watchlist),
+            KeyCode::Char('F') => return self.toggle_listed(ListName::Favorites),
+            KeyCode::Char('x') => return self.toggle_watched(false),
+            KeyCode::Char('X') => return self.toggle_watched(true),
             _ => {}
         }
         Vec::new()
@@ -360,6 +404,249 @@ impl App {
                 screen.peeked.remove(i);
             }
             None => screen.peeked.push(episode),
+        }
+    }
+
+    /// Bookmarks or hearts the title on screen, or the highlighted list row.
+    fn toggle_listed(&mut self, list: ListName) -> Vec<Request> {
+        let Some(Target::Title(kind, id)) = self.title_target() else {
+            return Vec::new();
+        };
+        let current = self.marks_of(kind, id).and_then(|m| match list {
+            ListName::Watchlist => m.to_watch,
+            ListName::Favorites => m.favorite,
+        });
+        let Some(current) = current else {
+            return self.refuse(format!(
+                "{} couldn't be read, so it can't be changed; r reloads.",
+                list.label()
+            ));
+        };
+        self.save(Change::Listed {
+            list,
+            kind,
+            id,
+            listed: !current,
+        })
+    }
+
+    /// Marks the highlighted season, episode or list row watched or not, or
+    /// the page itself when nothing markable is highlighted or `page` is set.
+    fn toggle_watched(&mut self, page: bool) -> Vec<Request> {
+        let selected = super::ui::selected_target(self)
+            .filter(|_| !page)
+            .filter(|t| self.watched_of(*t).is_some());
+        let Some(target) = selected.or_else(|| self.subject()) else {
+            return Vec::new();
+        };
+        let Some(current) = self.watched_of(target) else {
+            return self
+                .refuse("Watched marks couldn't be read, so they can't be changed; r reloads.");
+        };
+        self.save(Change::Watched {
+            target,
+            watched: !current,
+        })
+    }
+
+    fn refuse(&mut self, message: impl Into<String>) -> Vec<Request> {
+        self.status = Some(Status::Failed(message.into()));
+        Vec::new()
+    }
+
+    fn save(&mut self, change: Change) -> Vec<Request> {
+        // One at a time, so answers can't arrive out of order.
+        if self.status == Some(Status::Saving) {
+            return Vec::new();
+        }
+        self.status = Some(Status::Saving);
+        vec![Request::Save(change)]
+    }
+
+    /// The page's own title, season or episode.
+    fn subject(&self) -> Option<Target> {
+        match &self.stack.last()?.load {
+            Load::Ready(Content::Title(t)) => Some(Target::Title(t.kind, t.id)),
+            Load::Ready(Content::Season(s)) => Some(Target::Season(s.show_id, s.number)),
+            Load::Ready(Content::Episode(e)) => {
+                Some(Target::Episode(e.show_id, e.season_number, e.number))
+            }
+            _ => None,
+        }
+    }
+
+    /// The title b and F act on: the one on screen, or the highlighted row.
+    fn title_target(&self) -> Option<Target> {
+        match &self.stack.last()?.load {
+            Load::Ready(Content::Title(t)) => Some(Target::Title(t.kind, t.id)),
+            Load::Ready(Content::List(_)) => super::ui::selected_target(self),
+            _ => None,
+        }
+    }
+
+    /// A title's marks as the current page knows them.
+    fn marks_of(&self, kind: Kind, id: u64) -> Option<Marks> {
+        match &self.stack.last()?.load {
+            Load::Ready(Content::Title(t)) if t.kind == kind && t.id == id => t.marks,
+            Load::Ready(Content::List(l)) => l
+                .titles
+                .iter()
+                .find(|e| e.kind == kind && e.id == id)
+                .and_then(|e| e.marks),
+            _ => None,
+        }
+    }
+
+    /// Whether `target` is watched, as the current page knows it; `None` if
+    /// it can't say.
+    fn watched_of(&self, target: Target) -> Option<bool> {
+        let show = |watched: &Option<Watched>| {
+            watched
+                .as_ref()
+                .filter(|_| Watched::readable(watched.as_ref()))
+                .cloned()
+        };
+        let marks = match (&self.stack.last()?.load, target) {
+            (_, Target::Title(kind, id)) => return self.marks_of(kind, id)?.watched,
+            (Load::Ready(Content::Title(t)), _) => show(&t.watched),
+            (Load::Ready(Content::Season(s)), _) => show(&s.watched),
+            (Load::Ready(Content::Episode(e)), _) => show(&e.watched),
+            _ => None,
+        }?;
+        match target {
+            Target::Season(_, number) => Some(marks.season(number)),
+            Target::Episode(_, season, number) => Some(marks.episode(season, number)),
+            _ => None,
+        }
+    }
+
+    /// Applies the server's answer to every open page showing it; a failure
+    /// changes nothing.
+    fn saved(&mut self, change: Change, result: Result<Saved, ClientError>) {
+        let saved = match result {
+            Ok(saved) => saved,
+            Err(e) => {
+                let e = match e {
+                    ClientError::NotFound => "not found".to_owned(),
+                    e => e.to_string(),
+                };
+                self.status = Some(Status::Failed(format!("Couldn't save: {e}")));
+                return;
+            }
+        };
+        let show = match change {
+            Change::Listed {
+                kind: Kind::Tv, id, ..
+            }
+            | Change::Watched {
+                target: Target::Title(Kind::Tv, id),
+                ..
+            }
+            | Change::Watched {
+                target: Target::Season(id, _) | Target::Episode(id, ..),
+                ..
+            } => Some(id),
+            _ => None,
+        };
+        match saved {
+            Saved::Title(update) => {
+                if let Change::Listed { kind, id, .. }
+                | Change::Watched {
+                    target: Target::Title(kind, id),
+                    ..
+                } = change
+                {
+                    self.apply_marks(kind, id, update.marks);
+                }
+                if let (Some(show), Some(watched)) = (show, update.watched) {
+                    self.apply_watched(show, watched);
+                }
+            }
+            Saved::Show(watched) => {
+                if let Some(show) = show {
+                    self.apply_watched(show, watched);
+                }
+            }
+        }
+        self.status = Some(Status::Done(self.saved_message(change)));
+    }
+
+    fn saved_message(&self, change: Change) -> String {
+        match change {
+            Change::Listed { list, listed, .. } => {
+                let verb = if listed { "Added to" } else { "Removed from" };
+                format!("{verb} {}.", list.label())
+            }
+            Change::Watched { target, watched } => {
+                let what = match target {
+                    Target::Title(Kind::Movie, _) => "Movie",
+                    Target::Title(Kind::Tv, _) => "Show",
+                    Target::Season(..) => "Season",
+                    _ => "Episode",
+                };
+                // Unmarking a season of a watched show leaves it covered.
+                let covered = !watched && self.watched_of(target) == Some(true);
+                match (watched, covered) {
+                    (true, _) => format!("{what} marked watched."),
+                    (false, false) => format!("{what} marked unwatched."),
+                    (false, true) => format!(
+                        "{what} unmarked, but still watched with its {}.",
+                        if matches!(target, Target::Episode(..)) {
+                            "season or show"
+                        } else {
+                            "show"
+                        }
+                    ),
+                }
+            }
+        }
+    }
+
+    fn apply_marks(&mut self, kind: Kind, id: u64, marks: Marks) {
+        for screen in &mut self.stack {
+            match &mut screen.load {
+                Load::Ready(Content::Title(t)) if t.kind == kind && t.id == id => {
+                    t.marks = Some(marks);
+                }
+                Load::Ready(Content::List(l)) => {
+                    for e in l.titles.iter_mut().filter(|e| e.kind == kind && e.id == id) {
+                        e.marks = Some(marks);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn apply_watched(&mut self, show: u64, watched: Watched) {
+        let whole = Watched::readable(Some(&watched)).then_some(watched.show);
+        for screen in &mut self.stack {
+            match &mut screen.load {
+                Load::Ready(Content::Title(t)) if t.kind == Kind::Tv && t.id == show => {
+                    t.watched = Some(watched.clone());
+                    if let Some(marks) = &mut t.marks {
+                        marks.watched = whole;
+                    }
+                }
+                Load::Ready(Content::Season(s)) if s.show_id == show => {
+                    s.watched = Some(watched.clone());
+                }
+                Load::Ready(Content::Episode(e)) if e.show_id == show => {
+                    e.watched = Some(watched.clone());
+                }
+                Load::Ready(Content::List(l)) => {
+                    for e in l
+                        .titles
+                        .iter_mut()
+                        .filter(|e| e.kind == Kind::Tv && e.id == show)
+                    {
+                        if let Some(marks) = &mut e.marks {
+                            marks.watched = whole;
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 

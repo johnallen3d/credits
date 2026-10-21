@@ -4,7 +4,10 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 
-use super::api::{ApiError, Episode, Kind, List, Person, SearchHit, SearchResults, Season, Title};
+use super::api::{
+    ApiError, Episode, Kind, List, MarksUpdate, Person, SearchHit, SearchResults, Season, Title,
+    Watched,
+};
 use super::app::{ListName, ListView};
 
 #[derive(Clone)]
@@ -94,15 +97,75 @@ impl Client {
         self.get(path, &query).await
     }
 
+    /// Puts a title on To watch or Favorites, or takes it off.
+    pub async fn set_listed(
+        &self,
+        list: ListName,
+        kind: Kind,
+        id: u64,
+        listed: bool,
+    ) -> Result<MarksUpdate, ClientError> {
+        let list = match list {
+            ListName::Watchlist => "watchlist",
+            ListName::Favorites => "favorite",
+        };
+        let path = format!("/api/{}/{id}/{list}", kind.slug());
+        self.put(&path, serde_json::json!({ "listed": listed }))
+            .await
+    }
+
+    /// Marks a movie, or a TV show as a whole, watched or not.
+    pub async fn set_title_watched(
+        &self,
+        kind: Kind,
+        id: u64,
+        watched: bool,
+    ) -> Result<MarksUpdate, ClientError> {
+        let path = format!("/api/{}/{id}/watched", kind.slug());
+        self.put(&path, serde_json::json!({ "watched": watched }))
+            .await
+    }
+
+    /// Marks a season, or one of its episodes, watched or not; answers with
+    /// the show's marks.
+    pub async fn set_watched(
+        &self,
+        show: u64,
+        season: u32,
+        episode: Option<u32>,
+        watched: bool,
+    ) -> Result<Watched, ClientError> {
+        let path = match episode {
+            Some(number) => format!("/api/tv/{show}/season/{season}/episode/{number}/watched"),
+            None => format!("/api/tv/{show}/season/{season}/watched"),
+        };
+        self.put(&path, serde_json::json!({ "watched": watched }))
+            .await
+    }
+
     async fn get<T: DeserializeOwned>(
         &self,
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<T, ClientError> {
-        let response = self
-            .http
-            .get(format!("{}{path}", self.base))
-            .query(query)
+        let request = self.http.get(format!("{}{path}", self.base)).query(query);
+        self.send(request).await
+    }
+
+    async fn put<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+    ) -> Result<T, ClientError> {
+        let request = self.http.put(format!("{}{path}", self.base)).json(&body);
+        self.send(request).await
+    }
+
+    async fn send<T: DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<T, ClientError> {
+        let response = request
             .send()
             .await
             .map_err(|_| ClientError::Unreachable(self.base.clone()))?;

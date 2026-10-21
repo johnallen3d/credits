@@ -4,7 +4,7 @@
 use askama::Template;
 use axum::{
     Json, Router,
-    extract::{Form, Path, Query, State},
+    extract::{Form, Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -18,9 +18,10 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::catalog::{Catalog, CatalogError, ServicesError, WatchlistError};
 use crate::model::{
     EpisodeDetail, EpisodeWithWatched, FilmographyEntry, FilmographyGroup, FilmographySort,
-    KindFilter, MediaKind, MovieWatched, PersonDetail, RecentView, SearchHit, SeasonDetail,
-    SeasonWithWatched, ServicesDetail, ServicesFilter, TitleCredits, TitleDetail, TvWithWatched,
-    WatchTarget, Watched, WatchlistDetail, WatchlistSort, title_path,
+    KindFilter, MediaKind, MovieWatched, MovieWithMarks, PersonDetail, RecentView, SearchHit,
+    SeasonDetail, SeasonWithWatched, ServicesDetail, ServicesFilter, TitleCredits, TitleDetail,
+    TitleMarksUpdate, TvWithWatched, WatchTarget, Watched, WatchedMarks, WatchlistDetail,
+    WatchlistSort, title_path,
 };
 use crate::playback::{App, Kind, LiveStatus, PlaybackDetail};
 
@@ -144,6 +145,14 @@ fn api() -> OpenApiRouter<Catalog> {
         .routes(routes!(api_favorites))
         .routes(routes!(api_services))
         .routes(routes!(api_playback))
+        .routes(routes!(api_movie_watchlist))
+        .routes(routes!(api_tv_watchlist))
+        .routes(routes!(api_movie_favorite))
+        .routes(routes!(api_tv_favorite))
+        .routes(routes!(api_movie_watched))
+        .routes(routes!(api_tv_watched))
+        .routes(routes!(api_season_watched))
+        .routes(routes!(api_episode_watched))
 }
 
 /// The OpenAPI document for the JSON API, as committed in `openapi.json`.
@@ -175,6 +184,34 @@ enum LookupErrors {
     /// TMDB rejected the token, or failed with no cached copy to fall back on.
     #[response(status = 502)]
     Provider(#[to_schema] ApiError),
+}
+
+/// The ways saving a list or watched mark fails.
+#[derive(IntoResponses)]
+#[allow(dead_code)] // Only describes responses for the spec.
+enum WriteErrors {
+    /// TMDB has nothing with that ID, or an ID isn't a number.
+    #[response(status = 404)]
+    NotFound(#[to_schema] ApiError),
+    /// The database couldn't be read or updated; nothing was saved.
+    #[response(status = 500)]
+    Database(#[to_schema] ApiError),
+    /// Adding needs the title from TMDB, which rejected the token or failed
+    /// with no cached copy to fall back on.
+    #[response(status = 502)]
+    Provider(#[to_schema] ApiError),
+}
+
+/// Puts a title on a list or takes it off.
+#[derive(Deserialize, ToSchema)]
+struct ListedBody {
+    listed: bool,
+}
+
+/// Marks something watched or not.
+#[derive(Deserialize, ToSchema)]
+struct WatchedBody {
+    watched: bool,
 }
 
 /// The database couldn't be read.
@@ -1055,6 +1092,7 @@ async fn api_list(
             let chosen = w.services.as_ref().is_some_and(|s| s.state.is_chosen());
             w.titles
                 .retain(|e| kind.matches(e.kind) && (!chosen || services.matches(e)));
+            catalog.mark_entries(&mut w.titles).await;
             Json(w).into_response()
         }
         Err(e) => {
@@ -1274,10 +1312,20 @@ async fn api_search(
     get,
     path = "/api/movie/{id}",
     params(("id" = u64, Path, description = "TMDB movie ID")),
-    responses((status = OK, body = TitleDetail), LookupErrors)
+    responses((status = OK, body = MovieWithMarks), LookupErrors)
 )]
-async fn api_movie(state: State<Catalog>, id: Path<String>) -> Response {
-    api_detail(state, id, MediaKind::Movie).await
+async fn api_movie(State(catalog): State<Catalog>, Path(id): Path<String>) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return api_not_found();
+    };
+    let result = match catalog.title(MediaKind::Movie, id).await {
+        Ok(title) => Ok(MovieWithMarks {
+            title,
+            marks: catalog.title_marks(MediaKind::Movie, id).await,
+        }),
+        Err(e) => Err(e),
+    };
+    api_result(result, "title")
 }
 
 /// A TV show: metadata, key crew, cast, seasons, ratings, where to watch and
@@ -1296,21 +1344,11 @@ async fn api_tv(State(catalog): State<Catalog>, Path(id): Path<String>) -> Respo
         Ok(title) => Ok(TvWithWatched {
             title,
             watched: catalog.watched_marks(id).await,
+            marks: catalog.title_marks(MediaKind::Tv, id).await,
         }),
         Err(e) => Err(e),
     };
     api_result(result, "title")
-}
-
-async fn api_detail(
-    State(catalog): State<Catalog>,
-    Path(id): Path<String>,
-    kind: MediaKind,
-) -> Response {
-    let Ok(id) = id.parse::<u64>() else {
-        return api_not_found();
-    };
-    api_result(catalog.title(kind, id).await, "title")
 }
 
 /// A movie's whole cast and crew by department.
@@ -1443,6 +1481,253 @@ fn page(
             error_page(status_for(&e), failure_heading, user_message(&e))
         }
     }
+}
+
+/// Puts a movie on To watch or takes it off.
+#[utoipa::path(
+    put,
+    path = "/api/movie/{id}/watchlist",
+    params(("id" = u64, Path, description = "TMDB movie ID")),
+    request_body = ListedBody,
+    responses((status = OK, body = TitleMarksUpdate), WriteErrors)
+)]
+async fn api_movie_watchlist(
+    state: State<Catalog>,
+    id: Path<String>,
+    body: Result<Json<ListedBody>, JsonRejection>,
+) -> Response {
+    api_set_listed(state, id, body, MediaKind::Movie, false).await
+}
+
+/// Puts a TV show on To watch or takes it off.
+#[utoipa::path(
+    put,
+    path = "/api/tv/{id}/watchlist",
+    params(("id" = u64, Path, description = "TMDB TV ID")),
+    request_body = ListedBody,
+    responses((status = OK, body = TitleMarksUpdate), WriteErrors)
+)]
+async fn api_tv_watchlist(
+    state: State<Catalog>,
+    id: Path<String>,
+    body: Result<Json<ListedBody>, JsonRejection>,
+) -> Response {
+    api_set_listed(state, id, body, MediaKind::Tv, false).await
+}
+
+/// Hearts a movie or unhearts it.
+#[utoipa::path(
+    put,
+    path = "/api/movie/{id}/favorite",
+    params(("id" = u64, Path, description = "TMDB movie ID")),
+    request_body = ListedBody,
+    responses((status = OK, body = TitleMarksUpdate), WriteErrors)
+)]
+async fn api_movie_favorite(
+    state: State<Catalog>,
+    id: Path<String>,
+    body: Result<Json<ListedBody>, JsonRejection>,
+) -> Response {
+    api_set_listed(state, id, body, MediaKind::Movie, true).await
+}
+
+/// Hearts a TV show, marking its aired seasons watched, or unhearts it,
+/// keeping what's watched.
+#[utoipa::path(
+    put,
+    path = "/api/tv/{id}/favorite",
+    params(("id" = u64, Path, description = "TMDB TV ID")),
+    request_body = ListedBody,
+    responses((status = OK, body = TitleMarksUpdate), WriteErrors)
+)]
+async fn api_tv_favorite(
+    state: State<Catalog>,
+    id: Path<String>,
+    body: Result<Json<ListedBody>, JsonRejection>,
+) -> Response {
+    api_set_listed(state, id, body, MediaKind::Tv, true).await
+}
+
+async fn api_set_listed(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    body: Result<Json<ListedBody>, JsonRejection>,
+    kind: MediaKind,
+    favorites: bool,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return api_not_found();
+    };
+    let listed = match body {
+        Ok(Json(body)) => body.listed,
+        Err(e) => return api_error(e.status(), &e.body_text()),
+    };
+    let result = match (favorites, listed) {
+        (true, true) => catalog.add_favorite(kind, id).await,
+        (false, true) => catalog.add_to_watchlist(kind, id).await,
+        (true, false) => catalog
+            .remove_favorite(kind, id)
+            .await
+            .map_err(WatchlistError::from),
+        (false, false) => catalog
+            .remove_from_watchlist(kind, id)
+            .await
+            .map_err(WatchlistError::from),
+    };
+    match result {
+        Ok(()) => api_title_marks(&catalog, kind, id).await,
+        Err(WatchlistError::Title(CatalogError::NotFound)) => api_not_found(),
+        Err(WatchlistError::Title(e)) => {
+            tracing::warn!(error = %e, ?kind, id, "api title lookup for list failed");
+            api_error(status_for(&e), user_message(&e))
+        }
+        Err(e @ WatchlistError::Database(_)) => {
+            tracing::warn!(error = %e, ?kind, id, "api list save failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                if favorites {
+                    "your favorites couldn't be updated, so nothing was saved"
+                } else {
+                    "the watchlist couldn't be updated, so nothing was saved"
+                },
+            )
+        }
+    }
+}
+
+/// Marks a movie watched or not. Unmarking one the Apple TV marked sticks.
+#[utoipa::path(
+    put,
+    path = "/api/movie/{id}/watched",
+    params(("id" = u64, Path, description = "TMDB movie ID")),
+    request_body = WatchedBody,
+    responses((status = OK, body = TitleMarksUpdate), WriteErrors)
+)]
+async fn api_movie_watched(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    body: Result<Json<WatchedBody>, JsonRejection>,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return api_not_found();
+    };
+    let watched = match body {
+        Ok(Json(body)) => body.watched,
+        Err(e) => return api_error(e.status(), &e.body_text()),
+    };
+    match catalog.set_movie_watched(id, watched).await {
+        Ok(()) => api_title_marks(&catalog, MediaKind::Movie, id).await,
+        Err(e) => api_watched_failed(e, id),
+    }
+}
+
+/// Marks a whole TV show watched or not.
+#[utoipa::path(
+    put,
+    path = "/api/tv/{id}/watched",
+    params(("id" = u64, Path, description = "TMDB TV ID")),
+    request_body = WatchedBody,
+    responses((status = OK, body = TitleMarksUpdate), WriteErrors)
+)]
+async fn api_tv_watched(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    body: Result<Json<WatchedBody>, JsonRejection>,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return api_not_found();
+    };
+    let watched = match body {
+        Ok(Json(body)) => body.watched,
+        Err(e) => return api_error(e.status(), &e.body_text()),
+    };
+    match catalog.set_watched(id, WatchTarget::Show, watched).await {
+        Ok(()) => api_title_marks(&catalog, MediaKind::Tv, id).await,
+        Err(e) => api_watched_failed(e, id),
+    }
+}
+
+/// Marks a season watched or not, answering with the show's watched marks.
+#[utoipa::path(
+    put,
+    path = "/api/tv/{id}/season/{number}/watched",
+    params(
+        ("id" = u64, Path, description = "TMDB TV ID"),
+        ("number" = u32, Path, description = "Season number; 0 is specials"),
+    ),
+    request_body = WatchedBody,
+    responses((status = OK, body = WatchedMarks), WriteErrors)
+)]
+async fn api_season_watched(
+    state: State<Catalog>,
+    Path((id, number)): Path<(String, String)>,
+    body: Result<Json<WatchedBody>, JsonRejection>,
+) -> Response {
+    let (Ok(id), Ok(number)) = (id.parse::<u64>(), number.parse::<u32>()) else {
+        return api_not_found();
+    };
+    api_set_watched(state, id, WatchTarget::Season(number), body).await
+}
+
+/// Marks an episode watched or not, answering with the show's watched marks.
+/// Unmarking one the Apple TV marked sticks.
+#[utoipa::path(
+    put,
+    path = "/api/tv/{id}/season/{number}/episode/{episode}/watched",
+    params(
+        ("id" = u64, Path, description = "TMDB TV ID"),
+        ("number" = u32, Path, description = "Season number; 0 is specials"),
+        ("episode" = u32, Path, description = "Episode number within the season"),
+    ),
+    request_body = WatchedBody,
+    responses((status = OK, body = WatchedMarks), WriteErrors)
+)]
+async fn api_episode_watched(
+    state: State<Catalog>,
+    Path((id, season, number)): Path<(String, String, String)>,
+    body: Result<Json<WatchedBody>, JsonRejection>,
+) -> Response {
+    let Some((id, season, number)) = episode_ids(&id, &season, &number) else {
+        return api_not_found();
+    };
+    api_set_watched(state, id, WatchTarget::Episode { season, number }, body).await
+}
+
+async fn api_set_watched(
+    State(catalog): State<Catalog>,
+    id: u64,
+    target: WatchTarget,
+    body: Result<Json<WatchedBody>, JsonRejection>,
+) -> Response {
+    let watched = match body {
+        Ok(Json(body)) => body.watched,
+        Err(e) => return api_error(e.status(), &e.body_text()),
+    };
+    match catalog.set_watched(id, target, watched).await {
+        Ok(()) => Json(catalog.watched_marks(id).await).into_response(),
+        Err(e) => api_watched_failed(e, id),
+    }
+}
+
+/// A title's marks after a change; a show's also carry its watched marks.
+async fn api_title_marks(catalog: &Catalog, kind: MediaKind, id: u64) -> Response {
+    let watched = match kind {
+        MediaKind::Movie => None,
+        MediaKind::Tv => Some(catalog.watched_marks(id).await),
+    };
+    Json(TitleMarksUpdate {
+        marks: catalog.title_marks(kind, id).await,
+        watched,
+    })
+    .into_response()
+}
+
+fn api_watched_failed(error: sqlx::Error, id: u64) -> Response {
+    tracing::warn!(error = %error, id, "api watched save failed");
+    api_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "watched marks couldn't be updated, so nothing was saved",
+    )
 }
 
 fn api_result(result: Result<impl Serialize, CatalogError>, what: &'static str) -> Response {
