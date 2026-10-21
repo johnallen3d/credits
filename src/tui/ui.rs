@@ -12,8 +12,8 @@ use unicode_width::UnicodeWidthStr;
 use super::api::{
     Availability, Credit, Episode, EpisodeRatings, KeyCrew, Kind, List, ListServices, Marks,
     Metadata, Person, PersonCredit, Rating, RatingSource, Ratings, RecentKind, SearchHit, Season,
-    ServicesState, SortRatings, State, Title, UnavailableReason, Watched, WatchedList,
-    WatchedSource, WhereToWatch,
+    ServicesState, SortRatings, State, Title, TitleCredits, UnavailableReason, Watched,
+    WatchedList, WatchedSource, WhereToWatch,
 };
 use super::app::{App, Content, ListName, ListView, Load, Screen, Source, Status, Target};
 use super::theme::palette;
@@ -244,10 +244,13 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             "j/k move · Enter open · t kind · a marked · o sort · w/f/v lists · Esc back · r reload · q quit"
         }
         Some(Target::Title(Kind::Tv, _)) => {
-            "j/k move · Enter open · b/F toggle · x season · X show · w/f/v lists · Esc back · r reload · q quit"
+            "j/k move · Enter open · b/F toggle · x season · X show · c credits · w/f/v lists · Esc back · q quit"
         }
         Some(Target::Title(..)) => {
-            "j/k move · Enter open · b/F/x toggle · w/f/v lists · Esc back · / search · r reload · q quit"
+            "j/k move · Enter open · b/F/x toggle · c credits · w/f/v lists · Esc back · r reload · q quit"
+        }
+        Some(Target::Credits(..)) => {
+            "j/k move · Enter open person · w/f/v lists · Esc back · / search · r reload · q quit"
         }
         Some(Target::Season(..)) => {
             "j/k move · Enter open · x episode · X season · s peek · Esc back · r reload · q quit"
@@ -305,6 +308,7 @@ fn screen_name(screen: &Screen) -> String {
     match (&screen.load, screen.target) {
         (Load::Ready(Content::Title(t)), _) => t.title.clone(),
         (Load::Ready(Content::Person(p)), _) => p.name.clone(),
+        (_, Target::Credits(..)) => "Cast & crew".to_owned(),
         (Load::Ready(Content::Season(s)), _) => s.name.clone(),
         (Load::Ready(Content::Episode(e)), _) => format!("{}. {}", e.number, e.title),
         (_, Target::Title(kind, _)) => kind.label().to_owned(),
@@ -321,6 +325,7 @@ fn page(app: &App, width: u16) -> Page {
     };
     match &screen.load {
         Load::Ready(Content::Title(t)) => title_page(t, width),
+        Load::Ready(Content::Credits(c)) => credits_page(c, width),
         Load::Ready(Content::Person(p)) => person_page(p, width),
         Load::Ready(Content::Season(s)) => season_page(s, screen, width),
         Load::Ready(Content::Episode(e)) => episode_page(e, screen, width),
@@ -512,7 +517,50 @@ fn title_page(t: &Title, width: u16) -> Page {
             "Cast".to_owned()
         };
         page.heading(count);
+        if let Some(heading) = page.lines.last_mut() {
+            heading.push_span(Span::styled("  c full cast and crew", dim()));
+        }
         cast_rows(&mut page, &t.cast);
+    } else {
+        page.blank();
+        page.line(Line::styled("c opens the full cast and crew.", dim()));
+    }
+    page
+}
+
+/// Everyone credited: cast in billing order, then crew by department.
+fn credits_page(c: &TitleCredits, width: u16) -> Page {
+    let mut page = Page::new("Full cast & crew");
+    let name = match &c.year {
+        Some(year) => format!("{} ({year})", c.title),
+        None => c.title.clone(),
+    };
+    page.line(Line::raw(name).bold());
+    page.line(Line::styled(
+        format!("{} · full cast and crew", c.kind.label()),
+        dim(),
+    ));
+    stale_notice(&mut page, &c.metadata, width);
+
+    page.heading(format!("Cast ({})", c.cast.len()));
+    if c.cast.is_empty() {
+        page.line(Line::styled(
+            "  TMDB has no cast listed for this title.",
+            dim(),
+        ));
+    } else {
+        cast_rows(&mut page, &c.cast);
+    }
+    if c.crew.is_empty() {
+        page.heading("Crew");
+        page.line(Line::styled(
+            "  TMDB has no crew listed for this title.",
+            dim(),
+        ));
+    }
+    for d in &c.crew {
+        page.heading(format!("{} ({})", d.name, d.people.len()));
+        cast_rows(&mut page, &d.people);
     }
     page
 }

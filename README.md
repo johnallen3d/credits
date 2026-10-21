@@ -206,6 +206,8 @@ out to Home Assistant.
 - Opening a title or person here counts as viewing it, as on the web
 - Movie and TV pages: facts, ratings, overview, where to watch (your
   services starred), key crew and top cast
+- Full credits (`c` on movie and TV pages): whole cast in billing order
+  with characters, crew grouped by department; Enter opens a person
 - TV pages list seasons: number, name, episode count, year, watched mark
 - Season pages: episodes with air date, runtime, IMDb score and watched
   mark
@@ -234,14 +236,15 @@ out to Home Assistant.
 - Keys: type to search, Tab/↓/Enter into results, Tab/Shift-Tab back to
   the box (keeps query and selected result; Tab returns to that row),
   Esc leaves the box, j/k or ↑/↓ move, Enter/l open, Esc/Backspace/h back,
-  `/` new search, `w`/`f`/`v`
+  `/` new search, `c` full credits, `w`/`f`/`v`
   lists, `b`/`F`/`x`/`X` toggles, `r` reload, `s` peek, `[`/`]`
   previous/next episode, `q` or Ctrl-C quit
 - `?` opens a scrollable keyboard-help overlay from any screen (including
   the search box); all keys are grouped by task, with inapplicable keys
   dimmed. Esc or `?` closes it without changing the query or selection;
   ↑/↓, Page Up/Down and Home/End scroll help on smaller terminals
-- Shows the server's degraded states: stale details, ratings, episode
+- Shows the server's degraded states: stale details (including full
+  credits), ratings, episode
   scores and offers with their date, ratings unavailable, availability
   unknown, and watched marks unreadable (spoilers stay hidden)
 - Lists: unreadable lists or services shown as errors (never empty),

@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::api::{
     Episode, Kind, List, Marks, MarksUpdate, Person, RecentView, SearchHit, Season, ServicesState,
-    Title, Watched, WatchedList,
+    Title, TitleCredits, Watched, WatchedList,
 };
 use super::client::ClientError;
 
@@ -19,6 +19,8 @@ const PAGE_STEP: usize = 10;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
     Title(Kind, u64),
+    /// A title's whole cast and crew.
+    Credits(Kind, u64),
     Person(u64),
     /// A TV show's season by number.
     Season(u64, u32),
@@ -134,6 +136,7 @@ pub enum Status {
 #[derive(Debug)]
 pub enum Content {
     Title(Box<Title>),
+    Credits(Box<TitleCredits>),
     Person(Box<Person>),
     Season(Box<Season>),
     Episode(Box<Episode>),
@@ -487,6 +490,7 @@ impl App {
             KeyCode::Char('s') => self.peek(),
             KeyCode::Char('[') => return self.neighbour(false).into_iter().collect(),
             KeyCode::Char(']') => return self.neighbour(true).into_iter().collect(),
+            KeyCode::Char('c') => return self.open_credits().into_iter().collect(),
             KeyCode::Char('w') => return self.open_list(ListName::Watchlist).into_iter().collect(),
             KeyCode::Char('f') => return self.open_list(ListName::Favorites).into_iter().collect(),
             KeyCode::Char('v') => return self.open_list(ListName::Watched).into_iter().collect(),
@@ -803,6 +807,20 @@ impl App {
         let target = Target::Episode(e.show_id, e.season_number, number);
         self.stack.pop();
         Some(self.open(target))
+    }
+
+    /// Opens the whole cast and crew of the movie or TV show on screen.
+    fn open_credits(&mut self) -> Option<Request> {
+        let target = self.credits_target()?;
+        Some(self.open(target))
+    }
+
+    /// The full credits page `c` opens, when a title page is on screen.
+    pub(super) fn credits_target(&self) -> Option<Target> {
+        match self.stack.last()?.target {
+            Target::Title(kind, id) => Some(Target::Credits(kind, id)),
+            _ => None,
+        }
     }
 
     /// Opens a list over the current page; from the other list, swaps it.

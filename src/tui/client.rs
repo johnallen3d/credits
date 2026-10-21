@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 
 use super::api::{
     ApiError, Episode, Kind, List, MarksUpdate, Person, RecentKind, RecentView, RecentViews,
-    SearchHit, SearchResults, Season, Title, Watched, WatchedList,
+    SearchHit, SearchResults, Season, Title, TitleCredits, Watched, WatchedList,
 };
 use super::app::{ListName, ListView};
 
@@ -77,6 +77,12 @@ impl Client {
 
     pub async fn title(&self, kind: Kind, id: u64) -> Result<Title, ClientError> {
         self.get(&format!("/api/{}/{id}", kind.slug()), &[]).await
+    }
+
+    /// A title's whole cast and crew.
+    pub async fn credits(&self, kind: Kind, id: u64) -> Result<TitleCredits, ClientError> {
+        self.get(&format!("/api/{}/{id}/credits", kind.slug()), &[])
+            .await
     }
 
     pub async fn person(&self, id: u64) -> Result<Person, ClientError> {

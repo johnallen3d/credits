@@ -5069,3 +5069,116 @@ async fn terminal_client_lists_everything_watched_and_filters_it() {
         let _ = std::fs::remove_file(format!("{database}{suffix}"));
     }
 }
+
+#[tokio::test]
+async fn terminal_client_opens_full_cast_and_crew_from_title_pages() {
+    use tui::api::Kind;
+    use tui::app::{Request, Target};
+    let base = serve(test_app().await).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    let open = app.open(Target::Title(Kind::Movie, 603));
+    fulfil(&client, &mut app, open).await;
+    let movie = screen(&mut app);
+    assert!(movie.contains("Cast  c full cast and crew"), "{movie}");
+
+    let open = press(&mut app, KeyCode::Char('c'));
+    assert!(matches!(
+        open.as_slice(),
+        [Request::Page {
+            target: Target::Credits(Kind::Movie, 603),
+            ..
+        }]
+    ));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let credits = screen(&mut app);
+    assert!(credits.contains("The Matrix › Cast & crew"), "{credits}");
+    assert!(credits.contains("The Matrix (1999)"), "{credits}");
+    assert!(credits.contains("Cast (2)"), "{credits}");
+    assert!(credits.contains("Laurence Fishburne"), "{credits}");
+    assert!(credits.contains("Morpheus"), "{credits}");
+    let directing = credits.find("Directing (2)").expect("crew by department");
+    let writing = credits.find("Writing (").unwrap();
+    assert!(
+        credits.find("Cast (2)").unwrap() < directing && directing < writing,
+        "{credits}"
+    );
+    assert!(
+        press(&mut app, KeyCode::Char('c')).is_empty(),
+        "already on the credits"
+    );
+
+    // Enter opens the highlighted person; Esc comes back, then to the title.
+    let open = press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        open.as_slice(),
+        [Request::Page {
+            target: Target::Person(_),
+            ..
+        }]
+    ));
+    press(&mut app, KeyCode::Esc);
+    assert!(matches!(
+        app.stack.last().map(|s| s.target),
+        Some(Target::Credits(Kind::Movie, 603))
+    ));
+    press(&mut app, KeyCode::Esc);
+    assert!(matches!(
+        app.stack.last().map(|s| s.target),
+        Some(Target::Title(Kind::Movie, 603))
+    ));
+
+    // TV shows have them too.
+    let open = app.open(Target::Credits(Kind::Tv, 1396));
+    fulfil(&client, &mut app, open).await;
+    let tv = screen(&mut app);
+    assert!(tv.contains("TV · full cast and crew"), "{tv}");
+    assert!(tv.contains("Bryan Cranston"), "{tv}");
+}
+
+#[tokio::test]
+async fn terminal_client_credits_show_degraded_and_failed_states() {
+    use tui::api::Kind;
+    use tui::app::Target;
+    let t = build_with(
+        TOKEN,
+        Some(OMDB_KEY),
+        Duration::from_secs(3600),
+        Duration::ZERO,
+    )
+    .await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    let open = app.open(Target::Credits(Kind::Movie, 603));
+    fulfil(&client, &mut app, open).await;
+    assert!(!screen(&mut app).contains("TMDB isn't responding"));
+
+    t.tmdb.set_down(true);
+    let reload = press(&mut app, KeyCode::Char('r'));
+    fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
+    let stale = screen(&mut app);
+    assert!(
+        stale.contains("TMDB isn't responding, so this shows details saved on"),
+        "{stale}"
+    );
+    assert!(stale.contains("Laurence Fishburne"), "{stale}");
+    t.tmdb.set_down(false);
+
+    let open = app.open(Target::Credits(Kind::Movie, 999));
+    fulfil(&client, &mut app, open).await;
+    let missing = screen(&mut app);
+    assert!(missing.contains("Not found on TMDB."), "{missing}");
+    assert!(missing.contains("Cast & crew"), "{missing}");
+
+    let offline = tui::Client::new("http://127.0.0.1:9");
+    let mut app = tui::App::new("http://127.0.0.1:9");
+    let open = app.open(Target::Credits(Kind::Movie, 603));
+    fulfil(&offline, &mut app, open).await;
+    let down = screen(&mut app);
+    assert!(
+        down.contains("Can't reach the credits server at http://127.0.0.1:9"),
+        "{down}"
+    );
+    assert!(down.contains("Press r to try again"), "{down}");
+}

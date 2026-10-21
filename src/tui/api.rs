@@ -430,6 +430,27 @@ pub struct Credit {
     pub episode_count: Option<u32>,
 }
 
+/// Everyone credited on a movie or TV show: cast in billing order, crew
+/// grouped by department.
+#[derive(Clone, Debug, Deserialize)]
+pub struct TitleCredits {
+    pub kind: Kind,
+    pub id: u64,
+    pub title: String,
+    pub year: Option<String>,
+    #[serde(default)]
+    pub cast: Vec<Credit>,
+    #[serde(default)]
+    pub crew: Vec<Department>,
+    pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Department {
+    pub name: String,
+    pub people: Vec<Credit>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Person {
     pub id: u64,

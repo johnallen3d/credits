@@ -161,6 +161,12 @@ fn bindings(app: &App) -> Vec<Binding> {
         browsing && whole_page,
     );
     add(
+        "Titles",
+        "c",
+        "Full cast and crew of this movie or TV show",
+        browsing && app.credits_target().is_some(),
+    );
+    add(
         "Episodes",
         "s",
         "Peek/hide spoilers for the highlighted or open episode",
@@ -286,6 +292,11 @@ mod tests {
             active(&app, "m"),
             "an enabled filter can always be disabled"
         );
+        assert!(!active(&app, "c"), "lists have no credits");
+        app.open(Target::Title(Kind::Movie, 603));
+        assert!(active(&app, "c"));
+        app.open(Target::Credits(Kind::Movie, 603));
+        assert!(!active(&app, "c"), "already on the credits");
         app.open(Target::Person(6384));
         assert!(!active(&app, "t"));
         assert!(!active(&app, "m"));
