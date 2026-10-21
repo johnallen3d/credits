@@ -705,6 +705,9 @@ impl App {
                 {
                     self.apply_marks(kind, id, update.marks);
                 }
+                if let Change::Listed { list, kind, id, .. } = change {
+                    self.drop_unlisted(list, kind, id, update.marks);
+                }
                 if let (Some(show), Some(watched)) = (show, update.watched) {
                     self.apply_watched(show, watched);
                 }
@@ -762,6 +765,39 @@ impl App {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Removes a title from open pages of a list the server says it has left,
+    /// keeping the highlight on the row that took its place.
+    fn drop_unlisted(&mut self, list: ListName, kind: Kind, id: u64, marks: Marks) {
+        let listed = match list {
+            ListName::Watchlist => marks.to_watch,
+            ListName::Favorites => marks.favorite,
+            ListName::Watched => return,
+        };
+        if listed != Some(false) {
+            return;
+        }
+        for screen in &mut self.stack {
+            let (Target::List(open, _), Load::Ready(Content::List(l))) =
+                (screen.target, &mut screen.load)
+            else {
+                continue;
+            };
+            if open != list {
+                continue;
+            }
+            let Some(row) = l.titles.iter().position(|e| e.kind == kind && e.id == id) else {
+                continue;
+            };
+            l.titles.remove(row);
+            let cursor = &mut screen.cursor;
+            if cursor.selected > row {
+                cursor.selected -= 1;
+            }
+            cursor.links = cursor.links.saturating_sub(1);
+            cursor.selected = cursor.selected.min(cursor.links.saturating_sub(1));
         }
     }
 

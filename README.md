@@ -234,7 +234,8 @@ out to Home Assistant.
     pages: `x` the highlighted episode, `X` the season; episode pages: `x`
   - Updates in place from the server's answer; favoriting a show lights
     the seasons the server marked watched
-  - Removing from a list keeps the row (unmarked) until reload
+  - Removing a title from the list on screen drops its row once saved;
+    the highlight moves to the next row (no undo; re-add from its page)
 - Lists filter and sort like the web page: `t` cycles All / Movies / TV,
   `o` toggles Added / Rating, `m` toggles On my services (To watch, once
   services are chosen)

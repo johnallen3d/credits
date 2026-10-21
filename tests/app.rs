@@ -4667,26 +4667,48 @@ async fn terminal_client_toggles_to_watch_favorite_and_watched() {
     assert!(season.contains("Episode marked watched."), "{season}");
     assert!(t.catalog.watched(1396).await.episode(1, 1));
 
-    // List rows carry their marks and toggle in place.
+    // List rows carry their marks and toggle in place; removing a row from
+    // the list on screen drops it and highlights the row that took its place.
     press(&mut app, KeyCode::Esc);
     press(&mut app, KeyCode::Esc);
+    post_form(t.app(), "/tv/1396/watchlist", "listed=true").await;
     let open = press(&mut app, KeyCode::Char('w'));
     fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
     assert!(
-        screen(&mut app).contains("1999  Movie The Matrix  ■♥✓"),
+        screen(&mut app).contains("1999  Movie The Matrix    ■♥✓"),
         "{}",
         screen(&mut app)
     );
-    for key in ['x', 'b'] {
-        let save = press(&mut app, KeyCode::Char(key));
-        fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    let matrix = tui::app::Target::Title(tui::api::Kind::Movie, 603);
+    let show = tui::app::Target::Title(tui::api::Kind::Tv, 1396);
+    while tui::ui::selected_target(&app) != Some(matrix) {
+        press(&mut app, KeyCode::Char('j'));
     }
+    let save = press(&mut app, KeyCode::Char('x'));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    assert!(screen(&mut app).contains("The Matrix    ■♥·"));
+    let save = press(&mut app, KeyCode::Char('b'));
+    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
     let list = screen(&mut app);
     assert!(
-        list.contains("The Matrix  □♥·"),
-        "kept until reload: {list}"
+        !list.contains("Movie The Matrix"),
+        "dropped once saved: {list}"
     );
+    assert!(list.contains("Breaking Bad"), "{list}");
     assert!(list.contains("Removed from To watch."), "{list}");
+    assert_eq!(tui::ui::selected_target(&app), Some(show));
+
+    // A failed removal keeps the row.
+    let save = press(&mut app, KeyCode::Char('b'));
+    fulfil(
+        &tui::Client::new("http://127.0.0.1:9"),
+        &mut app,
+        save.into_iter().next().unwrap(),
+    )
+    .await;
+    let list = screen(&mut app);
+    assert!(list.contains("Couldn't save:"), "{list}");
+    assert!(list.contains("Breaking Bad"), "{list}");
 
     // Failures leave the state alone and say why.
     press(&mut app, KeyCode::Esc);
