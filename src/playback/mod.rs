@@ -235,17 +235,23 @@ fn infuse_episode(title: &str) -> Option<(&str, u32, u32)> {
 
 /// A movie title and the year it may end in: Infuse shows "Back to the
 /// Future", or "Back to the Future (1985)" when the file is named that way.
+/// Other bracketed tags at the end are editions, not part of the name: the
+/// TV app shows "Superbad (Unrated)".
 pub fn movie_title(title: &str) -> (&str, Option<u32>) {
-    let year = title
+    let mut name = title.trim();
+    let mut year = None;
+    while let Some((rest, tag)) = name
         .strip_suffix(')')
         .and_then(|t| t.rsplit_once(" ("))
-        .filter(|(name, year)| {
-            !name.trim().is_empty() && year.len() == 4 && year.bytes().all(|b| b.is_ascii_digit())
-        });
-    match year {
-        Some((name, year)) => (name.trim(), year.parse().ok()),
-        None => (title, None),
+        .or_else(|| name.strip_suffix(']').and_then(|t| t.rsplit_once(" [")))
+        .filter(|(rest, _)| !rest.trim().is_empty())
+    {
+        if year.is_none() && tag.len() == 4 && tag.bytes().all(|b| b.is_ascii_digit()) {
+            year = tag.parse().ok();
+        }
+        name = rest.trim_end();
     }
+    (name, year)
 }
 
 fn leading_number(s: &str) -> Option<(u32, &str)> {
@@ -817,10 +823,17 @@ mod tests {
             ("Blade Runner 2049", None)
         );
         assert_eq!(movie_title("(1982)"), ("(1982)", None));
+        assert_eq!(movie_title("Superbad (Unrated)"), ("Superbad", None));
+        assert_eq!(movie_title("Movie (Director's Cut)"), ("Movie", None));
         assert_eq!(
-            movie_title("Movie (Director's Cut)"),
-            ("Movie (Director's Cut)", None)
+            movie_title("The Thing (1982) [Extended]"),
+            ("The Thing", Some(1982))
         );
+        assert_eq!(
+            movie_title("Superbad (Unrated) (2007)"),
+            ("Superbad", Some(2007))
+        );
+        assert_eq!(movie_title("(Unrated)"), ("(Unrated)", None));
     }
 
     #[test]
@@ -854,6 +867,15 @@ mod tests {
         assert_eq!(movie.show_title, "Good Will Hunting");
         assert_eq!(movie.show_key, "good will hunting");
         assert_eq!((movie.season, movie.episode), (0, 0));
+        // Also Oct 21: the edition tag isn't searched for on TMDB.
+        let mut row = tv(0, true, "323044694", 7126);
+        row.title = Some("Superbad (Unrated)".to_owned());
+        let Parsed::Item(movie) = parse(&row) else {
+            panic!("not parsed")
+        };
+        assert_eq!(movie.show_title, "Superbad");
+        assert_eq!(movie.show_key, "superbad");
+        assert_eq!(movie.title, "Superbad (Unrated)");
         let other = Parsed::Other("TV app (not a TV episode or movie)".to_owned());
         let mut trailer = tv(0, true, "PMTFY26TRL001", 150);
         trailer.title = Some("Good Will Hunting".to_owned());

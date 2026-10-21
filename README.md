@@ -166,6 +166,8 @@ out to Home Assistant.
   - **Apple TV app** episodes from the content ID (`A0178901003` is S1 E3,
     checked against TMDB's runtime) and feature-length videos (40 min+)
     as movies
+  - Movie titles drop trailing edition tags before the TMDB search
+    ("Superbad (Unrated)" is Superbad)
   - Other apps (YouTube, Music, ESPN, trailers) are ignored and only
     totalled
 - Marks watched when:
