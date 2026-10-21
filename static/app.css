@@ -210,6 +210,15 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .filmography.with-toggle li { grid-template-columns: 3.5rem 46px 1fr auto; }
 .filmography .watchlist-toggle button { border-color: transparent; background: none; }
 .filmography li.empty-row { display: block; padding: .75rem 0; }
+/* Person page: title over kind and role, then a rating column. Scores are
+   right-aligned in a fixed width so they end on one line, and each source
+   icon is centred in the same fixed box. */
+.filmography.columns li { grid-template-columns: 3.5rem 46px 1fr 7rem auto; }
+.credit-title .credit-role { display: block; margin-top: .15rem; font-size: .9rem; }
+.credit-role .badge { margin-left: 0; margin-right: .15rem; font-size: .7rem; }
+.filmography.columns .credit-rating { margin-left: 0; display: flex; align-items: center; gap: .35rem; }
+.filmography.columns .credit-rating .rating-score { width: 3.6rem; flex: none; text-align: right; }
+.filmography.columns .credit-rating .rating-source { width: 2rem; flex: none; object-position: center; }
 .bookmark.inline { width: 1em; height: 1em; vertical-align: -.15em; }
 .watchlist h1 { margin: 0 0 1rem; }
 .watched-detail { display: block; font-size: .85rem; }
@@ -252,6 +261,11 @@ body:has(.detail #movie-watched [aria-pressed="true"], .detail #seasons > .watch
   .tiles .role { font-size: .8rem; }
   .section { margin-top: 2rem; }
   .jump a { padding: .4rem .75rem; }
+  /* Too narrow for a rating column: the score goes under the role. */
+  .filmography.columns li { grid-template-columns: 3.5rem 46px 1fr auto; }
+  .filmography.columns li > :not(.credit-title, .credit-rating) { grid-row: span 2; }
+  .filmography.columns .credit-rating { grid-column: 3; grid-row: 2; align-self: start; }
+  .filmography.columns .credit-title { align-self: end; }
   .credit-list li { padding: .35rem 0; }
   .episode { display: block; padding: .6rem; }
   .episode::after { content: ""; display: table; clear: both; }

@@ -70,6 +70,9 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
     thumbnails
   - Filter All / Movies / TV and sort by date or rating (`?sort=rating`);
     tab, kind and sort live in the URL
+  - Rows in columns: year, poster, title over kind and role, rating
+    (score right-aligned, then source icon centred) on either sort; on
+    a phone the rating goes under the role
 - Sort and filter buttons (filmography, To watch, Watched) swap in the
   new list over HTMX without a page reload: a spinner shows on the
   clicked choice and the list dims while it loads; URL, title and Back

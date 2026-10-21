@@ -1243,13 +1243,11 @@ impl Catalog {
                 }
             })
             .collect();
-        let sort_ratings = match sort {
-            FilmographySort::Date => None,
-            FilmographySort::Rating => {
-                let mut lists: Vec<_> = filmography.iter_mut().map(|g| &mut g.entries).collect();
-                Some(self.sort_by_rating(&mut lists).await)
-            }
-        };
+        let mut lists: Vec<_> = filmography.iter_mut().map(|g| &mut g.entries).collect();
+        let sort_ratings = Some(match sort {
+            FilmographySort::Date => self.rate(&mut lists).await,
+            FilmographySort::Rating => self.sort_by_rating(&mut lists).await,
+        });
 
         let mut person = PersonDetail {
             id: p.id,
@@ -1275,6 +1273,20 @@ impl Catalog {
     /// by Rotten Tomatoes or else IMDb; unscored entries follow in their
     /// existing order.
     async fn sort_by_rating(&self, lists: &mut [&mut Vec<FilmographyEntry>]) -> SortRatings {
+        let summary = self.rate(lists).await;
+        for list in lists {
+            list.sort_by(|a, b| match (&a.rating, &b.rating) {
+                (Some(a), Some(b)) => b.percent().total_cmp(&a.percent()),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => Ordering::Equal,
+            });
+        }
+        summary
+    }
+
+    /// Gives each entry its Rotten Tomatoes or else IMDb score, if any.
+    async fn rate(&self, lists: &mut [&mut Vec<FilmographyEntry>]) -> SortRatings {
         let entries = || lists.iter().flat_map(|l| l.iter());
         if !self.ratings.is_configured() {
             return SortRatings {
@@ -1301,12 +1313,6 @@ impl Catalog {
                 e.rating = ratings.get(&(e.kind, e.id)).and_then(Rating::for_sorting);
                 summary.unrated += usize::from(e.rating.is_none());
             }
-            list.sort_by(|a, b| match (&a.rating, &b.rating) {
-                (Some(a), Some(b)) => b.percent().total_cmp(&a.percent()),
-                (Some(_), None) => Ordering::Less,
-                (None, Some(_)) => Ordering::Greater,
-                (None, None) => Ordering::Equal,
-            });
         }
         summary
     }

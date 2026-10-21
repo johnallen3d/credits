@@ -67,19 +67,20 @@
     {% if let Some(r) = p.sort_ratings %}
     {% if let Some(message) = r.unavailable_message() %}<p class="muted sort-note">{{ message }}</p>{% endif %}
     {% if let Some(day) = r.stale_on() %}<p class="rating-stale sort-note">Couldn't refresh some ratings; using scores from as early as {{ day }}.</p>{% endif %}
-    {% if r.unrated > 0 && r.unavailable_reason.is_none() %}<p class="muted sort-note">Credits without a Rotten Tomatoes or IMDb score are listed last, newest first.</p>{% endif %}
+    {% if p.sort.is_rating() && r.unrated > 0 && r.unavailable_reason.is_none() %}<p class="muted sort-note">Credits without a Rotten Tomatoes or IMDb score are listed last, newest first.</p>{% endif %}
     {% endif %}
     {% if let Some(g) = self.shown() %}
     <nav class="tabs" aria-label="Departments">
       {% for t in groups %}<a href="{{ self.tab_href(loop.index0) }}"{% if loop.index0 == tab %} aria-current="page"{% endif %}>{{ t.department }} <span class="count">{{ t.entries.len() }}</span></a>{% endfor %}
     </nav>
     <section id="{{ g.anchor() }}" aria-label="{{ g.department }}">
-      <ul class="filmography with-toggle">
+      <ul class="filmography with-toggle columns">
         {% for e in g.entries %}
         <li>
           <span class="year">{% if let Some(year) = e.year %}{{ year }}{% else %}TBA{% endif %}</span>
           <a href="{{ e.path() }}" tabindex="-1" aria-hidden="true">{% if let Some(url) = e.poster_url %}<img class="poster thumb" src="{{ url }}" alt="" loading="lazy" width="46" height="69">{% else %}<span class="poster thumb missing">No artwork</span>{% endif %}</a>
-          <span><a href="{{ e.path() }}">{{ e.title }}</a> <span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if let Some(role) = e.role %} <span class="muted">{% if g.is_acting() %}as {% endif %}{{ role }}</span>{% endif %}{% if let Some(eps) = e.episodes_label() %} <span class="muted">· {{ eps }}</span>{% endif %}{% if let Some(r) = e.rating %} <span class="credit-rating"><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"> <span class="rating-score">{{ r.display() }}</span></span>{% endif %}</span>
+          <span class="credit-title"><a href="{{ e.path() }}">{{ e.title }}</a><span class="credit-role muted"><span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if let Some(role) = e.role %} {% if g.is_acting() %}as {% endif %}{{ role }}{% endif %}{% if let Some(eps) = e.episodes_label() %} · {{ eps }}{% endif %}</span></span>
+          <span class="credit-rating">{% if let Some(r) = e.rating %}<span class="rating-score">{{ r.display() }}</span><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}">{% endif %}</span>
           <div class="title-actions">
           {% call watchlist::toggle(e.kind.slug(), e.id, e.title, self.is_listed(e), crate::web::watchlist_toggle_id(e), self.back_to(e), "", true) %}{% endcall %}
           {% call favorite::toggle(e.kind.slug(), e.id, e.title, self.is_favorite(e), crate::web::favorite_toggle_id(e), self.favorite_back_to(e), "", true) %}{% endcall %}

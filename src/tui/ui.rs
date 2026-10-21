@@ -930,7 +930,12 @@ fn person_page(p: &Person, view: ListView, width: u16) -> Page {
     );
     page.line(Line::from(bar));
     if let Some(r) = &p.sort_ratings {
-        sort_ratings_notes(&mut page, r, Order::Filmography, width);
+        let order = if view.alt_sort {
+            Order::Filmography
+        } else {
+            Order::Date
+        };
+        sort_ratings_notes(&mut page, r, order, width);
     }
     let mut shown = false;
     for group in &p.filmography {
@@ -1303,11 +1308,13 @@ fn services_notes(page: &mut Page, svc: &ListServices, mine: bool, width: u16) {
     }
 }
 
-/// What a by-rating order falls back to for unscored titles.
+/// What a by-rating order falls back to for unscored titles; `Date` is a
+/// filmography in date order, rated but not ranked.
 #[derive(Clone, Copy)]
 enum Order {
     Added,
     Filmography,
+    Date,
 }
 
 fn sort_ratings_notes(page: &mut Page, r: &SortRatings, order: Order, width: u16) {
@@ -1317,7 +1324,7 @@ fn sort_ratings_notes(page: &mut Page, r: &SortRatings, order: Order, width: u16
                 Order::Added => {
                     "Ratings aren't configured on the server, so titles stay in the order they were added."
                 }
-                Order::Filmography => {
+                Order::Filmography | Order::Date => {
                     "Ratings aren't configured on the server, so credits stay in date order."
                 }
             },
@@ -1327,12 +1334,12 @@ fn sort_ratings_notes(page: &mut Page, r: &SortRatings, order: Order, width: u16
             "Some ratings couldn't be loaded right now.",
             dim(),
         )),
-        None if r.unrated > 0 => page.line(Line::styled(
+        None if r.unrated > 0 && !matches!(order, Order::Date) => page.line(Line::styled(
             match order {
                 Order::Added => {
                     "Titles without a Rotten Tomatoes or IMDb score are listed last, most recently added first."
                 }
-                Order::Filmography => {
+                Order::Filmography | Order::Date => {
                     "Credits without a Rotten Tomatoes or IMDb score are listed last, newest first."
                 }
             },

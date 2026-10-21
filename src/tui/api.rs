@@ -466,7 +466,8 @@ pub struct Person {
     pub known_for_titles: Vec<PersonCredit>,
     #[serde(default)]
     pub filmography: Vec<FilmographyGroup>,
-    /// Only when sorted by rating.
+    /// How complete the credits' scores are; older servers send it only
+    /// when sorted by rating.
     pub sort_ratings: Option<SortRatings>,
     pub metadata: Metadata,
 }

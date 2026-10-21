@@ -2744,7 +2744,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/SortRatings",
-                "description": "Only when sorted by rating: how complete the scores behind the order are."
+                "description": "How complete the credits' scores are (behind the order, when sorted\nby rating). Always present."
               },
               {
                 "type": "null"
@@ -3389,7 +3389,7 @@
       },
       "SortRatings": {
         "type": "object",
-        "description": "What stood behind a by-rating order: credits without a score, and\nwhether some scores were stale or couldn't be loaded.",
+        "description": "What stood behind a list's scores (and a by-rating order): credits\nwithout a score, and whether some scores were stale or couldn't be loaded.",
         "required": [
           "unrated"
         ],

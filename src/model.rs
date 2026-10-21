@@ -1134,7 +1134,8 @@ pub struct PersonDetail {
     /// Grouped by department, the person's main department first.
     pub filmography: Vec<FilmographyGroup>,
     pub sort: FilmographySort,
-    /// Only when sorted by rating: how complete the scores behind the order are.
+    /// How complete the credits' scores are (behind the order, when sorted
+    /// by rating). Always present.
     pub sort_ratings: Option<SortRatings>,
     pub metadata: Metadata,
 }
@@ -1289,8 +1290,8 @@ impl WatchlistSort {
     }
 }
 
-/// What stood behind a by-rating order: credits without a score, and
-/// whether some scores were stale or couldn't be loaded.
+/// What stood behind a list's scores (and a by-rating order): credits
+/// without a score, and whether some scores were stale or couldn't be loaded.
 #[derive(Clone, Debug, Default, Serialize, ToSchema)]
 pub struct SortRatings {
     pub unrated: usize,

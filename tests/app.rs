@@ -1890,17 +1890,24 @@ async fn filmography_sorts_by_rotten_tomatoes_then_imdb() {
     assert_eq!(json["sort_ratings"]["unrated"], 3);
     assert!(json["sort_ratings"]["unavailable_reason"].is_null());
 
+    // Date order is rated too, just not ranked.
     let (_, json) = get_json(test_app().await, "/api/person/6384").await;
     assert_eq!(json["sort"], "date");
-    assert!(json["sort_ratings"].is_null());
-    assert!(json["filmography"][0]["entries"][3].get("rating").is_none());
+    assert_eq!(json["sort_ratings"]["unrated"], 3);
+    let matrix = json["filmography"][0]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["title"] == "The Matrix")
+        .unwrap();
+    assert_eq!(matrix["rating"]["score"], 83.0);
 
     let (_, _, body) = get_page(test_app().await, "/person/6384?sort=rating", false).await;
     assert!(body.contains(
         r##"<a href="/person/6384?sort=rating#filmography-heading" aria-current="true">Rating</a>"##
     ));
     assert!(body.contains(r##"<a href="/person/6384#filmography-heading">Date</a>"##));
-    assert!(body.contains(r#"<img class="rating-source" src="/static/rt-fresh.svg" alt="Rotten Tomatoes: Fresh" title="Rotten Tomatoes: Fresh"> <span class="rating-score">83%</span>"#));
+    assert!(body.contains(r#"<span class="rating-score">83%</span><img class="rating-source" src="/static/rt-fresh.svg" alt="Rotten Tomatoes: Fresh" title="Rotten Tomatoes: Fresh">"#));
     assert!(body.contains(r#"<span class="rating-score">9.5/10</span>"#));
     assert!(body.contains("Credits without a Rotten Tomatoes or IMDb score are listed last"));
     let filmography = &body[body.find(r#"id="filmography-heading""#).unwrap()..];
@@ -1914,18 +1921,18 @@ async fn filmography_sorts_by_rotten_tomatoes_then_imdb() {
             r##"<a href="/person/6384#filmography-heading" aria-current="true">Date</a>"##
         )
     );
-    assert!(!body.contains("credit-rating"));
+    assert!(body.contains(r#"<span class="rating-score">83%</span>"#));
+    assert!(!body.contains("are listed last"));
 }
 
 #[tokio::test]
 async fn rating_sort_is_cached_and_survives_provider_problems() {
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
     get_json(t.app(), "/api/person/6384").await;
-    assert_eq!(t.omdb.calls(), 0, "date order looks nothing up");
-    get_json(t.app(), "/api/person/6384?sort=rating").await;
     let (omdb, tmdb) = (t.omdb.calls(), t.tmdb.calls());
+    assert!(omdb > 0, "date order is rated too");
     get_json(t.app(), "/api/person/6384?sort=rating").await;
-    assert_eq!(t.omdb.calls(), omdb, "second sort reuses cached ratings");
+    assert_eq!(t.omdb.calls(), omdb, "the sort reuses cached ratings");
     // Only the two titles TMDB doesn't know are asked for again.
     assert_eq!(t.tmdb.calls(), tmdb + 2);
 
@@ -1995,8 +2002,10 @@ async fn tmdb_responses_are_cached_and_shared_by_html_and_json() {
     );
 
     get_page(t.app(), "/person/6384", false).await;
+    let calls = t.tmdb.calls();
     get_json(t.app(), "/api/person/6384").await;
-    assert_eq!(t.tmdb.calls(), 2);
+    // Only the two credited titles TMDB doesn't know are asked for again.
+    assert_eq!(t.tmdb.calls(), calls + 2);
 }
 
 #[tokio::test]
@@ -2010,8 +2019,9 @@ async fn expired_tmdb_data_is_served_when_tmdb_is_down() {
     .await;
     let (_, _, body) = get_page(t.app(), "/person/6384", false).await;
     assert!(!body.contains("stale-notice"), "fresh data has no notice");
+    let calls = t.tmdb.calls();
     get_page(t.app(), "/person/6384", false).await;
-    assert_eq!(t.tmdb.calls(), 2, "expired entries are refreshed");
+    assert_eq!(t.tmdb.calls(), 2 * calls, "expired entries are refreshed");
     get_page(t.app(), "/tv/1396/season/1", false).await;
 
     t.tmdb.set_down(true);
@@ -2035,7 +2045,7 @@ async fn expired_tmdb_data_is_served_when_tmdb_is_down() {
         body.contains("stale-notice"),
         "season page shows the notice too"
     );
-    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    let (_, _, body) = get_page(t.app(), "/movie/6060", false).await;
     assert!(
         !body.contains("stale-notice"),
         "never cached, so it fails instead"
@@ -5439,7 +5449,7 @@ async fn terminal_client_filters_and_sorts_person_filmography() {
         page.contains("Breaking Bad") && page.contains("The Matrix"),
         "{page}"
     );
-    assert!(!page.contains("RT 83%"), "date order looks no ratings up");
+    assert!(page.contains("RT 83%"), "date order is rated too");
 
     // The kind filter is applied here, without a request.
     assert!(press(&mut app, KeyCode::Char('l')).len() == 1);
