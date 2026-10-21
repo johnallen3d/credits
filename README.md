@@ -133,6 +133,9 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
 - Mark a movie, show, season or episode watched
 - Episode summaries and IMDb episode scores stay blurred until that
   episode, its season or the show is watched; select one to peek
+- A watched movie, or a show marked watched as a whole, tints the whole
+  page in the watched color with a stripe pinned to the top while
+  scrolling; partly watched shows don't
 - If watched marks can't be read, spoilers stay hidden
 - TV, season and episode JSON carry the show's `watched` marks, with
   `state` `read` or `unreadable`

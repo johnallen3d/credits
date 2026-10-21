@@ -209,6 +209,10 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .episode h3 a:hover, .episode h3 a:focus-visible { color: var(--accent); }
 .still.large { width: 300px; height: auto; aspect-ratio: 16 / 9; }
 .detail-body > .meta { flex: 1; min-width: 0; }
+/* Fully watched (movie, or the whole show): the page takes on the watched color, with a stripe pinned to the
+   top of the viewport so it stays in view while scrolling. Keyed off the live toggle, so HTMX swaps update it. */
+body:has(.detail #movie-watched [aria-pressed="true"], .detail #seasons > .watch-state > .watch-toggle [aria-pressed="true"]) { background: color-mix(in srgb, var(--person) 12%, var(--bg)); }
+body:has(.detail #movie-watched [aria-pressed="true"], .detail #seasons > .watch-state > .watch-toggle [aria-pressed="true"])::before { content: ""; position: fixed; inset: 0 0 auto; height: 4px; background: var(--person); z-index: 10; pointer-events: none; }
 
 @media (max-width: 640px) {
   header.site, main, footer.site { padding-left: 1rem; padding-right: 1rem; }
