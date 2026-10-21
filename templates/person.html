@@ -51,16 +51,16 @@
     {% if p.filmography.is_empty() %}
     <p class="muted">TMDB has no credits listed for this person.</p>
     {% else %}
+    <div class="controls">
     <nav class="sort" aria-label="Sort credits">
       <span class="muted">Sort by</span>
-      <a href="{{ self.sort_href(FilmographySort::Date) }}"{% if !p.sort.is_rating() %} aria-current="true"{% endif %}>Date</a>
-      <a href="{{ self.sort_href(FilmographySort::Rating) }}"{% if p.sort.is_rating() %} aria-current="true"{% endif %}>Rating</a>
+      <span class="segments"><a href="{{ self.sort_href(FilmographySort::Date) }}"{% if !p.sort.is_rating() %} aria-current="true"{% endif %}>Date</a><a href="{{ self.sort_href(FilmographySort::Rating) }}"{% if p.sort.is_rating() %} aria-current="true"{% endif %}>Rating</a></span>
     </nav>
     <nav class="sort" aria-label="Filter credits">
       <span class="muted">Show</span>
-      {% for k in KindFilter::ALL %}<a href="{{ self.kind_href(k) }}"{% if k == kind %} aria-current="true"{% endif %}>{{ k.label() }} <span class="count">{{ self.kind_count(k) }}</span></a>
-      {% endfor %}
+      <span class="segments">{% for k in KindFilter::ALL %}<a href="{{ self.kind_href(k) }}"{% if k == kind %} aria-current="true"{% endif %}>{{ k.label() }} <span class="count">{{ self.kind_count(k) }}</span></a>{% endfor %}</span>
     </nav>
+    </div>
     {% if let Some(r) = p.sort_ratings %}
     {% if let Some(message) = r.unavailable_message() %}<p class="muted sort-note">{{ message }}</p>{% endif %}
     {% if let Some(day) = r.stale_on() %}<p class="rating-stale sort-note">Couldn't refresh some ratings; using scores from as early as {{ day }}.</p>{% endif %}

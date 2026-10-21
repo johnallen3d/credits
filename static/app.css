@@ -140,16 +140,26 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .credit-list { list-style: none; padding: 0; margin: 0; columns: 2 280px; column-gap: 2rem; }
 .credit-list li { break-inside: avoid; padding: .2rem 0; }
 
-.sort { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-bottom: .75rem; font-size: .9rem; }
-.sort a { padding: .2rem .65rem; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; }
-.sort a[aria-current] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+/* One row of equal columns; each control fills its column and splits it evenly. */
+.controls { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 1rem; margin-bottom: 1rem; font-size: .85rem; }
+.sort { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.sort > .muted:first-child, .sort-head { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; line-height: 1.2; }
+.sort-head { display: flex; justify-content: space-between; gap: .5rem; }
+.sort-head .services-edit { text-transform: none; letter-spacing: 0; }
+.segments { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.segments a { padding: .2rem .4rem; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none; }
+.segments a + a { border-left: 1px solid var(--line); }
+.segments a:hover, .segments a:focus-visible { background: var(--card); }
+.segments a[aria-current] { background: var(--fg); color: var(--bg); }
 .sort .count, .tabs .count { color: var(--muted); font-size: .85em; }
 .sort a[aria-current] .count { color: inherit; opacity: .7; }
 .tabs { display: flex; gap: .25rem 1.25rem; overflow-x: auto; margin-bottom: .5rem; border-bottom: 1px solid var(--line); scrollbar-width: none; }
 .tabs a { flex: none; padding: .5rem .1rem; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--muted); text-decoration: none; white-space: nowrap; }
 .tabs a:hover, .tabs a:focus-visible { color: var(--fg); }
 .tabs a[aria-current] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
-.sort-note { margin: 0 0 .75rem; font-size: .9rem; }
+.controls:has(+ .sort-note) { margin-bottom: .5rem; }
+.sort-note { margin: 0 0 .4rem; font-size: .9rem; }
+.sort-note:has(+ :not(.sort-note)) { margin-bottom: 1rem; }
 .credit-rating { white-space: nowrap; margin-left: .25rem; }
 .credit-rating .rating-source { width: 2rem; height: .95rem; vertical-align: -.15rem; }
 .credit-rating .rating-score { min-width: 0; }
@@ -215,6 +225,7 @@ body:has(.detail #movie-watched [aria-pressed="true"], .detail #seasons > .watch
 body:has(.detail #movie-watched [aria-pressed="true"], .detail #seasons > .watch-state > .watch-toggle [aria-pressed="true"])::before { content: ""; position: fixed; inset: 0 0 auto; height: 4px; background: var(--person); z-index: 10; pointer-events: none; }
 
 @media (max-width: 640px) {
+  .controls { grid-auto-flow: row; gap: .6rem; }
   header.site, main, footer.site { padding-left: 1rem; padding-right: 1rem; }
   header.site { padding-top: .9rem; padding-bottom: .9rem; }
   .detail h1 { font-size: 1.6rem; line-height: 1.2; }
@@ -253,7 +264,6 @@ body:has(.detail #movie-watched [aria-pressed="true"], .detail #seasons > .watch
 .service-badges.stale { opacity: .6; }
 .service-badge { width: 22px; height: 22px; border-radius: 4px; }
 .service-badge.text { width: auto; height: auto; padding: 0 .35rem; border: 1px solid var(--person); border-radius: 4px; color: var(--person); }
-.sort .services-edit { border: 0; padding-left: .25rem; }
 .services h1 { margin: 0 0 .5rem; }
 .services .region { font-size: 1rem; font-weight: 400; }
 .service-group { margin: 1.25rem 0 0; font-size: 1rem; }

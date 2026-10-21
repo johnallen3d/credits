@@ -6,21 +6,20 @@
   {% if w.titles.is_empty() %}
   <p class="hint">Nothing watched yet. Mark a movie, show, season or episode watched from its page, favorite a show, or let <a href="/playback">Seen on Apple TV</a> mark what plays, and it will be listed here.</p>
   {% else %}
+  <div class="controls">
   <nav class="sort" aria-label="Sort titles">
     <span class="muted">Sort by</span>
-    <a href="{{ self.sort_href(WatchedSort::Recent) }}"{% if !w.sort.is_title() %} aria-current="true"{% endif %}>Last watched</a>
-    <a href="{{ self.sort_href(WatchedSort::Title) }}"{% if w.sort.is_title() %} aria-current="true"{% endif %}>Title</a>
+    <span class="segments"><a href="{{ self.sort_href(WatchedSort::Recent) }}"{% if !w.sort.is_title() %} aria-current="true"{% endif %}>Last watched</a><a href="{{ self.sort_href(WatchedSort::Title) }}"{% if w.sort.is_title() %} aria-current="true"{% endif %}>Title</a></span>
   </nav>
   <nav class="sort" aria-label="Filter by kind">
     <span class="muted">Show</span>
-    {% for k in KindFilter::ALL %}<a href="{{ self.kind_href(k) }}"{% if k == kind %} aria-current="true"{% endif %}>{{ k.label() }} <span class="count">{{ self.kind_count(k) }}</span></a>
-    {% endfor %}
+    <span class="segments">{% for k in KindFilter::ALL %}<a href="{{ self.kind_href(k) }}"{% if k == kind %} aria-current="true"{% endif %}>{{ k.label() }} <span class="count">{{ self.kind_count(k) }}</span></a>{% endfor %}</span>
   </nav>
   <nav class="sort" aria-label="Filter by how it was marked">
     <span class="muted">Marked</span>
-    {% for s in SourceFilter::ALL %}<a href="{{ self.source_href(s) }}"{% if s == source %} aria-current="true"{% endif %}>{{ s.label() }} <span class="count">{{ self.source_count(s) }}</span></a>
-    {% endfor %}
+    <span class="segments">{% for s in SourceFilter::ALL %}<a href="{{ self.source_href(s) }}"{% if s == source %} aria-current="true"{% endif %}>{{ s.label() }} <span class="count">{{ self.source_count(s) }}</span></a>{% endfor %}</span>
   </nav>
+  </div>
   {% let unavailable = self.unavailable() %}
   {% if unavailable > 0 %}<p class="muted sort-note">Couldn't load the details of {{ unavailable }} {% if unavailable == 1 %}title{% else %}titles{% endif %} from TMDB right now{% if w.sort.is_title() %}, so {% if unavailable == 1 %}it's{% else %}they're{% endif %} listed last{% endif %}.</p>{% endif %}
   {% if let Some(day) = w.stale_on() %}<p class="rating-stale sort-note">Couldn't refresh some titles; using details from as early as {{ day }}.</p>{% endif %}
