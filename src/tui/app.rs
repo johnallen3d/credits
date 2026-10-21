@@ -21,7 +21,8 @@ pub enum Target {
     Title(Kind, u64),
     /// A title's whole cast and crew.
     Credits(Kind, u64),
-    Person(u64),
+    /// A person, with their filmography's filter and order.
+    Person(u64, ListView),
     /// A TV show's season by number.
     Season(u64, u32),
     /// A TV show's episode by season and number.
@@ -75,12 +76,14 @@ impl Source {
     }
 }
 
-/// A list's filters and order, as the web page's query parameters.
+/// A list's or filmography's filters and order, as the web page's query
+/// parameters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ListView {
     /// Only movies or only TV; `None` for all.
     pub kind: Option<Kind>,
-    /// The other order: Rating on To watch and Favorites, Title on Watched.
+    /// The other order: Rating on To watch, Favorites and person pages,
+    /// Title on Watched.
     pub alt_sort: bool,
     /// Only titles on the user's services (To watch only).
     pub mine: bool,
@@ -838,22 +841,40 @@ impl App {
         Some(self.open(Target::List(name, ListView::default())))
     }
 
-    /// Refetches the list on screen with a changed filter or order.
+    /// Refetches the list or person on screen with a changed filter or order.
     fn change_view(&mut self, change: impl FnOnce(&mut ListView)) -> Option<Request> {
         let seq = self.seq();
         let screen = self.stack.last_mut()?;
-        let Target::List(name, mut view) = screen.target else {
+        let (Target::List(_, view) | Target::Person(_, view)) = &mut screen.target else {
             return None;
         };
-        change(&mut view);
-        screen.target = Target::List(name, view);
+        let resorted = {
+            let before = view.alt_sort;
+            change(view);
+            view.alt_sort != before
+        };
+        screen.cursor = Cursor::default();
+        // A filmography is filtered here; only its order comes from the server.
+        if matches!(screen.target, Target::Person(..))
+            && !resorted
+            && matches!(screen.load, Load::Ready(_))
+        {
+            return None;
+        }
         screen.seq = seq;
         screen.load = Load::Loading;
-        screen.cursor = Cursor::default();
         Some(Request::Page {
             seq,
             target: screen.target,
         })
+    }
+
+    /// Whether t and o filter and sort the page on screen.
+    pub(super) fn has_view(&self) -> bool {
+        matches!(
+            self.stack.last().map(|s| s.target),
+            Some(Target::List(..) | Target::Person(..))
+        )
     }
 
     pub(super) fn on_list(&self, name: ListName) -> bool {

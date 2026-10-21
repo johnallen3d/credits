@@ -103,7 +103,7 @@ pub async fn save(client: &Client, change: Change) -> Result<Saved, ClientError>
                     .set_watched(show, season, Some(number), watched)
                     .await?,
             ),
-            Target::Person(_) | Target::Credits(..) | Target::List(..) => {
+            Target::Person(..) | Target::Credits(..) | Target::List(..) => {
                 return Err(ClientError::Server(
                     "that can't be marked watched".to_owned(),
                 ));
@@ -122,8 +122,8 @@ pub async fn fetch(client: &Client, target: Target) -> Result<Content, ClientErr
             Content::Title(Box::new(title))
         }
         Target::Credits(kind, id) => Content::Credits(Box::new(client.credits(kind, id).await?)),
-        Target::Person(id) => {
-            let person = client.person(id).await?;
+        Target::Person(id, view) => {
+            let person = client.person(id, view.alt_sort).await?;
             let _ = client.record_view(RecentKind::Person, id).await;
             Content::Person(Box::new(person))
         }

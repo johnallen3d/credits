@@ -217,6 +217,11 @@ out to Home Assistant.
   `s` peeks the highlighted (or open) episode
 - Person pages: born/died, first paragraph of the biography, known for,
   filmography by department
+  - `t` cycles All / Movies / TV (filtered locally), `o` toggles Date /
+    Rating (refetches `?sort=rating`); current choice shown above the
+    credits, score beside each credit when sorted by rating
+  - Rating sort notes unscored credits, stale scores (with their date) and
+    ratings unavailable or not configured, as on the list screens
 - Watched (`v`) list screen: year, kind, title, Apple TV, what of a show
   is marked and when; `t` kind, `a` cycles Any way / By hand / Apple TV,
   `o` Last watched / Title; unreadable marks shown as an error
@@ -237,7 +242,7 @@ out to Home Assistant.
   the box (keeps query and selected result; Tab returns to that row),
   Esc leaves the box, j/k or ↑/↓ move, Enter/l open, Esc/Backspace/h back,
   `/` new search, `c` full credits, `w`/`f`/`v`
-  lists, `b`/`F`/`x`/`X` toggles, `r` reload, `s` peek, `[`/`]`
+  lists, `t`/`o` filter/sort lists and filmographies, `b`/`F`/`x`/`X` toggles, `r` reload, `s` peek, `[`/`]`
   previous/next episode, `q` or Ctrl-C quit
 - `?` opens a scrollable keyboard-help overlay from any screen (including
   the search box); all keys are grouped by task, with inapplicable keys

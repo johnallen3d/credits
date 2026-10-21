@@ -249,6 +249,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Some(Target::Title(..)) => {
             "j/k move · Enter open · b/F/x toggle · c credits · w/f/v lists · Esc back · r reload · q quit"
         }
+        Some(Target::Person(..)) => {
+            "j/k move · Enter open · t kind · o sort · w/f/v lists · Esc back · / search · r reload · q quit"
+        }
         Some(Target::Credits(..)) => {
             "j/k move · Enter open person · w/f/v lists · Esc back · / search · r reload · q quit"
         }
@@ -258,7 +261,6 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Some(Target::Episode(..)) => {
             "j/k move · Enter open · x watched · s peek · [/] prev/next · Esc back · r reload · q quit"
         }
-        _ => "j/k move · Enter open · w/f/v lists · Esc back · / search · r reload · q quit",
     };
     frame.render_widget(Line::styled(format!(" ? help · {hints}"), dim()), area);
     let busy = match app.stack.last() {
@@ -312,7 +314,7 @@ fn screen_name(screen: &Screen) -> String {
         (Load::Ready(Content::Season(s)), _) => s.name.clone(),
         (Load::Ready(Content::Episode(e)), _) => format!("{}. {}", e.number, e.title),
         (_, Target::Title(kind, _)) => kind.label().to_owned(),
-        (_, Target::Person(_)) => "Person".to_owned(),
+        (_, Target::Person(..)) => "Person".to_owned(),
         (_, Target::Season(_, n)) => season_label(n),
         (_, Target::Episode(_, _, n)) => format!("Episode {n}"),
         (_, Target::List(name, _)) => name.label().to_owned(),
@@ -326,7 +328,10 @@ fn page(app: &App, width: u16) -> Page {
     match &screen.load {
         Load::Ready(Content::Title(t)) => title_page(t, width),
         Load::Ready(Content::Credits(c)) => credits_page(c, width),
-        Load::Ready(Content::Person(p)) => person_page(p, width),
+        Load::Ready(Content::Person(p)) => match screen.target {
+            Target::Person(_, view) => person_page(p, view, width),
+            _ => Page::default(),
+        },
         Load::Ready(Content::Season(s)) => season_page(s, screen, width),
         Load::Ready(Content::Episode(e)) => episode_page(e, screen, width),
         Load::Ready(Content::List(l)) => match screen.target {
@@ -400,7 +405,12 @@ fn search_page(app: &App, width: u16) -> Page {
                     }
                     detail.push_str(&titles.join(", "));
                 }
-                ("Person", Target::Person(p.id), p.name.clone(), detail)
+                (
+                    "Person",
+                    Target::Person(p.id, ListView::default()),
+                    p.name.clone(),
+                    detail,
+                )
             }
         };
         hit_link(&mut page, kind, target, name, detail);
@@ -424,7 +434,7 @@ fn recent_page(app: &App, width: u16) -> Page {
             let (kind, target) = match v.kind {
                 RecentKind::Movie => (Kind::Movie.label(), Target::Title(Kind::Movie, v.id)),
                 RecentKind::Tv => (Kind::Tv.label(), Target::Title(Kind::Tv, v.id)),
-                RecentKind::Person => ("Person", Target::Person(v.id)),
+                RecentKind::Person => ("Person", Target::Person(v.id, ListView::default())),
                 RecentKind::Other => return None,
             };
             let name = match &v.year {
@@ -839,7 +849,7 @@ fn key_crew(page: &mut Page, key_crew: &[KeyCrew]) {
                 Span::styled(format!("  {label:<13}"), dim()),
                 Span::raw(person.name.clone()),
             ]),
-            Target::Person(person.person_id),
+            Target::Person(person.person_id, ListView::default()),
         );
     }
 }
@@ -856,7 +866,7 @@ fn cast_rows(page: &mut Page, cast: &[Credit]) {
                 Span::raw(format!("  {}  ", pad(&credit.name, column))),
                 Span::styled(role, dim()),
             ]),
-            Target::Person(credit.person_id),
+            Target::Person(credit.person_id, ListView::default()),
         );
     }
 }
@@ -869,7 +879,7 @@ fn season_label(number: u32) -> String {
     }
 }
 
-fn person_page(p: &Person, width: u16) -> Page {
+fn person_page(p: &Person, view: ListView, width: u16) -> Page {
     let mut page = Page::new("Person");
     page.line(Line::raw(p.name.clone()).bold());
     let mut facts: Vec<String> = p.known_for.iter().cloned().collect();
@@ -894,19 +904,68 @@ fn person_page(p: &Person, width: u16) -> Page {
         page.heading("Known for");
         credit_rows(&mut page, &p.known_for_titles);
     }
-    for group in &p.filmography {
-        page.heading(format!("{} ({})", group.department, group.entries.len()));
-        credit_rows(&mut page, &group.entries);
+    if p.filmography.is_empty() {
+        if p.known_for_titles.is_empty() {
+            page.blank();
+            page.line(Line::styled("No credits listed on TMDB.", dim()));
+        }
+        return page;
     }
-    if p.known_for_titles.is_empty() && p.filmography.is_empty() {
+
+    page.heading("Filmography");
+    let mut bar = Vec::new();
+    choices(
+        &mut bar,
+        "Show",
+        &[
+            ("All", view.kind.is_none()),
+            ("Movies", view.kind == Some(Kind::Movie)),
+            ("TV", view.kind == Some(Kind::Tv)),
+        ],
+    );
+    choices(
+        &mut bar,
+        "Sort",
+        &[("Date", !view.alt_sort), ("Rating", view.alt_sort)],
+    );
+    page.line(Line::from(bar));
+    if let Some(r) = &p.sort_ratings {
+        sort_ratings_notes(&mut page, r, Order::Filmography, width);
+    }
+    let mut shown = false;
+    for group in &p.filmography {
+        let entries: Vec<PersonCredit> = group
+            .entries
+            .iter()
+            .filter(|e| view.kind.is_none_or(|k| e.kind == k))
+            .cloned()
+            .collect();
+        if entries.is_empty() {
+            continue;
+        }
+        shown = true;
+        page.heading(format!("{} ({})", group.department, entries.len()));
+        credit_rows(&mut page, &entries);
+    }
+    if !shown {
+        let what = if view.kind == Some(Kind::Tv) {
+            "TV"
+        } else {
+            "movie"
+        };
         page.blank();
-        page.line(Line::styled("No credits listed on TMDB.", dim()));
+        page.line(Line::styled(
+            format!("  No {what} credits listed for this person."),
+            dim(),
+        ));
     }
     page
 }
 
 fn credit_rows(page: &mut Page, credits: &[PersonCredit]) {
     let column = column_width(credits.iter().map(|c| c.title.as_str()), TITLE_COLUMN);
+    // Unrated credits keep the column so roles stay aligned.
+    let rated = credits.iter().any(|c| c.rating.is_some());
     for c in credits {
         let year = c.year.as_deref().unwrap_or("");
         let mut role = c.role.clone().unwrap_or_default();
@@ -921,6 +980,11 @@ fn credit_rows(page: &mut Page, credits: &[PersonCredit]) {
                     Style::new().fg(palette().accent),
                 ),
                 Span::raw(format!("{}  ", pad(&c.title, column))),
+                Span::raw(match &c.rating {
+                    Some(r) => format!("{:<12}", short_score(r)),
+                    None if rated => " ".repeat(12),
+                    None => String::new(),
+                }),
                 Span::styled(role, dim()),
             ]),
             Target::Title(c.kind, c.id),
@@ -976,7 +1040,7 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
         services_notes(&mut page, svc, view.mine, width);
     }
     if let Some(r) = &l.sort_ratings {
-        sort_ratings_notes(&mut page, r, width);
+        sort_ratings_notes(&mut page, r, Order::Added, width);
     }
     page.blank();
 
@@ -1239,10 +1303,24 @@ fn services_notes(page: &mut Page, svc: &ListServices, mine: bool, width: u16) {
     }
 }
 
-fn sort_ratings_notes(page: &mut Page, r: &SortRatings, width: u16) {
+/// What a by-rating order falls back to for unscored titles.
+#[derive(Clone, Copy)]
+enum Order {
+    Added,
+    Filmography,
+}
+
+fn sort_ratings_notes(page: &mut Page, r: &SortRatings, order: Order, width: u16) {
     match r.unavailable_reason {
         Some(UnavailableReason::NotConfigured) => page.line(Line::styled(
-            "Ratings aren't configured on the server, so titles stay in the order they were added.",
+            match order {
+                Order::Added => {
+                    "Ratings aren't configured on the server, so titles stay in the order they were added."
+                }
+                Order::Filmography => {
+                    "Ratings aren't configured on the server, so credits stay in date order."
+                }
+            },
             dim(),
         )),
         Some(_) => page.line(Line::styled(
@@ -1250,7 +1328,14 @@ fn sort_ratings_notes(page: &mut Page, r: &SortRatings, width: u16) {
             dim(),
         )),
         None if r.unrated > 0 => page.line(Line::styled(
-            "Titles without a Rotten Tomatoes or IMDb score are listed last, most recently added first.",
+            match order {
+                Order::Added => {
+                    "Titles without a Rotten Tomatoes or IMDb score are listed last, most recently added first."
+                }
+                Order::Filmography => {
+                    "Credits without a Rotten Tomatoes or IMDb score are listed last, newest first."
+                }
+            },
             dim(),
         )),
         None => {}

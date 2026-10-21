@@ -428,6 +428,8 @@ pub struct Credit {
     pub name: String,
     pub role: Option<String>,
     pub episode_count: Option<u32>,
+    /// Only when sorted by rating: Rotten Tomatoes, else IMDb.
+    pub rating: Option<Rating>,
 }
 
 /// Everyone credited on a movie or TV show: cast in billing order, crew
@@ -464,6 +466,8 @@ pub struct Person {
     pub known_for_titles: Vec<PersonCredit>,
     #[serde(default)]
     pub filmography: Vec<FilmographyGroup>,
+    /// Only when sorted by rating.
+    pub sort_ratings: Option<SortRatings>,
     pub metadata: Metadata,
 }
 
@@ -481,6 +485,8 @@ pub struct PersonCredit {
     pub year: Option<String>,
     pub role: Option<String>,
     pub episode_count: Option<u32>,
+    /// Only when sorted by rating: Rotten Tomatoes, else IMDb.
+    pub rating: Option<Rating>,
 }
 
 /// The To watch list or Favorites, already filtered by the server.

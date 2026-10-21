@@ -3931,7 +3931,10 @@ fn terminal_client_help_is_modal_and_restores_search_focus_and_selection() {
 #[test]
 fn terminal_client_help_scrolls_resizes_and_keeps_ctrl_c_available() {
     let mut app = tui::App::new("http://localhost");
-    app.open(tui::app::Target::Person(6384));
+    app.open(tui::app::Target::Person(
+        6384,
+        tui::app::ListView::default(),
+    ));
     app.stack.last_mut().unwrap().load = tui::app::Load::Failed("Provider unavailable".to_owned());
     let before = screen(&mut app);
     press(&mut app, KeyCode::Char('?'));
@@ -4026,7 +4029,14 @@ async fn terminal_client_help_dims_keys_for_titles_people_lists_and_episodes() {
             false,
             false,
         ),
-        (Target::Person(6384), false, false, false, false, false),
+        (
+            Target::Person(6384, tui::app::ListView::default()),
+            false,
+            false,
+            false,
+            false,
+            false,
+        ),
         (Target::Season(1396, 1), false, true, true, false, false),
         (Target::Episode(1396, 1, 1), false, true, true, true, false),
         (
@@ -4051,7 +4061,7 @@ async fn terminal_client_help_dims_keys_for_titles_people_lists_and_episodes() {
             ("X", watched && !list),
             ("s", peek),
             ("[ / ]", neighbour),
-            ("t", list),
+            ("t", list || matches!(target, Target::Person(..))),
         ] {
             binding(&mut app, keys, active);
         }
@@ -4130,7 +4140,10 @@ fn terminal_client_tabs_handle_empty_search_but_leave_other_pages_alone() {
         assert!(app.search.query.is_empty());
     }
 
-    app.open(tui::app::Target::Person(6384));
+    app.open(tui::app::Target::Person(
+        6384,
+        tui::app::ListView::default(),
+    ));
     for key in [KeyCode::Tab, KeyCode::BackTab] {
         assert!(press(&mut app, key).is_empty());
         assert!(!app.editing);
@@ -4152,7 +4165,10 @@ async fn terminal_client_shows_degraded_and_failed_states() {
         "{movie}"
     );
 
-    let open = app.open(tui::app::Target::Person(424242));
+    let open = app.open(tui::app::Target::Person(
+        424242,
+        tui::app::ListView::default(),
+    ));
     fulfil(&client, &mut app, open).await;
     let missing = screen(&mut app);
     assert!(missing.contains("Not found on TMDB."), "{missing}");
@@ -4291,7 +4307,7 @@ async fn terminal_client_browses_seasons_and_episodes_hiding_spoilers() {
     assert!(matches!(
         open.as_slice(),
         [tui::app::Request::Page {
-            target: tui::app::Target::Person(66633),
+            target: tui::app::Target::Person(66633, _),
             ..
         }]
     ));
@@ -5113,7 +5129,7 @@ async fn terminal_client_opens_full_cast_and_crew_from_title_pages() {
     assert!(matches!(
         open.as_slice(),
         [Request::Page {
-            target: Target::Person(_),
+            target: Target::Person(..),
             ..
         }]
     ));
@@ -5181,4 +5197,119 @@ async fn terminal_client_credits_show_degraded_and_failed_states() {
         "{down}"
     );
     assert!(down.contains("Press r to try again"), "{down}");
+}
+
+#[tokio::test]
+async fn terminal_client_filters_and_sorts_person_filmography() {
+    use tui::api::Kind;
+    use tui::app::{ListView, Request, Target};
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::ZERO).await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    // Known for stays as it is, as on the web.
+    let filmography = |app: &mut tui::App| {
+        let page = screen(app);
+        page[page.find("Filmography").unwrap()..].to_owned()
+    };
+    let open = app.open(Target::Person(6384, ListView::default()));
+    fulfil(&client, &mut app, open).await;
+    let page = screen(&mut app);
+    assert!(
+        page.contains("Show All · Movies · TV   Sort Date · Rating"),
+        "{page}"
+    );
+    assert!(
+        page.contains("Breaking Bad") && page.contains("The Matrix"),
+        "{page}"
+    );
+    assert!(!page.contains("RT 83%"), "date order looks no ratings up");
+
+    // The kind filter is applied here, without a request.
+    assert!(press(&mut app, KeyCode::Char('l')).len() == 1);
+    press(&mut app, KeyCode::Esc);
+    assert!(press(&mut app, KeyCode::Char('t')).is_empty());
+    assert_eq!(
+        app.stack.last().unwrap().target,
+        Target::Person(
+            6384,
+            ListView {
+                kind: Some(Kind::Movie),
+                ..ListView::default()
+            }
+        )
+    );
+    let movies = filmography(&mut app);
+    assert!(movies.contains("The Matrix"), "{movies}");
+    assert!(!movies.contains("Breaking Bad"), "{movies}");
+    assert_eq!(app.cursor().selected, 0, "the highlight starts over");
+    press(&mut app, KeyCode::Char('t'));
+    let tv = filmography(&mut app);
+    assert!(
+        tv.contains("Breaking Bad") && !tv.contains("The Matrix"),
+        "{tv}"
+    );
+
+    // The order comes from the server, keeping the filter.
+    press(&mut app, KeyCode::Char('t'));
+    let requests = press(&mut app, KeyCode::Char('o'));
+    let [Request::Page { target, .. }] = requests.as_slice() else {
+        panic!("{requests:?}");
+    };
+    assert_eq!(
+        *target,
+        Target::Person(
+            6384,
+            ListView {
+                alt_sort: true,
+                ..ListView::default()
+            }
+        )
+    );
+    for request in requests {
+        fulfil(&client, &mut app, request).await;
+    }
+    let rated = filmography(&mut app);
+    assert!(rated.contains("Sort Date · Rating"), "{rated}");
+    assert!(
+        rated.contains("IMDb 9.5/10") && rated.contains("RT 83%"),
+        "{rated}"
+    );
+    assert!(
+        rated.contains("Credits without a Rotten Tomatoes or IMDb score are listed last"),
+        "{rated}"
+    );
+    assert!(rated.find("Breaking Bad").unwrap() < rated.find("The Matrix").unwrap());
+
+    // Scores that couldn't be refreshed are shown with a warning.
+    t.omdb.set_down(true);
+    let requests = press(&mut app, KeyCode::Char('r'));
+    for request in requests {
+        fulfil(&client, &mut app, request).await;
+    }
+    let stale = screen(&mut app);
+    assert!(
+        stale.contains("Couldn't refresh some ratings; using scores from as early as"),
+        "{stale}"
+    );
+    assert!(stale.contains("RT 83%"), "{stale}");
+
+    // Without a ratings key, credits stay in date order.
+    let base = serve(build(TOKEN, None, Duration::from_secs(3600)).await.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    let open = app.open(Target::Person(
+        6384,
+        ListView {
+            alt_sort: true,
+            ..ListView::default()
+        },
+    ));
+    fulfil(&client, &mut app, open).await;
+    let unconfigured = screen(&mut app);
+    assert!(
+        unconfigured
+            .contains("Ratings aren't configured on the server, so credits stay in date order."),
+        "{unconfigured}"
+    );
 }

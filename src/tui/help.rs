@@ -26,7 +26,6 @@ fn bindings(app: &App) -> Vec<Binding> {
         Load::Ready(content) => Some(content),
         _ => None,
     });
-    let list = matches!(target, Some(Target::List(..)));
     let title = app.title_target().is_some();
     let whole_page = matches!(
         ready,
@@ -123,12 +122,17 @@ fn bindings(app: &App) -> Vec<Binding> {
         "Open To watch / Favorites / Watched",
         browsing,
     );
-    add("Lists", "t", "Cycle All / Movies / TV", browsing && list);
+    add(
+        "Lists",
+        "t",
+        "Cycle All / Movies / TV (lists and filmographies)",
+        browsing && app.has_view(),
+    );
     add(
         "Lists",
         "o",
-        "Sort by Added / Rating (Watched: Last watched / Title)",
-        browsing && list,
+        "Sort by Added / Rating (Watched: Last watched / Title; people: Date / Rating)",
+        browsing && app.has_view(),
     );
     add(
         "Lists",
@@ -297,8 +301,9 @@ mod tests {
         assert!(active(&app, "c"));
         app.open(Target::Credits(Kind::Movie, 603));
         assert!(!active(&app, "c"), "already on the credits");
-        app.open(Target::Person(6384));
-        assert!(!active(&app, "t"));
+        app.open(Target::Person(6384, ListView::default()));
+        assert!(active(&app, "t"), "filmographies filter by kind");
+        assert!(active(&app, "o"), "filmographies sort by rating");
         assert!(!active(&app, "m"));
         assert!(!active(&app, "s"));
     }

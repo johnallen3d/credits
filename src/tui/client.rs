@@ -85,8 +85,14 @@ impl Client {
             .await
     }
 
-    pub async fn person(&self, id: u64) -> Result<Person, ClientError> {
-        self.get(&format!("/api/person/{id}"), &[]).await
+    /// A person, their filmography newest first or by rating.
+    pub async fn person(&self, id: u64, by_rating: bool) -> Result<Person, ClientError> {
+        let query: &[(&str, &str)] = if by_rating {
+            &[("sort", "rating")]
+        } else {
+            &[]
+        };
+        self.get(&format!("/api/person/{id}"), query).await
     }
 
     pub async fn season(&self, show: u64, number: u32) -> Result<Season, ClientError> {
