@@ -19,11 +19,13 @@
       craneLib = crane.mkLib pkgs;
       caBundle = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
-      # Templates, migrations and static assets are embedded at compile time.
+      # Templates, migrations and static assets are embedded at compile time;
+      # openapi.json is what the tests check the API routes against.
       src = lib.fileset.toSource {
         root = ./.;
         fileset = lib.fileset.unions [
           (craneLib.fileset.commonCargoSources ./.)
+          ./openapi.json
           ./migrations
           ./static
           ./templates

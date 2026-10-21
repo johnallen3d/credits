@@ -3354,3 +3354,11 @@ async fn season_and_episode_pages_label_episodes_marked_from_the_apple_tv() {
     let (_, _, episode) = get_page(p.t.app(), "/tv/1396/season/1/episode/2", false).await;
     assert!(!episode.contains("Marked watched from what played on the Apple TV"));
 }
+
+#[tokio::test]
+async fn api_serves_its_openapi_spec() {
+    let (status, json) = get_json(test_app().await, "/api/openapi.json").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json, serde_json::to_value(credits::web::openapi()).unwrap());
+    assert!(json["paths"]["/api/movie/{id}"]["get"].is_object());
+}

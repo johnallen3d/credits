@@ -1,0 +1,2691 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "credits",
+    "description": "JSON twins of the credits pages. No authentication; the server binds to loopback.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/search": {
+      "get": {
+        "summary": "Movies, TV shows and people matching a query. Never cached.",
+        "operationId": "api_search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "What to search for",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResults"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`q` is missing or blank",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "TMDB rejected the token or isn't responding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/movie/{id}": {
+      "get": {
+        "summary": "A movie: metadata, key crew, cast, ratings and where to watch.",
+        "operationId": "api_movie",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB movie ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or the ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "TMDB rejected the token, or failed with no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}": {
+      "get": {
+        "summary": "A TV show: metadata, key crew, cast, seasons, ratings and where to watch.",
+        "operationId": "api_tv",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or the ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "TMDB rejected the token, or failed with no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/movie/{id}/credits": {
+      "get": {
+        "summary": "A movie's whole cast and crew by department.",
+        "operationId": "api_movie_credits",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB movie ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleCredits"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or the ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "TMDB rejected the token, or failed with no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}/credits": {
+      "get": {
+        "summary": "A TV show's whole cast and crew by department.",
+        "operationId": "api_tv_credits",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleCredits"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or the ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "TMDB rejected the token, or failed with no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}/season/{number}": {
+      "get": {
+        "summary": "A season's episodes with air dates and IMDb episode scores.",
+        "operationId": "api_season",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "description": "Season number; 0 is specials",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or the ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "TMDB rejected the token, or failed with no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}/season/{number}/episode/{episode}": {
+      "get": {
+        "summary": "An episode: guest stars, regulars credited on it, crew, and neighbours.",
+        "operationId": "api_episode",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "description": "Season number; 0 is specials",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "episode",
+            "in": "path",
+            "description": "Episode number within the season",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpisodeDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or the ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "TMDB rejected the token, or failed with no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/person/{id}": {
+      "get": {
+        "summary": "A person: known for, and filmography by department.",
+        "operationId": "api_person",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB person ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Defaults to `date`",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/FilmographySort"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or the ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "TMDB rejected the token, or failed with no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/watchlist": {
+      "get": {
+        "summary": "The To watch list.",
+        "operationId": "api_watchlist",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Only movies or only TV; anything else means all",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MediaKind"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Defaults to `added`",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/WatchlistSort"
+            }
+          },
+          {
+            "name": "services",
+            "in": "query",
+            "description": "`mine`: only titles on your services, once any are chosen",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/favorites": {
+      "get": {
+        "summary": "Favorites.",
+        "operationId": "api_favorites",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Only movies or only TV; anything else means all",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MediaKind"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Defaults to `added`",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/WatchlistSort"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/services": {
+      "get": {
+        "summary": "Streaming services for `CREDITS_REGION`, grouped, with the ones you chose.",
+        "operationId": "api_services",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServicesDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/playback": {
+      "get": {
+        "summary": "Apple TV playback seen through Home Assistant: connection, history\nreads, shows waiting on a match, and recent detections.",
+        "operationId": "api_playback",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "description": "Every JSON error response.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "App": {
+        "type": "string",
+        "description": "Apps whose titles say which episode is playing.",
+        "enum": [
+          "infuse",
+          "tv"
+        ]
+      },
+      "Availability": {
+        "type": "object",
+        "description": "Which of the user's services include a title on the To watch list.",
+        "required": [
+          "state",
+          "services"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/WhereToWatchState",
+            "description": "Of the title's offers: stale or unavailable when TMDB couldn't be reached."
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Service"
+            },
+            "description": "In TMDB's order; empty when unavailable."
+          },
+          "fetched_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "Candidate": {
+        "type": "object",
+        "description": "A TMDB show or movie.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "overview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Department": {
+        "type": "object",
+        "required": [
+          "name",
+          "people"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonCredit"
+            }
+          }
+        }
+      },
+      "Detection": {
+        "type": "object",
+        "description": "An episode or movie seen playing, as stored.",
+        "required": [
+          "player",
+          "app",
+          "item_key",
+          "kind",
+          "show_key",
+          "show_title",
+          "title",
+          "season",
+          "episode",
+          "playing_seconds",
+          "last_seen",
+          "status"
+        ],
+        "properties": {
+          "player": {
+            "type": "string"
+          },
+          "app": {
+            "$ref": "#/components/schemas/App"
+          },
+          "item_key": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "show_key": {
+            "type": "string"
+          },
+          "show_title": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "season": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "episode": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "duration": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "playing_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "max_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DetectionStatus"
+          },
+          "tmdb_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The TMDB show or movie it was matched to.",
+            "minimum": 0
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "DetectionStatus": {
+        "type": "string",
+        "description": "How an episode seen playing has been handled.",
+        "enum": [
+          "watching",
+          "marked",
+          "needs_confirmation",
+          "no_match",
+          "ignored"
+        ]
+      },
+      "Episode": {
+        "type": "object",
+        "required": [
+          "number",
+          "title"
+        ],
+        "properties": {
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string",
+            "description": "TMDB's name, or \"Episode N\" when it has none."
+          },
+          "air_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "overview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "still_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rating": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Rating",
+                "description": "IMDb's episode score; None when IMDb has none or ratings are unavailable."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "EpisodeDetail": {
+        "type": "object",
+        "description": "One TV episode with everyone credited on it.",
+        "required": [
+          "show_id",
+          "show_title",
+          "season_number",
+          "season_name",
+          "number",
+          "title",
+          "episode_ratings",
+          "key_crew",
+          "cast",
+          "guest_stars",
+          "crew",
+          "metadata"
+        ],
+        "properties": {
+          "show_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "show_title": {
+            "type": "string"
+          },
+          "season_number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "season_name": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string",
+            "description": "TMDB's name, or \"Episode N\" when it has none."
+          },
+          "air_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "overview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "still_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rating": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Rating",
+                "description": "IMDb's episode score; None when IMDb has none or ratings are unavailable."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "episode_ratings": {
+            "$ref": "#/components/schemas/EpisodeRatings",
+            "description": "Where `rating` came from, and why it's missing if it is."
+          },
+          "key_crew": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyCrew"
+            },
+            "description": "Directors and writers of this episode."
+          },
+          "cast": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonCredit"
+            },
+            "description": "Series regulars who appear in this episode, in billing order."
+          },
+          "guest_stars": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonCredit"
+            }
+          },
+          "crew": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Department"
+            }
+          },
+          "previous": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Neighbouring episode numbers within the season, for navigation.",
+            "minimum": 0
+          },
+          "next": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          }
+        }
+      },
+      "EpisodeRatings": {
+        "type": "object",
+        "description": "Provenance of a season's per-episode IMDb ratings.",
+        "required": [
+          "state",
+          "provider"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/RatingsState"
+          },
+          "unavailable_reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UnavailableReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "description": "Always `omdb` today."
+          },
+          "imdb_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The show's IMDb identifier, which the season was looked up by."
+          },
+          "fetched_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "FilmographyEntry": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "title"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/MediaKind"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Characters for acting credits, job titles otherwise."
+          },
+          "episode_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rating": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Rating",
+                "description": "When sorted by rating: the score it was sorted by, Rotten Tomatoes if\nthere is one, else IMDb."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "availability": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Availability",
+                "description": "To watch only, once services are chosen: which of them include it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "FilmographyGroup": {
+        "type": "object",
+        "required": [
+          "department",
+          "entries"
+        ],
+        "properties": {
+          "department": {
+            "type": "string"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilmographyEntry"
+            },
+            "description": "In the page's `FilmographySort` order."
+          }
+        }
+      },
+      "FilmographySort": {
+        "type": "string",
+        "description": "How a person's filmography is ordered within each department.",
+        "enum": [
+          "date",
+          "rating"
+        ]
+      },
+      "KeyCrew": {
+        "type": "object",
+        "required": [
+          "role",
+          "people"
+        ],
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/KeyRole"
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonCredit"
+            }
+          }
+        }
+      },
+      "KeyRole": {
+        "type": "string",
+        "enum": [
+          "creator",
+          "director",
+          "writer"
+        ]
+      },
+      "Kind": {
+        "type": "string",
+        "description": "Whether something seen playing is a TV episode or a movie.",
+        "enum": [
+          "episode",
+          "movie"
+        ]
+      },
+      "KnownFor": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "title"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/MediaKind"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ListServices": {
+        "type": "object",
+        "description": "What stood behind the To watch list's service badges.",
+        "required": [
+          "state",
+          "unknown"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/ServicesState"
+          },
+          "unknown": {
+            "type": "integer",
+            "description": "Titles whose offers couldn't be loaded.",
+            "minimum": 0
+          },
+          "stale_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Oldest fetch among offers served stale because TMDB failed."
+          }
+        }
+      },
+      "LiveStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "HA_URL or HA_TOKEN isn't set.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "not_configured"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Configured, not connected yet.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "connecting"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "since",
+              "state"
+            ],
+            "properties": {
+              "since": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "connected"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Lost or never made since `since`; retrying.",
+            "required": [
+              "since",
+              "error",
+              "state"
+            ],
+            "properties": {
+              "since": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "error": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "disconnected"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The live feed from Home Assistant's WebSocket."
+      },
+      "MediaKind": {
+        "type": "string",
+        "enum": [
+          "movie",
+          "tv"
+        ]
+      },
+      "Metadata": {
+        "type": "object",
+        "description": "How current the TMDB data behind a response is.",
+        "required": [
+          "state",
+          "fetched_at"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/MetadataState"
+          },
+          "fetched_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "MetadataState": {
+        "type": "string",
+        "enum": [
+          "fresh",
+          "stale"
+        ]
+      },
+      "OfferGroup": {
+        "type": "object",
+        "required": [
+          "kind",
+          "providers"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/OfferKind"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WatchProvider"
+            },
+            "description": "In TMDB's display priority order."
+          }
+        }
+      },
+      "OfferKind": {
+        "type": "string",
+        "enum": [
+          "stream",
+          "free",
+          "ads",
+          "rent",
+          "buy"
+        ]
+      },
+      "PendingShow": {
+        "type": "object",
+        "description": "A show whose episodes, or a movie, wait for the user to pick its TMDB\nshow or movie.",
+        "required": [
+          "app",
+          "kind",
+          "show_key",
+          "show_title",
+          "episodes"
+        ],
+        "properties": {
+          "app": {
+            "$ref": "#/components/schemas/App"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "show_key": {
+            "type": "string"
+          },
+          "show_title": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it wasn't matched, from its latest episode."
+          },
+          "episodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "\"S1 E3\" for each waiting episode; empty for a movie."
+          },
+          "candidates": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            },
+            "description": "TMDB shows or movies found by name; `None` if TMDB couldn't be searched."
+          }
+        }
+      },
+      "PersonCredit": {
+        "type": "object",
+        "description": "A person's part in one title: a character for cast, job titles for crew.",
+        "required": [
+          "person_id",
+          "name"
+        ],
+        "properties": {
+          "person_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "episode_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "TV only: episodes this person is credited on.",
+            "minimum": 0
+          },
+          "profile_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PersonDetail": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "tmdb_url",
+          "known_for_titles",
+          "filmography",
+          "sort",
+          "metadata"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "known_for": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "biography": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "birthday": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deathday": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "place_of_birth": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tmdb_url": {
+            "type": "string"
+          },
+          "known_for_titles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilmographyEntry"
+            },
+            "description": "The person's most-voted titles, from their main department first."
+          },
+          "filmography": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilmographyGroup"
+            },
+            "description": "Grouped by department, the person's main department first."
+          },
+          "sort": {
+            "$ref": "#/components/schemas/FilmographySort"
+          },
+          "sort_ratings": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SortRatings",
+                "description": "Only when sorted by rating: how complete the scores behind the order are."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          }
+        }
+      },
+      "PersonHit": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "known_for"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "known_for_department": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "known_for": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnownFor"
+            },
+            "description": "The few titles TMDB associates with the person, most notable first."
+          },
+          "profile_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PlaybackDetail": {
+        "type": "object",
+        "required": [
+          "live",
+          "status",
+          "players",
+          "pending",
+          "recent",
+          "other",
+          "unreadable"
+        ],
+        "properties": {
+          "live": {
+            "$ref": "#/components/schemas/LiveStatus"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SyncStatus",
+            "description": "The last read of Home Assistant's history."
+          },
+          "players": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Players read, by Home Assistant entity ID."
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingShow"
+            }
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Detection"
+            }
+          },
+          "other": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": false,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              ]
+            },
+            "description": "Time spent playing other things since the server started, by app,\nmost first."
+          },
+          "unreadable": {
+            "type": "boolean",
+            "description": "`recent` couldn't be read."
+          }
+        }
+      },
+      "Rating": {
+        "type": "object",
+        "required": [
+          "source",
+          "score",
+          "scale"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/RatingSource"
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "Out of `scale`: IMDb is 0–10, the Rotten Tomatoes Tomatometer 0–100 (%)."
+          },
+          "scale": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "votes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "RatingSource": {
+        "type": "string",
+        "description": "Where a score comes from. Each source has its own scale; never compare\nraw scores across sources (see `Rating::percent`).",
+        "enum": [
+          "imdb",
+          "rotten_tomatoes"
+        ]
+      },
+      "Ratings": {
+        "type": "object",
+        "required": [
+          "state",
+          "provider",
+          "preferred_source",
+          "others"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/RatingsState"
+          },
+          "unavailable_reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UnavailableReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "description": "Always `omdb` today; scores' own origins are in `Rating::source`."
+          },
+          "imdb_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preferred_source": {
+            "$ref": "#/components/schemas/RatingSource"
+          },
+          "preferred": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Rating",
+                "description": "None when the preferred source has no score; never substituted."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "others": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rating"
+            },
+            "description": "Scores from non-preferred sources, each labeled with its source."
+          },
+          "fetched_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "RatingsState": {
+        "type": "string",
+        "enum": [
+          "fresh",
+          "stale",
+          "unavailable"
+        ]
+      },
+      "SearchHit": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TitleHit"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "movie"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TitleHit"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "tv"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PersonHit"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "person"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "description": "One search result. Serialized with a `kind` of \"movie\", \"tv\" or \"person\"\nalongside the variant's fields."
+      },
+      "SearchResults": {
+        "type": "object",
+        "required": [
+          "query",
+          "results"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The trimmed query."
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          }
+        }
+      },
+      "SeasonDetail": {
+        "type": "object",
+        "required": [
+          "show_id",
+          "show_title",
+          "number",
+          "name",
+          "episodes",
+          "episode_ratings",
+          "metadata"
+        ],
+        "properties": {
+          "show_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "show_title": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "overview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "air_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "episodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Episode"
+            }
+          },
+          "episode_ratings": {
+            "$ref": "#/components/schemas/EpisodeRatings",
+            "description": "Where the episodes' `rating`s came from, and why they're missing if they are."
+          },
+          "previous": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeasonSummary",
+                "description": "Neighbouring seasons in the show's season order, for navigation."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeasonSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          }
+        }
+      },
+      "SeasonSummary": {
+        "type": "object",
+        "required": [
+          "number",
+          "name"
+        ],
+        "properties": {
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "episode_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Service": {
+        "type": "object",
+        "description": "A streaming service, as TMDB lists it.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "logo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ServiceGroup": {
+        "type": "string",
+        "description": "Where a service appears on the services page, in page order.",
+        "enum": [
+          "mine",
+          "popular",
+          "more"
+        ]
+      },
+      "ServiceOption": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Service"
+          },
+          {
+            "type": "object",
+            "required": [
+              "chosen",
+              "group"
+            ],
+            "properties": {
+              "chosen": {
+                "type": "boolean"
+              },
+              "group": {
+                "$ref": "#/components/schemas/ServiceGroup"
+              }
+            }
+          }
+        ]
+      },
+      "ServicesDetail": {
+        "type": "object",
+        "description": "The services page: the user's choice and every service to choose from.",
+        "required": [
+          "region",
+          "chosen",
+          "options",
+          "state",
+          "complete"
+        ],
+        "properties": {
+          "region": {
+            "type": "string"
+          },
+          "chosen": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Service"
+            },
+            "description": "The saved choice, by name."
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceOption"
+            },
+            "description": "In group order, alphabetical within each group, without add-on\nchannels the user hasn't chosen. Only the chosen ones when TMDB's list\nis unavailable."
+          },
+          "state": {
+            "$ref": "#/components/schemas/WhereToWatchState",
+            "description": "Of TMDB's list of services."
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "False when only one of TMDB's movie and TV lists could be loaded."
+          },
+          "fetched_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Oldest fetch behind the list."
+          }
+        }
+      },
+      "ServicesState": {
+        "type": "string",
+        "description": "Whether the user's streaming services are known.",
+        "enum": [
+          "not_chosen",
+          "chosen",
+          "unreadable"
+        ]
+      },
+      "SortRatings": {
+        "type": "object",
+        "description": "What stood behind a by-rating order: credits without a score, and\nwhether some scores were stale or couldn't be loaded.",
+        "required": [
+          "unrated"
+        ],
+        "properties": {
+          "unrated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stale_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Oldest fetch among scores served stale because OMDb failed."
+          },
+          "unavailable_reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UnavailableReason",
+                "description": "Set when ratings aren't configured or some lookups failed outright."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SyncStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "HA_URL or HA_TOKEN isn't set.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "not_configured"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Configured, but not read yet.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "starting"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "at",
+              "state"
+            ],
+            "properties": {
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "ok"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "at",
+              "error",
+              "state"
+            ],
+            "properties": {
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "error": {
+                "type": "string"
+              },
+              "last_ok": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "failed"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "How reading Home Assistant is going."
+      },
+      "TitleCredits": {
+        "type": "object",
+        "description": "Everyone credited on a title, crew grouped by department.",
+        "required": [
+          "kind",
+          "id",
+          "title",
+          "cast",
+          "crew",
+          "metadata"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/MediaKind"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cast": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonCredit"
+            }
+          },
+          "crew": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Department"
+            }
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          }
+        }
+      },
+      "TitleDetail": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "title",
+          "genres",
+          "tmdb_url",
+          "ratings",
+          "where_to_watch",
+          "key_crew",
+          "cast",
+          "cast_total",
+          "crew_total",
+          "season_list",
+          "metadata"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/MediaKind"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "original_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tagline": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "overview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "runtime_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Movies only.",
+            "minimum": 0
+          },
+          "seasons": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "TV only.",
+            "minimum": 0
+          },
+          "episodes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "TV only.",
+            "minimum": 0
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "backdrop_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tmdb_url": {
+            "type": "string"
+          },
+          "ratings": {
+            "$ref": "#/components/schemas/Ratings"
+          },
+          "where_to_watch": {
+            "$ref": "#/components/schemas/WhereToWatch"
+          },
+          "key_crew": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyCrew"
+            },
+            "description": "Directors and writers (movies), creators and principal directors (TV)."
+          },
+          "cast": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonCredit"
+            },
+            "description": "Top-billed cast only; the full list is in `TitleCredits`."
+          },
+          "cast_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "crew_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "season_list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeasonSummary"
+            },
+            "description": "TV only, regular seasons first and specials (season 0) last."
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          }
+        }
+      },
+      "TitleHit": {
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "overview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UnavailableReason": {
+        "type": "string",
+        "enum": [
+          "not_configured",
+          "no_imdb_id",
+          "provider_error"
+        ]
+      },
+      "WatchProvider": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "mine"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "logo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mine": {
+            "type": "boolean",
+            "description": "One of the user's services."
+          }
+        }
+      },
+      "WatchlistDetail": {
+        "type": "object",
+        "description": "The \"To watch\" list: saved movies and TV shows in the chosen order.",
+        "required": [
+          "titles",
+          "sort"
+        ],
+        "properties": {
+          "titles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilmographyEntry"
+            }
+          },
+          "sort": {
+            "$ref": "#/components/schemas/WatchlistSort"
+          },
+          "sort_ratings": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SortRatings",
+                "description": "Only when sorted by rating: how complete the scores behind the order are."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "services": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ListServices",
+                "description": "To watch only: the user's services and how complete the titles' offers are."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "WatchlistSort": {
+        "type": "string",
+        "description": "How the \"To watch\" list is ordered.",
+        "enum": [
+          "added",
+          "rating"
+        ]
+      },
+      "WhereToWatch": {
+        "type": "object",
+        "description": "How a title can be watched in one region, from TMDB's JustWatch data.",
+        "required": [
+          "region",
+          "state",
+          "offers",
+          "my_services"
+        ],
+        "properties": {
+          "region": {
+            "type": "string",
+            "description": "ISO 3166-1 country code."
+          },
+          "state": {
+            "$ref": "#/components/schemas/WhereToWatchState"
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "TMDB's page of every offer in the region, which links on to each service."
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OfferGroup"
+            },
+            "description": "Non-empty groups, in `OfferKind` order. Empty when nothing is offered\nin the region, or when unavailable."
+          },
+          "fetched_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "my_services": {
+            "$ref": "#/components/schemas/ServicesState",
+            "description": "Whether `WatchProvider::mine` could be set."
+          }
+        }
+      },
+      "WhereToWatchState": {
+        "type": "string",
+        "enum": [
+          "fresh",
+          "stale",
+          "unavailable"
+        ]
+      }
+    }
+  }
+}

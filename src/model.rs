@@ -4,8 +4,9 @@ use std::collections::HashSet;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MediaKind {
     Movie,
@@ -38,7 +39,7 @@ impl MediaKind {
 
 /// One search result. Serialized with a `kind` of "movie", "tv" or "person"
 /// alongside the variant's fields.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum SearchHit {
     Movie(TitleHit),
@@ -46,7 +47,7 @@ pub enum SearchHit {
     Person(PersonHit),
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct TitleHit {
     pub id: u64,
     pub title: String,
@@ -55,7 +56,7 @@ pub struct TitleHit {
     pub poster_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct PersonHit {
     pub id: u64,
     pub name: String,
@@ -65,7 +66,7 @@ pub struct PersonHit {
     pub profile_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct KnownFor {
     pub kind: MediaKind,
     pub id: u64,
@@ -280,7 +281,7 @@ impl Watched {
 }
 
 /// Whether a movie is marked watched.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, ToSchema)]
 pub struct MovieWatched {
     pub watched: bool,
     /// Marked from what played on an Apple TV.
@@ -302,7 +303,7 @@ fn local_day(t: Timestamp) -> String {
         .to_string()
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetadataState {
     /// Within the freshness window.
@@ -312,7 +313,7 @@ pub enum MetadataState {
 }
 
 /// How current the TMDB data behind a response is.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, ToSchema)]
 pub struct Metadata {
     pub state: MetadataState,
     pub fetched_at: Timestamp,
@@ -370,7 +371,7 @@ pub fn display_date(date: &str) -> String {
         .unwrap_or_else(|_| date.to_owned())
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct TitleDetail {
     pub kind: MediaKind,
     pub id: u64,
@@ -418,7 +419,7 @@ impl TitleDetail {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WhereToWatchState {
     /// From TMDB data within its freshness window.
@@ -430,7 +431,7 @@ pub enum WhereToWatchState {
 }
 
 /// How a title can be watched in one region, from TMDB's JustWatch data.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct WhereToWatch {
     /// ISO 3166-1 country code.
     pub region: String,
@@ -509,7 +510,7 @@ impl WhereToWatch {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OfferKind {
     /// Included with a subscription.
@@ -548,14 +549,14 @@ impl OfferKind {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct OfferGroup {
     pub kind: OfferKind,
     /// In TMDB's display priority order.
     pub providers: Vec<WatchProvider>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct WatchProvider {
     pub id: u64,
     pub name: String,
@@ -565,7 +566,7 @@ pub struct WatchProvider {
 }
 
 /// Whether the user's streaming services are known.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ServicesState {
     NotChosen,
@@ -593,14 +594,14 @@ impl ServicesState {
 }
 
 /// A streaming service, as TMDB lists it.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Service {
     pub id: u64,
     pub name: String,
     pub logo_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct ServiceOption {
     #[serde(flatten)]
     pub service: Service,
@@ -609,7 +610,7 @@ pub struct ServiceOption {
 }
 
 /// Where a service appears on the services page, in page order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceGroup {
     /// The user's services.
@@ -631,7 +632,7 @@ impl ServiceGroup {
 }
 
 /// The services page: the user's choice and every service to choose from.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct ServicesDetail {
     pub region: String,
     /// The saved choice, by name.
@@ -671,7 +672,7 @@ impl ServicesDetail {
 }
 
 /// Which of the user's services include a title on the To watch list.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Availability {
     /// Of the title's offers: stale or unavailable when TMDB couldn't be reached.
     pub state: WhereToWatchState,
@@ -695,7 +696,7 @@ impl Availability {
 }
 
 /// What stood behind the To watch list's service badges.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct ListServices {
     pub state: ServicesState,
     /// Titles whose offers couldn't be loaded.
@@ -744,7 +745,7 @@ impl ServicesFilter {
 }
 
 /// A person's part in one title: a character for cast, job titles for crew.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct PersonCredit {
     pub person_id: u64,
     pub name: String,
@@ -764,7 +765,7 @@ impl PersonCredit {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyRole {
     Creator,
@@ -782,14 +783,14 @@ impl KeyRole {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct KeyCrew {
     pub role: KeyRole,
     pub people: Vec<PersonCredit>,
 }
 
 /// Everyone credited on a title, crew grouped by department.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct TitleCredits {
     pub kind: MediaKind,
     pub id: u64,
@@ -806,7 +807,7 @@ impl TitleCredits {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Department {
     pub name: String,
     pub people: Vec<PersonCredit>,
@@ -842,7 +843,7 @@ fn slug(name: &str) -> String {
     slug.join("-")
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct SeasonSummary {
     pub number: u32,
     pub name: String,
@@ -857,7 +858,7 @@ impl SeasonSummary {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct SeasonDetail {
     pub show_id: u64,
     pub show_title: String,
@@ -902,7 +903,7 @@ impl SeasonDetail {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Episode {
     pub number: u32,
     /// TMDB's name, or "Episode N" when it has none.
@@ -922,7 +923,7 @@ impl Episode {
 }
 
 /// One TV episode with everyone credited on it.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct EpisodeDetail {
     pub show_id: u64,
     pub show_title: String,
@@ -974,7 +975,7 @@ impl EpisodeDetail {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct PersonDetail {
     pub id: u64,
     pub name: String,
@@ -1017,7 +1018,7 @@ impl PersonDetail {
 }
 
 /// How a person's filmography is ordered within each department.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FilmographySort {
     /// Newest first; undated (usually unreleased) entries lead.
@@ -1089,7 +1090,7 @@ impl KindFilter {
 }
 
 /// The "To watch" list: saved movies and TV shows in the chosen order.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct WatchlistDetail {
     pub titles: Vec<FilmographyEntry>,
     pub sort: WatchlistSort,
@@ -1101,7 +1102,7 @@ pub struct WatchlistDetail {
 }
 
 /// How the "To watch" list is ordered.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WatchlistSort {
     /// Most recently added first.
@@ -1127,7 +1128,7 @@ impl WatchlistSort {
 
 /// What stood behind a by-rating order: credits without a score, and
 /// whether some scores were stale or couldn't be loaded.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, ToSchema)]
 pub struct SortRatings {
     pub unrated: usize,
     /// Oldest fetch among scores served stale because OMDb failed.
@@ -1157,7 +1158,7 @@ impl SortRatings {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct FilmographyGroup {
     pub department: String,
     /// In the page's `FilmographySort` order.
@@ -1179,7 +1180,7 @@ impl FilmographyGroup {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct FilmographyEntry {
     pub kind: MediaKind,
     pub id: u64,
@@ -1210,7 +1211,7 @@ impl FilmographyEntry {
 
 /// Where a score comes from. Each source has its own scale; never compare
 /// raw scores across sources (see `Rating::percent`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RatingSource {
     Imdb,
@@ -1234,7 +1235,7 @@ impl RatingSource {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct Rating {
     pub source: RatingSource,
     /// Out of `scale`: IMDb is 0–10, the Rotten Tomatoes Tomatometer 0–100 (%).
@@ -1304,7 +1305,7 @@ impl Rating {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RatingsState {
     /// Within the freshness window.
@@ -1315,7 +1316,7 @@ pub enum RatingsState {
     Unavailable,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UnavailableReason {
     /// The server has no ratings provider key.
@@ -1326,7 +1327,7 @@ pub enum UnavailableReason {
     ProviderError,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Ratings {
     pub state: RatingsState,
     pub unavailable_reason: Option<UnavailableReason>,
@@ -1407,7 +1408,7 @@ impl Ratings {
 }
 
 /// Provenance of a season's per-episode IMDb ratings.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct EpisodeRatings {
     pub state: RatingsState,
     pub unavailable_reason: Option<UnavailableReason>,

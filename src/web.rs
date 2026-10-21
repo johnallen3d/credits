@@ -12,7 +12,8 @@ use axum::{
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use utoipa::{IntoResponses, OpenApi, ToSchema};
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::catalog::{Catalog, CatalogError, ServicesError, WatchlistError};
 use crate::model::{
@@ -24,6 +25,8 @@ use crate::model::{
 use crate::playback::{App, Kind, LiveStatus, PlaybackDetail};
 
 pub fn app(catalog: Catalog) -> Router {
+    let (api, spec) = api().split_for_parts();
+    let spec = spec.to_pretty_json().expect("the OpenAPI spec serializes");
     Router::new()
         .route("/", get(search_page))
         .route(
@@ -85,32 +88,10 @@ pub fn app(catalog: Catalog) -> Router {
         .route("/playback", get(playback_page))
         .route("/playback/decide", post(decide_playback_show))
         .route("/person/{id}", get(person_page))
-        .route("/api/search", get(api_search))
+        .merge(api)
         .route(
-            "/api/movie/{id}",
-            get(|s, p| api_detail(s, p, MediaKind::Movie)),
-        )
-        .route("/api/tv/{id}", get(|s, p| api_detail(s, p, MediaKind::Tv)))
-        .route(
-            "/api/movie/{id}/credits",
-            get(|s, p| api_credits(s, p, MediaKind::Movie)),
-        )
-        .route(
-            "/api/tv/{id}/credits",
-            get(|s, p| api_credits(s, p, MediaKind::Tv)),
-        )
-        .route("/api/tv/{id}/season/{number}", get(api_season))
-        .route(
-            "/api/tv/{id}/season/{number}/episode/{episode}",
-            get(api_episode),
-        )
-        .route("/api/person/{id}", get(api_person))
-        .route("/api/watchlist", get(|s, q| api_watchlist(s, q, false)))
-        .route("/api/favorites", get(|s, q| api_watchlist(s, q, true)))
-        .route("/api/services", get(api_services))
-        .route(
-            "/api/playback",
-            get(|State(catalog): State<Catalog>| async move { Json(catalog.playback().await) }),
+            "/api/openapi.json",
+            get(|| async move { ([(header::CONTENT_TYPE, "application/json")], spec) }),
         )
         .route(
             "/static/htmx.min.js",
@@ -145,6 +126,70 @@ pub fn app(catalog: Catalog) -> Router {
             )
         })
         .with_state(catalog)
+}
+
+/// The JSON API. Each handler's `#[utoipa::path]` both routes it and
+/// describes it, so the spec can't drift from what is served.
+fn api() -> OpenApiRouter<Catalog> {
+    OpenApiRouter::with_openapi(ApiDoc::openapi())
+        .routes(routes!(api_search))
+        .routes(routes!(api_movie))
+        .routes(routes!(api_tv))
+        .routes(routes!(api_movie_credits))
+        .routes(routes!(api_tv_credits))
+        .routes(routes!(api_season))
+        .routes(routes!(api_episode))
+        .routes(routes!(api_person))
+        .routes(routes!(api_watchlist))
+        .routes(routes!(api_favorites))
+        .routes(routes!(api_services))
+        .routes(routes!(api_playback))
+}
+
+/// The OpenAPI document for the JSON API, as committed in `openapi.json`.
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    api().into_openapi()
+}
+
+#[derive(OpenApi)]
+#[openapi(info(
+    title = "credits",
+    description = "JSON twins of the credits pages. No authentication; the server binds to loopback.",
+    license(name = "MIT", identifier = "MIT")
+))]
+struct ApiDoc;
+
+/// Every JSON error response.
+#[derive(Serialize, ToSchema)]
+struct ApiError {
+    error: String,
+}
+
+/// The ways a TMDB-backed lookup fails.
+#[derive(IntoResponses)]
+#[allow(dead_code)] // Only describes responses for the spec.
+enum LookupErrors {
+    /// TMDB has nothing with that ID, or the ID isn't a number.
+    #[response(status = 404)]
+    NotFound(#[to_schema] ApiError),
+    /// TMDB rejected the token, or failed with no cached copy to fall back on.
+    #[response(status = 502)]
+    Provider(#[to_schema] ApiError),
+}
+
+/// The database couldn't be read.
+#[derive(IntoResponses)]
+#[allow(dead_code)] // Only describes responses for the spec.
+enum ReadError {
+    #[response(status = 500)]
+    Database(#[to_schema] ApiError),
+}
+
+#[derive(Serialize, ToSchema)]
+struct SearchResults {
+    /// The trimmed query.
+    query: String,
+    results: Vec<SearchHit>,
 }
 
 pub enum Results {
@@ -963,7 +1008,36 @@ async fn watchlist_page(
     }
 }
 
-async fn api_watchlist(
+/// The To watch list.
+#[utoipa::path(
+    get,
+    path = "/api/watchlist",
+    params(
+        ("kind" = Option<MediaKind>, Query, description = "Only movies or only TV; anything else means all"),
+        ("sort" = Option<WatchlistSort>, Query, description = "Defaults to `added`"),
+        ("services" = Option<String>, Query, description = "`mine`: only titles on your services, once any are chosen"),
+    ),
+    responses((status = OK, body = WatchlistDetail), ReadError)
+)]
+async fn api_watchlist(state: State<Catalog>, query: Query<WatchlistParams>) -> Response {
+    api_list(state, query, false).await
+}
+
+/// Favorites.
+#[utoipa::path(
+    get,
+    path = "/api/favorites",
+    params(
+        ("kind" = Option<MediaKind>, Query, description = "Only movies or only TV; anything else means all"),
+        ("sort" = Option<WatchlistSort>, Query, description = "Defaults to `added`"),
+    ),
+    responses((status = OK, body = WatchlistDetail), ReadError)
+)]
+async fn api_favorites(state: State<Catalog>, query: Query<WatchlistParams>) -> Response {
+    api_list(state, query, true).await
+}
+
+async fn api_list(
     State(catalog): State<Catalog>,
     Query(params): Query<WatchlistParams>,
     favorites: bool,
@@ -1148,6 +1222,12 @@ async fn save_services(
     }
 }
 
+/// Streaming services for `CREDITS_REGION`, grouped, with the ones you chose.
+#[utoipa::path(
+    get,
+    path = "/api/services",
+    responses((status = OK, body = ServicesDetail), ReadError)
+)]
 async fn api_services(State(catalog): State<Catalog>) -> Response {
     match catalog.services().await {
         Ok(s) => Json(s).into_response(),
@@ -1161,6 +1241,17 @@ async fn api_services(State(catalog): State<Catalog>) -> Response {
     }
 }
 
+/// Movies, TV shows and people matching a query. Never cached.
+#[utoipa::path(
+    get,
+    path = "/api/search",
+    params(("q" = String, Query, description = "What to search for")),
+    responses(
+        (status = OK, body = SearchResults),
+        (status = BAD_REQUEST, description = "`q` is missing or blank", body = ApiError),
+        (status = BAD_GATEWAY, description = "TMDB rejected the token or isn't responding", body = ApiError),
+    )
+)]
 async fn api_search(
     State(catalog): State<Catalog>,
     Query(params): Query<SearchParams>,
@@ -1170,12 +1261,34 @@ async fn api_search(
         return api_error(StatusCode::BAD_REQUEST, "query parameter `q` is required");
     }
     match catalog.search(&query).await {
-        Ok(results) => Json(json!({ "query": query, "results": results })).into_response(),
+        Ok(results) => Json(SearchResults { query, results }).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, %query, "api search failed");
             api_error(status_for(&e), user_message(&e))
         }
     }
+}
+
+/// A movie: metadata, key crew, cast, ratings and where to watch.
+#[utoipa::path(
+    get,
+    path = "/api/movie/{id}",
+    params(("id" = u64, Path, description = "TMDB movie ID")),
+    responses((status = OK, body = TitleDetail), LookupErrors)
+)]
+async fn api_movie(state: State<Catalog>, id: Path<String>) -> Response {
+    api_detail(state, id, MediaKind::Movie).await
+}
+
+/// A TV show: metadata, key crew, cast, seasons, ratings and where to watch.
+#[utoipa::path(
+    get,
+    path = "/api/tv/{id}",
+    params(("id" = u64, Path, description = "TMDB TV ID")),
+    responses((status = OK, body = TitleDetail), LookupErrors)
+)]
+async fn api_tv(state: State<Catalog>, id: Path<String>) -> Response {
+    api_detail(state, id, MediaKind::Tv).await
 }
 
 async fn api_detail(
@@ -1189,6 +1302,28 @@ async fn api_detail(
     api_result(catalog.title(kind, id).await, "title")
 }
 
+/// A movie's whole cast and crew by department.
+#[utoipa::path(
+    get,
+    path = "/api/movie/{id}/credits",
+    params(("id" = u64, Path, description = "TMDB movie ID")),
+    responses((status = OK, body = TitleCredits), LookupErrors)
+)]
+async fn api_movie_credits(state: State<Catalog>, id: Path<String>) -> Response {
+    api_credits(state, id, MediaKind::Movie).await
+}
+
+/// A TV show's whole cast and crew by department.
+#[utoipa::path(
+    get,
+    path = "/api/tv/{id}/credits",
+    params(("id" = u64, Path, description = "TMDB TV ID")),
+    responses((status = OK, body = TitleCredits), LookupErrors)
+)]
+async fn api_tv_credits(state: State<Catalog>, id: Path<String>) -> Response {
+    api_credits(state, id, MediaKind::Tv).await
+}
+
 async fn api_credits(
     State(catalog): State<Catalog>,
     Path(id): Path<String>,
@@ -1200,6 +1335,16 @@ async fn api_credits(
     api_result(catalog.credits(kind, id).await, "credits")
 }
 
+/// A season's episodes with air dates and IMDb episode scores.
+#[utoipa::path(
+    get,
+    path = "/api/tv/{id}/season/{number}",
+    params(
+        ("id" = u64, Path, description = "TMDB TV ID"),
+        ("number" = u32, Path, description = "Season number; 0 is specials"),
+    ),
+    responses((status = OK, body = SeasonDetail), LookupErrors)
+)]
 async fn api_season(
     State(catalog): State<Catalog>,
     Path((id, number)): Path<(String, String)>,
@@ -1210,6 +1355,17 @@ async fn api_season(
     api_result(catalog.season(id, number).await, "season")
 }
 
+/// An episode: guest stars, regulars credited on it, crew, and neighbours.
+#[utoipa::path(
+    get,
+    path = "/api/tv/{id}/season/{number}/episode/{episode}",
+    params(
+        ("id" = u64, Path, description = "TMDB TV ID"),
+        ("number" = u32, Path, description = "Season number; 0 is specials"),
+        ("episode" = u32, Path, description = "Episode number within the season"),
+    ),
+    responses((status = OK, body = EpisodeDetail), LookupErrors)
+)]
 async fn api_episode(
     State(catalog): State<Catalog>,
     Path((id, season, number)): Path<(String, String, String)>,
@@ -1220,6 +1376,16 @@ async fn api_episode(
     api_result(catalog.episode(id, season, number).await, "episode")
 }
 
+/// A person: known for, and filmography by department.
+#[utoipa::path(
+    get,
+    path = "/api/person/{id}",
+    params(
+        ("id" = u64, Path, description = "TMDB person ID"),
+        ("sort" = Option<FilmographySort>, Query, description = "Defaults to `date`"),
+    ),
+    responses((status = OK, body = PersonDetail), LookupErrors)
+)]
 async fn api_person(
     State(catalog): State<Catalog>,
     Path(id): Path<String>,
@@ -1261,6 +1427,17 @@ fn api_result(result: Result<impl Serialize, CatalogError>, what: &'static str) 
             api_error(status_for(&e), user_message(&e))
         }
     }
+}
+
+/// Apple TV playback seen through Home Assistant: connection, history
+/// reads, shows waiting on a match, and recent detections.
+#[utoipa::path(
+    get,
+    path = "/api/playback",
+    responses((status = OK, body = PlaybackDetail))
+)]
+async fn api_playback(State(catalog): State<Catalog>) -> Json<PlaybackDetail> {
+    Json(catalog.playback().await)
 }
 
 fn api_not_found() -> Response {
@@ -1328,7 +1505,13 @@ fn error_page(status: StatusCode, heading: &'static str, message: &'static str) 
 }
 
 fn api_error(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({ "error": message }))).into_response()
+    (
+        status,
+        Json(ApiError {
+            error: message.to_owned(),
+        }),
+    )
+        .into_response()
 }
 
 fn html(status: StatusCode, body: askama::Result<String>) -> Response {

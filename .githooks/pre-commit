@@ -1,0 +1,13 @@
+#!/bin/sh
+# Regenerates openapi.json from the API routes; stops the commit if that
+# changed it, so the new spec is reviewed and staged with the code.
+set -eu
+
+git diff --cached --name-only | grep -qE '^(src/|Cargo\.(toml|lock)$|openapi\.json$)' || exit 0
+
+mise exec -- mise run openapi
+if ! git diff --quiet -- openapi.json; then
+  echo "pre-commit: openapi.json was out of date and has been regenerated." >&2
+  echo "pre-commit: review it, git add openapi.json, and commit again." >&2
+  exit 1
+fi

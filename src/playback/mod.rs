@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 pub use home_assistant::HomeAssistant;
 pub use live::Live;
@@ -30,7 +31,7 @@ pub(crate) use sync::{candidates, decide};
 pub use sync::{run, sync_once};
 
 /// A player's state at one moment: one row of Home Assistant's history.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct PlaybackEvent {
     pub at: Timestamp,
     pub playing: bool,
@@ -49,7 +50,7 @@ pub struct PlaybackEvent {
 }
 
 /// Apps whose titles say which episode is playing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum App {
     Infuse,
@@ -82,7 +83,7 @@ impl App {
 }
 
 /// Whether something seen playing is a TV episode or a movie.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Episode,
@@ -441,7 +442,7 @@ fn reached(row: &PlaybackEvent, next: Option<&PlaybackEvent>) -> Option<u32> {
 }
 
 /// How an episode seen playing has been handled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DetectionStatus {
     /// Not watched far enough yet, or waiting for TMDB.
@@ -490,7 +491,7 @@ impl DetectionStatus {
 }
 
 /// An episode or movie seen playing, as stored.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Detection {
     pub player: String,
     pub app: App,
@@ -547,7 +548,7 @@ impl Detection {
 
 /// A show whose episodes, or a movie, wait for the user to pick its TMDB
 /// show or movie.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct PendingShow {
     pub app: App,
     pub kind: Kind,
@@ -562,7 +563,7 @@ pub struct PendingShow {
 }
 
 /// A TMDB show or movie.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Candidate {
     pub id: u64,
     pub name: String,
@@ -571,7 +572,7 @@ pub struct Candidate {
 }
 
 /// How reading Home Assistant is going.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum SyncStatus {
     /// HA_URL or HA_TOKEN isn't set.
@@ -623,7 +624,7 @@ impl SyncStatus {
 }
 
 /// The live feed from Home Assistant's WebSocket.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LiveStatus {
     /// HA_URL or HA_TOKEN isn't set.
@@ -667,7 +668,7 @@ impl LiveStatus {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct PlaybackDetail {
     pub live: LiveStatus,
     /// The last read of Home Assistant's history.

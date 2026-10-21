@@ -9,3 +9,11 @@ run = "doppler run --project credits --config dev -- cargo run"
 [tasks.test]
 description = "Run tests (no TMDB access needed)"
 run = "cargo test"
+
+[tasks.openapi]
+description = "Regenerate openapi.json from the API routes"
+run = "UPDATE_OPENAPI=1 cargo test --quiet --test openapi"
+
+[tasks.hooks]
+description = "Use the repo's git hooks (pre-commit keeps openapi.json current)"
+run = "git config core.hooksPath .githooks"

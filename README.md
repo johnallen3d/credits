@@ -7,7 +7,9 @@ ratings, where to watch, and what you've watched.
   `static/`, no Node build), SQLite (SQLx)
 - **Data:** TMDB (titles, people, offers), OMDb (ratings), Home Assistant
   (optional, Apple TV playback)
-- **Every page has a JSON twin** under `/api/…` (see [Routes](#routes))
+- **Every page has a JSON twin** under `/api/…` (see [Routes](#routes)),
+  described by the OpenAPI 3.1 spec in [`openapi.json`](openapi.json),
+  also served at `/api/openapi.json`
 
 ## Run
 
@@ -167,6 +169,7 @@ out to Home Assistant.
 | `/services` | `/api/services` |
 | `/playback` | `/api/playback` |
 | `/about` | |
+| | `/api/openapi.json` (this API's OpenAPI spec) |
 
 Form posts:
 
@@ -182,10 +185,25 @@ Form posts:
 HTML and JSON both go through `Catalog` (`src/catalog.rs`) and the types in
 `src/model.rs`.
 
+### OpenAPI
+
+- `openapi.json` is generated, never edited: each JSON handler's
+  `#[utoipa::path]` both registers the route and describes it, and the
+  response types derive `ToSchema` (doc comments become descriptions)
+- Served at `/api/openapi.json`, built from the same routes at startup
+- Regenerate with `mise run openapi`
+- `mise run hooks` once per clone enables a pre-commit hook that
+  regenerates it when `src/` or `Cargo.*` changes and stops the commit if
+  it changed, so the spec is staged with the code
+- The `openapi` test fails when the committed copy is out of date, so CI
+  does too
+
 ## Develop
 
 ```sh
 mise run test               # local fake TMDB and OMDb servers; no keys needed
+mise run openapi            # regenerate openapi.json
+mise run hooks              # enable the pre-commit hook (once per clone)
 nix build .#default         # crane-built binary
 nix flake check             # tests, as CI runs them
 ```
