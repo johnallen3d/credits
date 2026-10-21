@@ -192,6 +192,7 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .filmography li.empty-row { display: block; padding: .75rem 0; }
 .bookmark.inline { width: 1em; height: 1em; vertical-align: -.15em; }
 .watchlist h1 { margin: 0 0 1rem; }
+.watched-detail { display: block; font-size: .85rem; }
 .watch-toggle .eye { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .episode > div:not(.still) { flex: 1; min-width: 0; }
 .episode-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }

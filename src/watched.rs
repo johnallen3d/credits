@@ -1,10 +1,55 @@
 //! TV shows, seasons, episodes and movies marked as watched, stored next to
 //! the provider cache.
 
+use std::collections::BTreeMap;
+
 use jiff::Timestamp;
 use sqlx::sqlite::SqlitePool;
 
-use crate::model::{MovieWatched, WatchTarget, Watched};
+use crate::model::{MediaKind, MovieWatched, WatchTarget, Watched};
+
+/// One movie or show's watched marks, summed up for the Watched list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WatchedRecord {
+    pub kind: MediaKind,
+    pub id: u64,
+    /// Unix seconds of the latest mark.
+    pub last_watched_at: i64,
+    /// TV: the whole show is marked.
+    pub show: bool,
+    /// TV: seasons marked one at a time, ascending.
+    pub seasons: Vec<u32>,
+    /// TV: episodes marked one at a time.
+    pub episodes: u32,
+    /// Some mark was made in the web UI (shows and seasons always are).
+    pub manual: bool,
+    /// Some mark came from what played on an Apple TV.
+    pub apple_tv: bool,
+}
+
+impl WatchedRecord {
+    fn new(kind: MediaKind, id: u64) -> Self {
+        Self {
+            kind,
+            id,
+            last_watched_at: i64::MIN,
+            show: false,
+            seasons: Vec::new(),
+            episodes: 0,
+            manual: false,
+            apple_tv: false,
+        }
+    }
+
+    fn add(&mut self, at: i64, source: &str) {
+        self.last_watched_at = self.last_watched_at.max(at);
+        if source == "apple_tv" {
+            self.apple_tv = true;
+        } else {
+            self.manual = true;
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct WatchedShows {
@@ -124,6 +169,64 @@ impl WatchedShows {
         .map(drop)
     }
 
+    /// Every movie and show with any watched mark, however it was made,
+    /// most recently watched first.
+    pub async fn all(&self) -> Result<Vec<WatchedRecord>, sqlx::Error> {
+        let movies: Vec<(i64, i64, String)> =
+            sqlx::query_as("SELECT movie_id, watched_at, source FROM watched_movies")
+                .fetch_all(&self.pool)
+                .await?;
+        let shows: Vec<(i64, i64)> = sqlx::query_as("SELECT tv_id, watched_at FROM watched_shows")
+            .fetch_all(&self.pool)
+            .await?;
+        let seasons: Vec<(i64, i64, i64)> =
+            sqlx::query_as("SELECT tv_id, season, watched_at FROM watched_seasons ORDER BY season")
+                .fetch_all(&self.pool)
+                .await?;
+        let episodes: Vec<(i64, i64, String)> =
+            sqlx::query_as("SELECT tv_id, watched_at, source FROM watched_episodes")
+                .fetch_all(&self.pool)
+                .await?;
+
+        let mut records: Vec<WatchedRecord> = movies
+            .into_iter()
+            .filter_map(|(id, at, source)| {
+                let mut r = WatchedRecord::new(MediaKind::Movie, u64::try_from(id).ok()?);
+                r.add(at, &source);
+                Some(r)
+            })
+            .collect();
+        let mut tv: BTreeMap<u64, WatchedRecord> = BTreeMap::new();
+        fn show(tv: &mut BTreeMap<u64, WatchedRecord>, id: i64) -> Option<&mut WatchedRecord> {
+            let id = u64::try_from(id).ok()?;
+            Some(
+                tv.entry(id)
+                    .or_insert_with(|| WatchedRecord::new(MediaKind::Tv, id)),
+            )
+        }
+        for (id, at) in shows {
+            if let Some(r) = show(&mut tv, id) {
+                r.add(at, "manual");
+                r.show = true;
+            }
+        }
+        for (id, season, at) in seasons {
+            if let (Some(r), Ok(season)) = (show(&mut tv, id), u32::try_from(season)) {
+                r.add(at, "manual");
+                r.seasons.push(season);
+            }
+        }
+        for (id, at, source) in episodes {
+            if let Some(r) = show(&mut tv, id) {
+                r.add(at, &source);
+                r.episodes += 1;
+            }
+        }
+        records.extend(tv.into_values());
+        records.sort_by_key(|r| std::cmp::Reverse(r.last_watched_at));
+        Ok(records)
+    }
+
     pub async fn movie(&self, movie_id: u64) -> Result<MovieWatched, sqlx::Error> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT source FROM watched_movies WHERE movie_id = ?")
@@ -202,6 +305,55 @@ mod tests {
                 apple_tv: false,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn all_sums_up_each_title_newest_first() {
+        let watched = WatchedShows::new(ProviderCache::open(IN_MEMORY).await.unwrap().pool());
+        let at = |s: i64| Timestamp::from_second(1_700_000_000 + s).unwrap();
+        watched.mark_movie(105, "apple_tv", at(10)).await.unwrap();
+        watched.set_movie(603, true, at(30)).await.unwrap();
+        watched
+            .set(1, WatchTarget::Season(2), true, at(5))
+            .await
+            .unwrap();
+        watched
+            .set(1, WatchTarget::Season(1), true, at(1))
+            .await
+            .unwrap();
+        watched
+            .mark_episode(1, 3, 1, "apple_tv", at(20))
+            .await
+            .unwrap();
+        watched
+            .mark_episode(1, 3, 2, "apple_tv", at(2))
+            .await
+            .unwrap();
+        watched
+            .set(7, WatchTarget::Show, true, at(0))
+            .await
+            .unwrap();
+
+        let all = watched.all().await.unwrap();
+        let order: Vec<_> = all.iter().map(|r| (r.kind, r.id)).collect();
+        assert_eq!(
+            order,
+            [
+                (MediaKind::Movie, 603),
+                (MediaKind::Tv, 1),
+                (MediaKind::Movie, 105),
+                (MediaKind::Tv, 7),
+            ]
+        );
+        let show = &all[1];
+        assert_eq!(show.last_watched_at, at(20).as_second());
+        assert_eq!(
+            (show.show, show.seasons.as_slice(), show.episodes),
+            (false, &[1, 2][..], 2)
+        );
+        assert!(show.manual && show.apple_tv);
+        assert!(all[2].apple_tv && !all[2].manual);
+        assert!(all[3].show && all[3].manual && !all[3].apple_tv);
     }
 
     #[tokio::test]

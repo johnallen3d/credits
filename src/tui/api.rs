@@ -527,6 +527,48 @@ pub struct SortRatings {
     pub unavailable_reason: Option<UnavailableReason>,
 }
 
+/// Every watched movie and TV show, already filtered by the server.
+#[derive(Clone, Debug, Deserialize)]
+pub struct WatchedList {
+    pub titles: Vec<WatchedTitle>,
+    /// Titles TMDB couldn't name.
+    #[serde(default)]
+    pub unavailable: usize,
+    pub stale_since: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct WatchedTitle {
+    pub kind: Kind,
+    pub id: u64,
+    /// `None` when TMDB couldn't say.
+    pub title: Option<String>,
+    pub year: Option<String>,
+    pub last_watched_at: Option<String>,
+    /// TV only.
+    pub progress: Option<ShowProgress>,
+    #[serde(default)]
+    pub sources: Vec<WatchedSource>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ShowProgress {
+    pub show: bool,
+    #[serde(default)]
+    pub seasons: Vec<u32>,
+    #[serde(default)]
+    pub episodes: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchedSource {
+    Manual,
+    AppleTv,
+    #[serde(other)]
+    Other,
+}
+
 /// The `{"error": "…"}` body the server sends with a failure status.
 #[derive(Debug, Deserialize)]
 pub struct ApiError {

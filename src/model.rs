@@ -1292,6 +1292,213 @@ impl SortRatings {
     }
 }
 
+/// Every movie and TV show with a watched mark, however it was made: by
+/// hand, by favoriting a show, or from what played on an Apple TV.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct WatchedList {
+    /// In `sort` order.
+    pub titles: Vec<WatchedTitle>,
+    pub sort: WatchedSort,
+    /// Titles whose name, year and poster couldn't be loaded from TMDB.
+    pub unavailable: usize,
+    /// Oldest fetch among title details served stale because TMDB failed.
+    pub stale_since: Option<Timestamp>,
+}
+
+impl WatchedList {
+    pub fn stale_on(&self) -> Option<String> {
+        self.stale_since.map(local_day)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct WatchedTitle {
+    pub kind: MediaKind,
+    pub id: u64,
+    /// `null` when TMDB couldn't be reached and nothing was cached.
+    pub title: Option<String>,
+    pub year: Option<String>,
+    pub poster_url: Option<String>,
+    /// When the latest of its marks was made.
+    pub last_watched_at: Timestamp,
+    /// TV only: what is marked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ShowProgress>,
+    /// How its marks were made; at least one.
+    pub sources: Vec<WatchedSource>,
+}
+
+impl WatchedTitle {
+    pub fn path(&self) -> String {
+        title_path(self.kind, self.id)
+    }
+
+    /// The title, or what it is when TMDB couldn't say.
+    pub fn display_title(&self) -> String {
+        self.title
+            .clone()
+            .unwrap_or_else(|| format!("{} #{}", self.kind.label(), self.id))
+    }
+
+    pub fn watched_on(&self) -> String {
+        local_day(self.last_watched_at)
+    }
+
+    pub fn from_apple_tv(&self) -> bool {
+        self.sources.contains(&WatchedSource::AppleTv)
+    }
+
+    /// "Whole show", "Seasons 1, 2 · 3 episodes", "1 episode"; none for movies.
+    pub fn progress_label(&self) -> Option<String> {
+        self.progress.as_ref().map(ShowProgress::label)
+    }
+}
+
+/// What of a TV show is marked watched. Marks are independent, so episodes
+/// may also lie within marked seasons.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ShowProgress {
+    /// The whole show, every season included.
+    pub show: bool,
+    /// Seasons marked one at a time, ascending.
+    pub seasons: Vec<u32>,
+    /// How many episodes are marked one at a time.
+    pub episodes: u32,
+}
+
+impl ShowProgress {
+    pub fn label(&self) -> String {
+        if self.show {
+            return "Whole show".to_owned();
+        }
+        let mut parts = Vec::new();
+        if let Some(seasons) = seasons_label(&self.seasons) {
+            parts.push(seasons);
+        }
+        if self.episodes > 0 {
+            parts.push(episodes_label(self.episodes));
+        }
+        parts.join(" · ")
+    }
+}
+
+/// Ascending seasons with runs collapsed and season 0 as specials:
+/// "Season 2", "Seasons 1–3, 5", "Seasons 1–9, specials", "Specials".
+pub fn seasons_label(seasons: &[u32]) -> Option<String> {
+    let specials = seasons.contains(&0);
+    let mut runs: Vec<(u32, u32)> = Vec::new();
+    for &n in seasons.iter().filter(|&&n| n > 0) {
+        match runs.last_mut() {
+            Some((_, end)) if *end + 1 == n => *end = n,
+            _ => runs.push((n, n)),
+        }
+    }
+    let mut parts: Vec<String> = runs
+        .iter()
+        .map(|&(start, end)| match end - start {
+            0 => start.to_string(),
+            1 => format!("{start}, {end}"),
+            _ => format!("{start}–{end}"),
+        })
+        .collect();
+    let numbered = !parts.is_empty();
+    let one = runs.len() == 1 && runs[0].0 == runs[0].1;
+    if specials {
+        parts.push(if numbered { "specials" } else { "Specials" }.to_owned());
+    }
+    match (numbered, one) {
+        (false, _) if !specials => None,
+        (false, _) => Some(parts.join(", ")),
+        (true, true) => Some(format!("Season {}", parts.join(", "))),
+        (true, false) => Some(format!("Seasons {}", parts.join(", "))),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchedSource {
+    /// Marked in the web UI or terminal client, or by favoriting a show.
+    Manual,
+    /// Marked from what played on an Apple TV.
+    AppleTv,
+}
+
+/// How the Watched list is ordered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchedSort {
+    /// Most recently watched first.
+    #[default]
+    Recent,
+    /// A to Z; titles TMDB couldn't name last.
+    Title,
+}
+
+impl WatchedSort {
+    /// The `sort` query parameter; anything unrecognised means recent.
+    pub fn from_query(value: Option<&str>) -> Self {
+        match value {
+            Some("title") => WatchedSort::Title,
+            _ => WatchedSort::Recent,
+        }
+    }
+
+    pub fn is_title(self) -> bool {
+        self == WatchedSort::Title
+    }
+}
+
+/// Which marks the Watched list shows titles for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SourceFilter {
+    #[default]
+    Any,
+    Manual,
+    AppleTv,
+}
+
+impl SourceFilter {
+    pub const ALL: [SourceFilter; 3] = [
+        SourceFilter::Any,
+        SourceFilter::Manual,
+        SourceFilter::AppleTv,
+    ];
+
+    /// The `source` query parameter; anything unrecognised means any.
+    pub fn from_query(value: Option<&str>) -> Self {
+        match value {
+            Some("manual") => SourceFilter::Manual,
+            Some("apple_tv") => SourceFilter::AppleTv,
+            _ => SourceFilter::Any,
+        }
+    }
+
+    /// The `source` query value selecting this filter; none for any.
+    pub fn query(self) -> Option<&'static str> {
+        match self {
+            SourceFilter::Any => None,
+            SourceFilter::Manual => Some("manual"),
+            SourceFilter::AppleTv => Some("apple_tv"),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SourceFilter::Any => "Any way",
+            SourceFilter::Manual => "By hand",
+            SourceFilter::AppleTv => "Apple TV",
+        }
+    }
+
+    pub fn matches(self, t: &WatchedTitle) -> bool {
+        match self {
+            SourceFilter::Any => true,
+            SourceFilter::Manual => t.sources.contains(&WatchedSource::Manual),
+            SourceFilter::AppleTv => t.sources.contains(&WatchedSource::AppleTv),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct FilmographyGroup {
     pub department: String,
@@ -1603,6 +1810,20 @@ impl EpisodeRatings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seasons_collapse_into_runs_with_specials_last() {
+        let label = |s: &[u32]| seasons_label(s);
+        assert_eq!(label(&[]), None);
+        assert_eq!(label(&[2]).as_deref(), Some("Season 2"));
+        assert_eq!(label(&[1, 2]).as_deref(), Some("Seasons 1, 2"));
+        assert_eq!(label(&[1, 2, 3, 5]).as_deref(), Some("Seasons 1–3, 5"));
+        assert_eq!(
+            label(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).as_deref(),
+            Some("Seasons 1–9, specials")
+        );
+        assert_eq!(label(&[0]).as_deref(), Some("Specials"));
+    }
 
     fn rt(score: f64) -> Rating {
         Rating {

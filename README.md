@@ -136,6 +136,20 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
 - TV, season and episode JSON carry the show's `watched` marks, with
   `state` `read` or `unreadable`
 
+### Watched list
+
+- `/watched` (header nav) lists every movie and show with a watched mark,
+  however it was made: by hand, by favoriting a show, or from the Apple TV
+- A show is listed once the show, any season or any episode is marked;
+  rows say what (whole show, seasons, episode count), when it was last
+  watched, and "Apple TV" if any mark came from it
+- Filter All / Movies / TV and by how it was marked (Any way / By hand /
+  Apple TV); sort by Last watched (newest first) or Title (A to Z)
+- Names, years and posters come from each title's cached TMDB entry,
+  eight lookups at a time; a title TMDB can't name shows as "TV show #id"
+  and is counted, and stale details give their date
+- Unreadable watched marks are an error, never an empty list
+
 ### Seen on Apple TV
 
 Optional; on when `HA_URL` and `HA_TOKEN` are set. credits only connects
@@ -201,6 +215,9 @@ out to Home Assistant.
   `s` peeks the highlighted (or open) episode
 - Person pages: born/died, first paragraph of the biography, known for,
   filmography by department
+- Watched (`v`) list screen: year, kind, title, Apple TV, what of a show
+  is marked and when; `t` kind, `a` cycles Any way / By hand / Apple TV,
+  `o` Last watched / Title; unreadable marks shown as an error
 - To watch (`w`) and Favorites (`f`) list screens: year, kind, title,
   marks (■ To watch, ♥ Favorite, ✓ Watched), score when sorted by rating,
   and your services on To watch
@@ -217,7 +234,7 @@ out to Home Assistant.
 - Keys: type to search, Tab/↓/Enter into results, Tab/Shift-Tab back to
   the box (keeps query and selected result; Tab returns to that row),
   Esc leaves the box, j/k or ↑/↓ move, Enter/l open, Esc/Backspace/h back,
-  `/` new search, `w`/`f`
+  `/` new search, `w`/`f`/`v`
   lists, `b`/`F`/`x`/`X` toggles, `r` reload, `s` peek, `[`/`]`
   previous/next episode, `q` or Ctrl-C quit
 - `?` opens a scrollable keyboard-help overlay from any screen (including
@@ -251,6 +268,7 @@ out to Home Assistant.
 | `/person/{id}` (`?sort=rating`) | `/api/person/{id}` (`?sort=rating`) |
 | `/watchlist` (`?kind=movie\|tv`, `?sort=rating`, `?services=mine`) | `/api/watchlist` (same parameters) |
 | `/favorites` (`?kind=movie\|tv`, `?sort=rating`) | `/api/favorites` (same parameters) |
+| `/watched` (`?kind=movie\|tv`, `?source=manual\|apple_tv`, `?sort=title`) | `/api/watched` (same parameters) |
 | `/services` | `/api/services` |
 | `/playback` | `/api/playback` |
 | `/about` | |

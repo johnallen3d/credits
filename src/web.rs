@@ -20,8 +20,9 @@ use crate::model::{
     EpisodeDetail, EpisodeWithWatched, FilmographyEntry, FilmographyGroup, FilmographySort,
     KindFilter, MediaKind, MovieWatched, MovieWithMarks, PersonDetail, RecentKind, RecentView,
     RecentViews, SearchHit, SeasonDetail, SeasonWithWatched, ServicesDetail, ServicesFilter,
-    TitleCredits, TitleDetail, TitleMarksUpdate, TvWithWatched, WatchTarget, Watched, WatchedMarks,
-    WatchlistDetail, WatchlistSort, title_path,
+    SourceFilter, TitleCredits, TitleDetail, TitleMarksUpdate, TvWithWatched, WatchTarget, Watched,
+    WatchedList, WatchedMarks, WatchedSort, WatchedSource, WatchedTitle, WatchlistDetail,
+    WatchlistSort, title_path,
 };
 use crate::playback::{App, Kind, LiveStatus, PlaybackDetail};
 
@@ -85,6 +86,7 @@ pub fn app(catalog: Catalog) -> Router {
         )
         .route("/watchlist", get(|s, q| watchlist_page(s, q, false)))
         .route("/favorites", get(|s, q| watchlist_page(s, q, true)))
+        .route("/watched", get(watched_page))
         .route("/services", get(services_page).post(save_services))
         .route("/playback", get(playback_page))
         .route("/playback/decide", post(decide_playback_show))
@@ -144,6 +146,7 @@ fn api() -> OpenApiRouter<Catalog> {
         .routes(routes!(api_person))
         .routes(routes!(api_watchlist))
         .routes(routes!(api_favorites))
+        .routes(routes!(api_watched))
         .routes(routes!(api_services))
         .routes(routes!(api_playback))
         .routes(routes!(api_movie_watchlist))
@@ -575,6 +578,101 @@ fn watchlist_href(
     }
 }
 
+#[derive(Template)]
+#[template(path = "watched.html")]
+struct WatchedPage {
+    w: WatchedList,
+    kind: KindFilter,
+    source: SourceFilter,
+    /// The titles of `kind` and `source`, in the list's order.
+    shown: Vec<WatchedTitle>,
+}
+
+impl WatchedPage {
+    fn new(w: WatchedList, kind: KindFilter, source: SourceFilter) -> Self {
+        let shown = w
+            .titles
+            .iter()
+            .filter(|t| kind.matches(t.kind) && source.matches(t))
+            .cloned()
+            .collect();
+        WatchedPage {
+            w,
+            kind,
+            source,
+            shown,
+        }
+    }
+
+    /// Titles of `kind` within the current source filter.
+    fn kind_count(&self, kind: &KindFilter) -> usize {
+        self.w
+            .titles
+            .iter()
+            .filter(|t| kind.matches(t.kind) && self.source.matches(t))
+            .count()
+    }
+
+    /// Titles of the current kind marked the `source` way.
+    fn source_count(&self, source: &SourceFilter) -> usize {
+        self.w
+            .titles
+            .iter()
+            .filter(|t| self.kind.matches(t.kind) && source.matches(t))
+            .count()
+    }
+
+    fn kind_href(&self, kind: &KindFilter) -> String {
+        watched_href(self.w.sort, *kind, self.source)
+    }
+
+    fn source_href(&self, source: &SourceFilter) -> String {
+        watched_href(self.w.sort, self.kind, *source)
+    }
+
+    fn sort_href(&self, sort: WatchedSort) -> String {
+        watched_href(sort, self.kind, self.source)
+    }
+
+    /// Shown titles TMDB couldn't name.
+    fn unavailable(&self) -> usize {
+        self.shown.iter().filter(|t| t.title.is_none()).count()
+    }
+
+    /// Says what the filters left out, e.g. "No TV shows marked from the Apple TV."
+    fn empty_message(&self) -> String {
+        let titles = match self.kind {
+            KindFilter::All => "titles",
+            KindFilter::Movie => "movies",
+            KindFilter::Tv => "TV shows",
+        };
+        let how = match self.source {
+            SourceFilter::Any => " watched",
+            SourceFilter::Manual => " marked watched by hand",
+            SourceFilter::AppleTv => " marked watched from the Apple TV",
+        };
+        format!("No {titles}{how}.")
+    }
+}
+
+fn watched_href(sort: WatchedSort, kind: KindFilter, source: SourceFilter) -> String {
+    let mut query = Vec::new();
+    if sort.is_title() {
+        query.push("sort=title".to_owned());
+    }
+    if let Some(kind) = kind.query() {
+        query.push(format!("kind={kind}"));
+    }
+    if let Some(source) = source.query() {
+        query.push(format!("source={source}"));
+    }
+    if query.is_empty() {
+        "/watched".to_owned()
+    } else {
+        format!("/watched?{}", query.join("&"))
+    }
+}
+
 /// The element id of a title's watchlist toggle, unique on any page.
 fn watchlist_toggle_id(e: &FilmographyEntry) -> String {
     title_toggle_id("watchlist", &e.kind, &e.id)
@@ -654,6 +752,14 @@ struct WatchlistParams {
     kind: Option<String>,
     /// To watch only: "mine" shows titles on the user's services.
     services: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WatchedParams {
+    sort: Option<String>,
+    kind: Option<String>,
+    /// "manual" or "apple_tv": only titles with a mark made that way.
+    source: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1112,6 +1218,61 @@ async fn api_list(
                 } else {
                     "the watchlist couldn't be read"
                 },
+            )
+        }
+    }
+}
+
+async fn watched_page(
+    State(catalog): State<Catalog>,
+    Query(params): Query<WatchedParams>,
+) -> Response {
+    let sort = WatchedSort::from_query(params.sort.as_deref());
+    let kind = KindFilter::from_query(params.kind.as_deref());
+    let source = SourceFilter::from_query(params.source.as_deref());
+    match catalog.watched_titles(sort).await {
+        Ok(w) => html(StatusCode::OK, WatchedPage::new(w, kind, source).render()),
+        Err(e) => {
+            tracing::warn!(error = %e, "reading watched marks failed");
+            error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't load what you've watched",
+                "The database couldn't be read. Please try again.",
+            )
+        }
+    }
+}
+
+/// Every watched movie and TV show, however it was marked.
+#[utoipa::path(
+    get,
+    path = "/api/watched",
+    params(
+        ("kind" = Option<MediaKind>, Query, description = "Only movies or only TV; anything else means all"),
+        ("source" = Option<WatchedSource>, Query, description = "Only titles with a mark made this way; anything else means any"),
+        ("sort" = Option<WatchedSort>, Query, description = "Defaults to `recent`"),
+    ),
+    responses((status = OK, body = WatchedList), ReadError)
+)]
+async fn api_watched(
+    State(catalog): State<Catalog>,
+    Query(params): Query<WatchedParams>,
+) -> Response {
+    let sort = WatchedSort::from_query(params.sort.as_deref());
+    let kind = KindFilter::from_query(params.kind.as_deref());
+    let source = SourceFilter::from_query(params.source.as_deref());
+    match catalog.watched_titles(sort).await {
+        Ok(mut w) => {
+            w.titles
+                .retain(|t| kind.matches(t.kind) && source.matches(t));
+            w.unavailable = w.titles.iter().filter(|t| t.title.is_none()).count();
+            Json(w).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "api watched read failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "watched marks couldn't be read",
             )
         }
     }

@@ -4536,7 +4536,7 @@ async fn terminal_client_lists_say_when_ratings_are_stale_or_missing() {
     let open = app.open(tui::app::Target::List(
         tui::app::ListName::Watchlist,
         tui::app::ListView {
-            by_rating: true,
+            alt_sort: true,
             ..Default::default()
         },
     ));
@@ -4842,6 +4842,229 @@ async fn terminal_client_shows_an_unreadable_recent_list_as_an_error() {
     assert!(screen(&mut app).contains("The Matrix"));
     drop(t);
     pool.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
+}
+
+#[tokio::test]
+async fn watched_page_lists_every_mark_and_filters_by_kind_and_source() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "credits-watched-list-{}-{unique}.db",
+        std::process::id()
+    ));
+    let database = path.to_str().unwrap();
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, database).await;
+
+    let (status, _, body) = get_page(t.app(), "/watched", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(r#"<a href="/watched">Watched</a>"#),
+        "linked from the nav"
+    );
+    assert!(body.contains("Nothing watched yet."));
+    let (_, json) = get_json(t.app(), "/api/watched").await;
+    assert_eq!(json["titles"], json!([]));
+
+    // By hand: a movie and two seasons; from the Apple TV: a movie and an
+    // episode; and a show TMDB fails on.
+    post_form(t.app(), "/movie/603/watched", "watched=true").await;
+    post_form(t.app(), "/tv/1396/season/1/watched", "watched=true").await;
+    post_form(t.app(), "/tv/1396/season/2/watched", "watched=true").await;
+    let pool = credits::cache::ProviderCache::open(database)
+        .await
+        .unwrap()
+        .pool();
+    for statement in [
+        "INSERT INTO watched_movies (movie_id, watched_at, source) VALUES (105, 4000000000, 'apple_tv')",
+        "INSERT INTO watched_episodes (tv_id, season, episode, watched_at, source)
+         VALUES (1396, 3, 1, 3000000000, 'apple_tv')",
+        "INSERT INTO watched_shows (tv_id, watched_at) VALUES (500, 1)",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    let (_, json) = get_json(t.app(), "/api/watched").await;
+    let ids: Vec<_> = json["titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| (t["kind"].as_str().unwrap(), t["id"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(
+        ids,
+        [("movie", 105), ("tv", 1396), ("movie", 603), ("tv", 500)],
+        "most recently watched first"
+    );
+    assert_eq!(json["sort"], "recent");
+    assert_eq!(json["unavailable"], 1);
+    let show = &json["titles"][1];
+    assert_eq!(show["title"], "Breaking Bad");
+    assert_eq!(
+        show["progress"],
+        json!({"show": false, "seasons": [1, 2], "episodes": 1})
+    );
+    assert_eq!(show["sources"], json!(["manual", "apple_tv"]));
+    assert_eq!(json["titles"][0]["sources"], json!(["apple_tv"]));
+    assert_eq!(
+        json["titles"][0].get("progress"),
+        None,
+        "movies carry no progress"
+    );
+    assert_eq!(json["titles"][3]["title"], Value::Null);
+
+    let (_, json) = get_json(t.app(), "/api/watched?kind=movie&source=apple_tv").await;
+    assert_eq!(json["titles"].as_array().unwrap().len(), 1);
+    assert_eq!(json["titles"][0]["id"], 105);
+    let (_, json) = get_json(t.app(), "/api/watched?source=manual&sort=title").await;
+    let titles: Vec<_> = json["titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["title"].clone())
+        .collect();
+    assert_eq!(
+        titles,
+        [json!("Breaking Bad"), json!("The Matrix"), Value::Null],
+        "A to Z, unnamed last"
+    );
+
+    let (_, _, body) = get_page(t.app(), "/watched", false).await;
+    assert!(
+        body.contains(r#"<a href="/movie/105">Back to the Future</a>"#),
+        "{body}"
+    );
+    assert!(
+        body.contains("Seasons 1, 2 · 1 episode · Watched"),
+        "{body}"
+    );
+    assert!(body.contains(r#"<span class="watched-source">Apple TV</span>"#));
+    assert!(body.contains(r#"<a href="/tv/500">TV show #500</a>"#));
+    assert!(body.contains("Couldn't load the details of 1 title from TMDB right now."));
+    assert!(body.contains(
+        r#"<a href="/watched?source=apple_tv">Apple TV <span class="count">2</span></a>"#
+    ));
+    let (_, _, body) = get_page(t.app(), "/watched?kind=tv&source=apple_tv", false).await;
+    assert!(body.contains(
+        r#"<a href="/watched?kind=movie&#38;source=apple_tv">Movies <span class="count">1</span></a>"#
+    ), "{body}");
+    assert!(body.contains(r#"<a href="/tv/1396">Breaking Bad</a>"#));
+    assert!(!body.contains("The Matrix"));
+    assert!(
+        !body.contains("Couldn't load the details"),
+        "only shown titles count"
+    );
+    let (_, _, body) = get_page(
+        t.app(),
+        "/watched?kind=movie&source=manual&sort=title",
+        false,
+    )
+    .await;
+    assert!(
+        body.contains(r#"<a href="/watched?kind=movie&#38;source=manual">Last watched</a>"#),
+        "{body}"
+    );
+
+    // Unreadable marks are an error, never an empty list.
+    sqlx::query("ALTER TABLE watched_movies RENAME TO watched_movies_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _, body) = get_page(t.app(), "/watched", false).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        body.contains("Couldn&#39;t load what you&#39;ve watched"),
+        "{body}"
+    );
+    assert!(!body.contains("Nothing watched yet"));
+    let (status, json) = get_json(t.app(), "/api/watched").await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(json["error"], "watched marks couldn't be read");
+    drop(t);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
+}
+
+#[tokio::test]
+async fn terminal_client_lists_everything_watched_and_filters_it() {
+    let database = temp_database("tui-watched");
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, &database).await;
+    post_form(t.app(), "/movie/603/watched", "watched=true").await;
+    post_form(t.app(), "/tv/1396/season/1/watched", "watched=true").await;
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query(
+        "INSERT INTO watched_movies (movie_id, watched_at, source) VALUES (105, 4000000000, 'apple_tv')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    press(&mut app, KeyCode::Esc);
+    let open = press(&mut app, KeyCode::Char('v'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(list.contains("Marked Any way"), "{list}");
+    assert!(list.contains("Back to the Future"), "{list}");
+    assert!(list.contains("Apple TV"), "{list}");
+    assert!(list.contains("Season 1 · "), "{list}");
+    assert!(
+        list.find("Back to the Future").unwrap() < list.find("The Matrix").unwrap(),
+        "most recently watched first: {list}"
+    );
+
+    // a: by hand only.
+    let by_hand = press(&mut app, KeyCode::Char('a'));
+    fulfil(&client, &mut app, by_hand.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(!list.contains("Back to the Future"), "{list}");
+    assert!(
+        list.contains("The Matrix") && list.contains("Breaking Bad"),
+        "{list}"
+    );
+    // t: movies; a: Apple TV.
+    let movies = press(&mut app, KeyCode::Char('t'));
+    fulfil(&client, &mut app, movies.into_iter().next().unwrap()).await;
+    let apple_tv = press(&mut app, KeyCode::Char('a'));
+    fulfil(&client, &mut app, apple_tv.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(list.contains("Back to the Future"), "{list}");
+    assert!(!list.contains("The Matrix"), "{list}");
+    let open = press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        open,
+        [tui::app::Request::Page {
+            seq: match &open[0] {
+                tui::app::Request::Page { seq, .. } => *seq,
+                _ => unreachable!(),
+            },
+            target: tui::app::Target::Title(tui::api::Kind::Movie, 105),
+        }]
+    );
+    press(&mut app, KeyCode::Esc);
+
+    // Unreadable marks are an error, never an empty list.
+    sqlx::query("ALTER TABLE watched_movies RENAME TO watched_movies_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let reload = press(&mut app, KeyCode::Char('r'));
+    fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(list.contains("Watched marks couldn't be read"), "{list}");
+    assert!(!list.contains("Nothing watched yet"), "{list}");
+    drop(t);
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{database}{suffix}"));
     }

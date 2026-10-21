@@ -12,9 +12,10 @@ use unicode_width::UnicodeWidthStr;
 use super::api::{
     Availability, Credit, Episode, EpisodeRatings, KeyCrew, Kind, List, ListServices, Marks,
     Metadata, Person, PersonCredit, Rating, RatingSource, Ratings, RecentKind, SearchHit, Season,
-    ServicesState, SortRatings, State, Title, UnavailableReason, Watched, WhereToWatch,
+    ServicesState, SortRatings, State, Title, UnavailableReason, Watched, WatchedList,
+    WatchedSource, WhereToWatch,
 };
-use super::app::{App, Content, ListName, ListView, Load, Screen, Status, Target};
+use super::app::{App, Content, ListName, ListView, Load, Screen, Source, Status, Target};
 use super::theme::palette;
 
 /// Width the link list is built at when only the links matter.
@@ -228,20 +229,25 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hints = match app.stack.last().map(|s| s.target) {
         _ if app.editing => {
-            "type to search · Tab/↓/Enter results · Esc then w/f lists · Ctrl-U clear · Ctrl-C quit"
+            "type to search · Tab/↓/Enter results · Esc then w/f/v lists · Ctrl-U clear · Ctrl-C quit"
         }
-        None => "j/k move · Enter open · Tab/Shift-Tab search box · w/f lists · r reload · q quit",
+        None => {
+            "j/k move · Enter open · Tab/Shift-Tab search box · w/f/v lists · r reload · q quit"
+        }
         Some(Target::List(ListName::Watchlist, _)) => {
             "j/k move · Enter open · b/F/x toggle · t/o kind/sort · m services · f Favorites · Esc back · q quit"
         }
         Some(Target::List(ListName::Favorites, _)) => {
             "j/k move · Enter open · b/F/x toggle · t kind · o sort · w To watch · Esc back · r reload · q quit"
         }
+        Some(Target::List(ListName::Watched, _)) => {
+            "j/k move · Enter open · t kind · a marked · o sort · w/f/v lists · Esc back · r reload · q quit"
+        }
         Some(Target::Title(Kind::Tv, _)) => {
-            "j/k move · Enter open · b/F toggle · x season · X show · w/f lists · Esc back · r reload · q quit"
+            "j/k move · Enter open · b/F toggle · x season · X show · w/f/v lists · Esc back · r reload · q quit"
         }
         Some(Target::Title(..)) => {
-            "j/k move · Enter open · b/F/x toggle · w/f lists · Esc back · / search · r reload · q quit"
+            "j/k move · Enter open · b/F/x toggle · w/f/v lists · Esc back · / search · r reload · q quit"
         }
         Some(Target::Season(..)) => {
             "j/k move · Enter open · x episode · X season · s peek · Esc back · r reload · q quit"
@@ -249,7 +255,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Some(Target::Episode(..)) => {
             "j/k move · Enter open · x watched · s peek · [/] prev/next · Esc back · r reload · q quit"
         }
-        _ => "j/k move · Enter open · w/f lists · Esc back · / search · r reload · q quit",
+        _ => "j/k move · Enter open · w/f/v lists · Esc back · / search · r reload · q quit",
     };
     frame.render_widget(Line::styled(format!(" ? help · {hints}"), dim()), area);
     let busy = match app.stack.last() {
@@ -320,6 +326,10 @@ fn page(app: &App, width: u16) -> Page {
         Load::Ready(Content::Episode(e)) => episode_page(e, screen, width),
         Load::Ready(Content::List(l)) => match screen.target {
             Target::List(name, view) => list_page(l, name, view, width),
+            _ => Page::default(),
+        },
+        Load::Ready(Content::Watched(w)) => match screen.target {
+            Target::List(_, view) => watched_page(w, view, width),
             _ => Page::default(),
         },
         Load::Failed(message) => status_page(screen_name(screen), Some(message), width),
@@ -881,6 +891,7 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
                 ListName::Favorites => {
                     "No favorites yet. Press F on a movie or TV show to heart it."
                 }
+                ListName::Watched => "",
             },
             dim(),
         ));
@@ -903,7 +914,7 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
     choices(
         &mut bar,
         "Sort",
-        &[("Added", !view.by_rating), ("Rating", view.by_rating)],
+        &[("Added", !view.alt_sort), ("Rating", view.alt_sort)],
     );
     if chosen || view.mine {
         choices(
@@ -959,6 +970,130 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
             spans.extend(availability(a));
         }
         page.link(Line::from(spans), Target::Title(e.kind, e.id));
+    }
+    page
+}
+
+fn watched_page(w: &WatchedList, view: ListView, width: u16) -> Page {
+    let mut page = Page::new(ListName::Watched.label());
+    if w.titles.is_empty() && view == ListView::default() {
+        page.line(Line::styled(
+            "Nothing watched yet. Press x on a movie, show, season or episode, or let the Apple TV mark what plays.",
+            dim(),
+        ));
+        return page;
+    }
+    let mut bar = Vec::new();
+    choices(
+        &mut bar,
+        "Show",
+        &[
+            ("All", view.kind.is_none()),
+            ("Movies", view.kind == Some(Kind::Movie)),
+            ("TV", view.kind == Some(Kind::Tv)),
+        ],
+    );
+    choices(
+        &mut bar,
+        "Marked",
+        &[
+            ("Any way", view.source == Source::Any),
+            ("By hand", view.source == Source::Manual),
+            ("Apple TV", view.source == Source::AppleTv),
+        ],
+    );
+    choices(
+        &mut bar,
+        "Sort",
+        &[("Last watched", !view.alt_sort), ("Title", view.alt_sort)],
+    );
+    page.line(Line::from(bar));
+    if w.unavailable > 0 {
+        let titles = if w.unavailable == 1 {
+            "title"
+        } else {
+            "titles"
+        };
+        page.line(Line::styled(
+            format!(
+                "Couldn't load the details of {} {titles} from TMDB right now.",
+                w.unavailable
+            ),
+            dim(),
+        ));
+    }
+    if let Some(day) = fetched_day(&w.stale_since) {
+        page.warn(
+            format!("Couldn't refresh some titles; using details from as early as {day}."),
+            width,
+        );
+    }
+    page.blank();
+
+    if w.titles.is_empty() {
+        let what = match view.kind {
+            Some(Kind::Tv) => "TV shows",
+            Some(Kind::Movie) => "movies",
+            None => "titles",
+        };
+        let how = match view.source {
+            Source::Any => " watched",
+            Source::Manual => " marked watched by hand",
+            Source::AppleTv => " marked watched from the Apple TV",
+        };
+        page.line(Line::styled(format!("  No {what}{how}."), dim()));
+        return page;
+    }
+    let names: Vec<String> = w
+        .titles
+        .iter()
+        .map(|t| {
+            t.title
+                .clone()
+                .unwrap_or_else(|| format!("{} #{}", t.kind.label(), t.id))
+        })
+        .collect();
+    let column = column_width(names.iter().map(String::as_str), TITLE_COLUMN);
+    for (t, name) in w.titles.iter().zip(&names) {
+        let mut detail = t
+            .progress
+            .as_ref()
+            .map(|p| {
+                if p.show {
+                    return "Whole show".to_owned();
+                }
+                let seasons = crate::model::seasons_label(&p.seasons).unwrap_or_default();
+                let episodes = match p.episodes {
+                    0 => String::new(),
+                    n => plural(n, "ep"),
+                };
+                join_dot(&seasons, &episodes)
+            })
+            .unwrap_or_default();
+        if let Some(day) = fetched_day(&t.last_watched_at) {
+            detail = join_dot(&detail, &day);
+        }
+        let mut spans = vec![
+            Span::styled(
+                format!(
+                    "  {:<4}  ",
+                    t.year
+                        .as_deref()
+                        .unwrap_or(if t.title.is_some() { "TBA" } else { "" })
+                ),
+                dim(),
+            ),
+            Span::styled(
+                format!("{:<5} ", t.kind.label()),
+                Style::new().fg(palette().accent),
+            ),
+            Span::raw(format!("{}  ", pad(name, column))),
+        ];
+        if t.sources.contains(&WatchedSource::AppleTv) {
+            spans.push(Span::styled("Apple TV  ", Style::new().fg(palette().mine)));
+        }
+        spans.push(Span::styled(detail, dim()));
+        page.link(Line::from(spans), Target::Title(t.kind, t.id));
     }
     page
 }

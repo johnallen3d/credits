@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::api::{
     Episode, Kind, List, Marks, MarksUpdate, Person, RecentView, SearchHit, Season, ServicesState,
-    Title, Watched,
+    Title, Watched, WatchedList,
 };
 use super::client::ClientError;
 
@@ -31,6 +31,8 @@ pub enum Target {
 pub enum ListName {
     Watchlist,
     Favorites,
+    /// Everything marked watched, however it was marked.
+    Watched,
 }
 
 impl ListName {
@@ -38,6 +40,35 @@ impl ListName {
         match self {
             ListName::Watchlist => "To watch",
             ListName::Favorites => "Favorites",
+            ListName::Watched => "Watched",
+        }
+    }
+}
+
+/// Which marks the Watched list shows titles for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Source {
+    #[default]
+    Any,
+    Manual,
+    AppleTv,
+}
+
+impl Source {
+    pub fn next(self) -> Self {
+        match self {
+            Source::Any => Source::Manual,
+            Source::Manual => Source::AppleTv,
+            Source::AppleTv => Source::Any,
+        }
+    }
+
+    /// The `source` query value; none for any.
+    pub fn query(self) -> Option<&'static str> {
+        match self {
+            Source::Any => None,
+            Source::Manual => Some("manual"),
+            Source::AppleTv => Some("apple_tv"),
         }
     }
 }
@@ -47,9 +78,12 @@ impl ListName {
 pub struct ListView {
     /// Only movies or only TV; `None` for all.
     pub kind: Option<Kind>,
-    pub by_rating: bool,
+    /// The other order: Rating on To watch and Favorites, Title on Watched.
+    pub alt_sort: bool,
     /// Only titles on the user's services (To watch only).
     pub mine: bool,
+    /// Watched only.
+    pub source: Source,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,6 +138,7 @@ pub enum Content {
     Season(Box<Season>),
     Episode(Box<Episode>),
     List(Box<List>),
+    Watched(Box<WatchedList>),
 }
 
 #[derive(Debug)]
@@ -454,6 +489,7 @@ impl App {
             KeyCode::Char(']') => return self.neighbour(true).into_iter().collect(),
             KeyCode::Char('w') => return self.open_list(ListName::Watchlist).into_iter().collect(),
             KeyCode::Char('f') => return self.open_list(ListName::Favorites).into_iter().collect(),
+            KeyCode::Char('v') => return self.open_list(ListName::Watched).into_iter().collect(),
             KeyCode::Char('t') => {
                 return self
                     .change_view(|v| {
@@ -468,7 +504,13 @@ impl App {
             }
             KeyCode::Char('o') => {
                 return self
-                    .change_view(|v| v.by_rating = !v.by_rating)
+                    .change_view(|v| v.alt_sort = !v.alt_sort)
+                    .into_iter()
+                    .collect();
+            }
+            KeyCode::Char('a') if self.on_list(ListName::Watched) => {
+                return self
+                    .change_view(|v| v.source = v.source.next())
                     .into_iter()
                     .collect();
             }
@@ -512,6 +554,7 @@ impl App {
         let current = self.marks_of(kind, id).and_then(|m| match list {
             ListName::Watchlist => m.to_watch,
             ListName::Favorites => m.favorite,
+            ListName::Watched => m.watched,
         });
         let Some(current) = current else {
             return self.refuse(format!(
@@ -793,6 +836,10 @@ impl App {
             seq,
             target: screen.target,
         })
+    }
+
+    pub(super) fn on_list(&self, name: ListName) -> bool {
+        matches!(self.stack.last(), Some(Screen { target: Target::List(open, _), .. }) if *open == name)
     }
 
     /// The services filter only means something once services are chosen;

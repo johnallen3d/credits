@@ -812,6 +812,70 @@
         }
       }
     },
+    "/api/watched": {
+      "get": {
+        "summary": "Every watched movie and TV show, however it was marked.",
+        "operationId": "api_watched",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Only movies or only TV; anything else means all",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MediaKind"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Only titles with a mark made this way; anything else means any",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/WatchedSource"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Defaults to `recent`",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/WatchedSort"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchedList"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/services": {
       "get": {
         "summary": "Streaming services for `CREDITS_REGION`, grouped, with the ones you chose.",
@@ -3293,6 +3357,36 @@
           "unreadable"
         ]
       },
+      "ShowProgress": {
+        "type": "object",
+        "description": "What of a TV show is marked watched. Marks are independent, so episodes\nmay also lie within marked seasons.",
+        "required": [
+          "show",
+          "seasons",
+          "episodes"
+        ],
+        "properties": {
+          "show": {
+            "type": "boolean",
+            "description": "The whole show, every season included."
+          },
+          "seasons": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "Seasons marked one at a time, ascending."
+          },
+          "episodes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many episodes are marked one at a time.",
+            "minimum": 0
+          }
+        }
+      },
       "SortRatings": {
         "type": "object",
         "description": "What stood behind a by-rating order: credits without a score, and\nwhether some scores were stale or couldn't be loaded.",
@@ -3773,6 +3867,40 @@
           }
         }
       },
+      "WatchedList": {
+        "type": "object",
+        "description": "Every movie and TV show with a watched mark, however it was made: by\nhand, by favoriting a show, or from what played on an Apple TV.",
+        "required": [
+          "titles",
+          "sort",
+          "unavailable"
+        ],
+        "properties": {
+          "titles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WatchedTitle"
+            },
+            "description": "In `sort` order."
+          },
+          "sort": {
+            "$ref": "#/components/schemas/WatchedSort"
+          },
+          "unavailable": {
+            "type": "integer",
+            "description": "Titles whose name, year and poster couldn't be loaded from TMDB.",
+            "minimum": 0
+          },
+          "stale_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Oldest fetch among title details served stale because TMDB failed."
+          }
+        }
+      },
       "WatchedMarks": {
         "type": "object",
         "description": "A TV show's watched marks as the JSON API reports them, so a client can\nhide spoilers the way the pages do.",
@@ -3808,12 +3936,88 @@
           }
         }
       },
+      "WatchedSort": {
+        "type": "string",
+        "description": "How the Watched list is ordered.",
+        "enum": [
+          "recent",
+          "title"
+        ]
+      },
+      "WatchedSource": {
+        "type": "string",
+        "enum": [
+          "manual",
+          "apple_tv"
+        ]
+      },
       "WatchedState": {
         "type": "string",
         "enum": [
           "read",
           "unreadable"
         ]
+      },
+      "WatchedTitle": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "last_watched_at",
+          "sources"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/MediaKind"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` when TMDB couldn't be reached and nothing was cached."
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_watched_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the latest of its marks was made."
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ShowProgress",
+                "description": "TV only: what is marked."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WatchedSource"
+            },
+            "description": "How its marks were made; at least one."
+          }
+        }
       },
       "WatchlistDetail": {
         "type": "object",

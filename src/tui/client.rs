@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 
 use super::api::{
     ApiError, Episode, Kind, List, MarksUpdate, Person, RecentKind, RecentView, RecentViews,
-    SearchHit, SearchResults, Season, Title, Watched,
+    SearchHit, SearchResults, Season, Title, Watched, WatchedList,
 };
 use super::app::{ListName, ListView};
 
@@ -106,18 +106,36 @@ impl Client {
         let path = match list {
             ListName::Watchlist => "/api/watchlist",
             ListName::Favorites => "/api/favorites",
+            ListName::Watched => {
+                return Err(ClientError::Server("Watched isn't a saved list".to_owned()));
+            }
         };
         let mut query = Vec::new();
         if let Some(kind) = view.kind {
             query.push(("kind", kind.slug()));
         }
-        if view.by_rating {
+        if view.alt_sort {
             query.push(("sort", "rating"));
         }
         if view.mine && list == ListName::Watchlist {
             query.push(("services", "mine"));
         }
         self.get(path, &query).await
+    }
+
+    /// Every watched movie and show, with the same filters as the web page.
+    pub async fn watched(&self, view: ListView) -> Result<WatchedList, ClientError> {
+        let mut query = Vec::new();
+        if let Some(kind) = view.kind {
+            query.push(("kind", kind.slug()));
+        }
+        if let Some(source) = view.source.query() {
+            query.push(("source", source));
+        }
+        if view.alt_sort {
+            query.push(("sort", "title"));
+        }
+        self.get("/api/watched", &query).await
     }
 
     /// Puts a title on To watch or Favorites, or takes it off.
@@ -131,6 +149,9 @@ impl Client {
         let list = match list {
             ListName::Watchlist => "watchlist",
             ListName::Favorites => "favorite",
+            ListName::Watched => {
+                return Err(ClientError::Server("that can't be listed".to_owned()));
+            }
         };
         let path = format!("/api/{}/{id}/{list}", kind.slug());
         self.put(&path, serde_json::json!({ "listed": listed }))

@@ -22,7 +22,7 @@ pub use client::{Client, ClientError};
 pub use config::TuiConfig;
 
 use api::RecentKind;
-use app::{Change, Content, Request, Response, Saved, Target};
+use app::{Change, Content, ListName, Request, Response, Saved, Target};
 
 /// Takes over the terminal until the user quits.
 pub async fn run(config: TuiConfig) -> io::Result<()> {
@@ -131,6 +131,9 @@ pub async fn fetch(client: &Client, target: Target) -> Result<Content, ClientErr
         }
         Target::Episode(show, season, number) => {
             Content::Episode(Box::new(client.episode(show, season, number).await?))
+        }
+        Target::List(ListName::Watched, view) => {
+            Content::Watched(Box::new(client.watched(view).await?))
         }
         Target::List(list, view) => Content::List(Box::new(client.list(list, view).await?)),
     })

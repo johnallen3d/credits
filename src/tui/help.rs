@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use super::api::Kind;
-use super::app::{App, Content, Load, Target};
+use super::app::{App, Content, ListName, Load, Target};
 use super::theme::palette;
 
 struct Binding {
@@ -117,9 +117,25 @@ fn bindings(app: &App) -> Vec<Binding> {
         app.editing,
     );
     add("Search", "Esc", "Leave the search box", app.editing);
-    add("Lists", "w / f", "Open To watch / Favorites", browsing);
+    add(
+        "Lists",
+        "w / f / v",
+        "Open To watch / Favorites / Watched",
+        browsing,
+    );
     add("Lists", "t", "Cycle All / Movies / TV", browsing && list);
-    add("Lists", "o", "Sort by Added / Rating", browsing && list);
+    add(
+        "Lists",
+        "o",
+        "Sort by Added / Rating (Watched: Last watched / Title)",
+        browsing && list,
+    );
+    add(
+        "Lists",
+        "a",
+        "Cycle marked Any way / By hand / Apple TV (Watched)",
+        browsing && app.on_list(ListName::Watched),
+    );
     add(
         "Lists",
         "m",
@@ -230,7 +246,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::app::{ListName, ListView};
+    use super::super::app::ListView;
     use super::*;
 
     fn active(app: &App, keys: &str) -> bool {
@@ -245,15 +261,19 @@ mod tests {
     fn bindings_follow_search_focus_and_page_context() {
         let mut app = App::new("http://localhost");
         assert!(active(&app, "Ctrl-U"));
-        assert!(!active(&app, "w / f"));
+        assert!(!active(&app, "w / f / v"));
         assert!(!active(&app, "b / F"));
         app.editing = false;
         assert!(!active(&app, "Ctrl-U"));
-        assert!(active(&app, "w / f"));
+        assert!(active(&app, "w / f / v"));
         app.open(Target::List(ListName::Watchlist, ListView::default()));
         assert!(active(&app, "t"));
         assert!(active(&app, "o"));
         assert!(!active(&app, "m"));
+        assert!(
+            !active(&app, "a"),
+            "only Watched filters by how it was marked"
+        );
         assert!(!active(&app, "Tab / Shift-Tab"));
         app.stack.last_mut().unwrap().target = Target::List(
             ListName::Watchlist,

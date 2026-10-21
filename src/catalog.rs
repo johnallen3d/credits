@@ -19,9 +19,10 @@ use crate::model::{
     FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
     MovieWatched, OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
     RecentKind, RecentView, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup,
-    ServiceOption, ServicesDetail, ServicesState, SortRatings, TitleCredits, TitleDetail, TitleHit,
-    TitleMarks, UnavailableReason, WatchProvider, WatchTarget, Watched, WatchedMarks,
-    WatchlistDetail, WatchlistSort, WhereToWatch, WhereToWatchState,
+    ServiceOption, ServicesDetail, ServicesState, ShowProgress, SortRatings, TitleCredits,
+    TitleDetail, TitleHit, TitleMarks, UnavailableReason, WatchProvider, WatchTarget, Watched,
+    WatchedList, WatchedMarks, WatchedSort, WatchedSource, WatchedTitle, WatchlistDetail,
+    WatchlistSort, WhereToWatch, WhereToWatchState,
 };
 use crate::omdb::OmdbClient;
 use crate::playback::{
@@ -343,6 +344,102 @@ impl Catalog {
         self.watched
             .set_movie(movie_id, watched, Timestamp::now())
             .await
+    }
+
+    /// Every movie and show with a watched mark, named from their cached
+    /// TMDB entries a few at a time. A failed read is an error, so the page
+    /// never passes it off as empty; a failed TMDB lookup leaves that title
+    /// unnamed.
+    pub async fn watched_titles(&self, sort: WatchedSort) -> Result<WatchedList, sqlx::Error> {
+        let records = self.watched.all().await?;
+        let permits = Arc::new(Semaphore::new(CONCURRENT_TITLE_LOOKUPS));
+        let mut lookups = JoinSet::new();
+        for (i, r) in records.into_iter().enumerate() {
+            let catalog = self.clone();
+            let permits = permits.clone();
+            lookups.spawn(async move {
+                let _permit = permits.acquire_owned().await;
+                let found = match r.kind {
+                    MediaKind::Movie => catalog.movie_raw(r.id).await.map(|(m, metadata)| {
+                        (m.title, m.release_date, m.poster_path, metadata)
+                    }),
+                    MediaKind::Tv => catalog.tv_raw(r.id).await.map(|(t, metadata)| {
+                        (t.name, t.first_air_date, t.poster_path, metadata)
+                    }),
+                };
+                let found = found
+                    .inspect_err(|e| {
+                        tracing::warn!(error = %e, kind = ?r.kind, id = r.id, "title lookup for watched list failed");
+                    })
+                    .ok();
+                (i, r, found)
+            });
+        }
+        let mut found = Vec::new();
+        while let Some(joined) = lookups.join_next().await {
+            match joined {
+                Ok(f) => found.push(f),
+                Err(e) => tracing::warn!(error = %e, "watched title lookup task failed"),
+            }
+        }
+        found.sort_by_key(|(i, ..)| *i);
+
+        let mut list = WatchedList {
+            titles: Vec::with_capacity(found.len()),
+            sort,
+            unavailable: 0,
+            stale_since: None,
+        };
+        for (_, r, details) in found {
+            let (title, year, poster_url) = match details {
+                Some((title, date, poster_path, metadata)) => {
+                    if metadata.is_stale() {
+                        list.stale_since = Some(
+                            list.stale_since
+                                .map_or(metadata.fetched_at, |at| at.min(metadata.fetched_at)),
+                        );
+                    }
+                    (
+                        Some(title),
+                        year(date.as_deref()),
+                        self.image(THUMB_SIZE, poster_path),
+                    )
+                }
+                None => {
+                    list.unavailable += 1;
+                    (None, None, None)
+                }
+            };
+            let sources = [
+                (r.manual, WatchedSource::Manual),
+                (r.apple_tv, WatchedSource::AppleTv),
+            ]
+            .into_iter()
+            .filter_map(|(on, source)| on.then_some(source))
+            .collect();
+            list.titles.push(WatchedTitle {
+                kind: r.kind,
+                id: r.id,
+                title,
+                year,
+                poster_url,
+                last_watched_at: Timestamp::from_second(r.last_watched_at)
+                    .unwrap_or(Timestamp::UNIX_EPOCH),
+                progress: (r.kind == MediaKind::Tv).then_some(ShowProgress {
+                    show: r.show,
+                    seasons: r.seasons,
+                    episodes: r.episodes,
+                }),
+                sources,
+            });
+        }
+        if sort.is_title() {
+            // Stable, so equal names stay most recent first.
+            list.titles.sort_by_cached_key(|t| {
+                (t.title.is_none(), t.title.as_deref().map(str::to_lowercase))
+            });
+        }
+        Ok(list)
     }
 
     /// Movies matching `name`, in TMDB's order.

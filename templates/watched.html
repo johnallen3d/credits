@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Watched · credits{% endblock %}
+{% block content %}
+<section class="watchlist watched" aria-labelledby="watched-heading">
+  <h1 id="watched-heading">Watched</h1>
+  {% if w.titles.is_empty() %}
+  <p class="hint">Nothing watched yet. Mark a movie, show, season or episode watched from its page, favorite a show, or let <a href="/playback">Seen on Apple TV</a> mark what plays, and it will be listed here.</p>
+  {% else %}
+  <nav class="sort" aria-label="Sort titles">
+    <span class="muted">Sort by</span>
+    <a href="{{ self.sort_href(WatchedSort::Recent) }}"{% if !w.sort.is_title() %} aria-current="true"{% endif %}>Last watched</a>
+    <a href="{{ self.sort_href(WatchedSort::Title) }}"{% if w.sort.is_title() %} aria-current="true"{% endif %}>Title</a>
+  </nav>
+  <nav class="sort" aria-label="Filter by kind">
+    <span class="muted">Show</span>
+    {% for k in KindFilter::ALL %}<a href="{{ self.kind_href(k) }}"{% if k == kind %} aria-current="true"{% endif %}>{{ k.label() }} <span class="count">{{ self.kind_count(k) }}</span></a>
+    {% endfor %}
+  </nav>
+  <nav class="sort" aria-label="Filter by how it was marked">
+    <span class="muted">Marked</span>
+    {% for s in SourceFilter::ALL %}<a href="{{ self.source_href(s) }}"{% if s == source %} aria-current="true"{% endif %}>{{ s.label() }} <span class="count">{{ self.source_count(s) }}</span></a>
+    {% endfor %}
+  </nav>
+  {% let unavailable = self.unavailable() %}
+  {% if unavailable > 0 %}<p class="muted sort-note">Couldn't load the details of {{ unavailable }} {% if unavailable == 1 %}title{% else %}titles{% endif %} from TMDB right now{% if w.sort.is_title() %}, so {% if unavailable == 1 %}it's{% else %}they're{% endif %} listed last{% endif %}.</p>{% endif %}
+  {% if let Some(day) = w.stale_on() %}<p class="rating-stale sort-note">Couldn't refresh some titles; using details from as early as {{ day }}.</p>{% endif %}
+  <ul class="filmography">
+    {% for t in shown %}
+    <li>
+      <span class="year">{% if let Some(year) = t.year %}{{ year }}{% else if t.title.is_some() %}TBA{% endif %}</span>
+      <a href="{{ t.path() }}" tabindex="-1" aria-hidden="true">{% if let Some(url) = t.poster_url %}<img class="poster thumb" src="{{ url }}" alt="" loading="lazy" width="46" height="69">{% else %}<span class="poster thumb missing">No artwork</span>{% endif %}</a>
+      <span><a href="{{ t.path() }}">{{ t.display_title() }}</a> <span class="badge badge-{{ t.kind.slug() }}">{{ t.kind.label() }}</span>{% if t.title.is_none() %} <span class="muted">Details unavailable</span>{% endif %}
+        <span class="watched-detail muted">{% if let Some(progress) = t.progress_label() %}{{ progress }} · {% endif %}Watched {{ t.watched_on() }}{% if t.from_apple_tv() %} · <span class="watched-source">Apple TV</span>{% endif %}</span></span>
+    </li>
+    {% else %}
+    <li class="empty-row"><span class="muted">{{ self.empty_message() }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endblock %}
