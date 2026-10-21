@@ -3,7 +3,7 @@
 {% block content %}
 <section class="playback" aria-labelledby="playback-heading">
   <h1 id="playback-heading">Seen on Apple TV</h1>
-  <p class="hint">TV episodes played in Infuse or Apple's TV app are marked watched once 90% has played or been reached, across as many sessions as it takes, or 80% if you moved on to a later episode (skipping the credits). Movies played in Infuse are marked once 90% has played, or all but the last 10 minutes (the credits). Home Assistant reports what plays{% if !p.players.is_empty() %} on {% for player in p.players %}{% if !loop.first %}, {% endif %}<code>{{ player }}</code>{% endfor %}{% endif %}.</p>
+  <p class="hint">TV episodes played in Infuse or Apple's TV app are marked watched once 90% has played or been reached, across as many sessions as it takes, or 80% if you moved on to a later episode (skipping the credits). Movies played in Infuse or the TV app are marked once 90% has played, or all but the last 10 minutes (the credits). Home Assistant reports what plays{% if !p.players.is_empty() %} on {% for player in p.players %}{% if !loop.first %}, {% endif %}<code>{{ player }}</code>{% endfor %}{% endif %}.</p>
   <div class="playback-status" role="status">
   {% match p.live.kind() %}
   {% when "not_configured" %}

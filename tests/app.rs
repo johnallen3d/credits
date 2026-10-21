@@ -115,6 +115,9 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                           "overview": "Researchers in Antarctica meet a shape-shifter." },
                         { "id": 60935, "title": "The Thing", "release_date": "2011-10-12" }
                     ]),
+                    Some("Good Will Hunting") => json!([
+                        { "id": 489, "title": "Good Will Hunting", "release_date": "1997-12-05" }
+                    ]),
                     _ => json!([]),
                 };
                 Json(json!({ "results": results }))
@@ -128,6 +131,7 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                     105 => Some(("Back to the Future", "1985-07-03", 116)),
                     1091 => Some(("The Thing", "1982-06-25", 109)),
                     60935 => Some(("The Thing", "2011-10-12", 103)),
+                    489 => Some(("Good Will Hunting", "1997-12-05", 127)),
                     _ => None,
                 };
                 if let Some((title, release_date, runtime)) = played {
@@ -2972,6 +2976,26 @@ async fn a_movie_played_to_ninety_percent_is_marked_watched_on_its_page() {
     let (_, _, page) = get_page(p.t.app(), "/movie/105", false).await;
     assert!(page.contains(r#"aria-pressed="true""#));
     assert!(!page.contains("Marked watched from what played on the Apple TV."));
+}
+
+#[tokio::test]
+async fn a_movie_played_in_the_tv_app_is_marked_watched_but_trailers_are_not() {
+    let p = PlaybackApp::new().await;
+    let movie = "Good Will Hunting";
+    // 127 min, the TV app's IDs from Oct 21: a trailer, then 115 min (91%).
+    p.ha.set_rows(vec![
+        tv_app_row(130, "playing", movie, "PMTFY26TRL001", 150),
+        tv_app_row(127, "playing", movie, "PMTFY26FTR018", 7599),
+        tv_app_row(12, "idle", "", "", 0),
+    ]);
+    p.sync().await.unwrap();
+    assert!(p.t.catalog.movie_watched(489).await.apple_tv);
+    let body = p.page().await;
+    assert!(body.contains(
+        r#"<a href="/movie/489">Good Will Hunting</a> <span class="muted">· movie</span>"#
+    ));
+    assert!(body.contains("Marked watched"));
+    assert!(!body.contains("Which show or movie is this?"));
 }
 
 #[tokio::test]

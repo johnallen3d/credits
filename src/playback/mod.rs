@@ -9,8 +9,9 @@
 //! is 90% of the episode's duration the episode is matched to TMDB and
 //! marked watched.
 //! Only Infuse (show, season and episode are in the title; any other title is
-//! taken to be a movie's) and Apple's TV app (the content ID ends in the
-//! season and episode) are understood.
+//! taken to be a movie's) and Apple's TV app (an episode's content ID ends in
+//! the season and episode; other feature-length videos are movies) are
+//! understood.
 
 pub mod home_assistant;
 mod live;
@@ -150,6 +151,9 @@ pub enum Parsed {
 
 const INFUSE_ID: &str = "com.firecore.infuse";
 const TV_ID: &str = "com.apple.TVWatchList";
+/// The shortest video from the TV app taken to be a movie: 40 minutes, the
+/// Academy's line between a short and a feature.
+const TV_MOVIE_SECONDS: u32 = 40 * 60;
 
 pub fn parse(event: &PlaybackEvent) -> Parsed {
     let title = event.title.as_deref().map(str::trim).unwrap_or_default();
@@ -171,7 +175,17 @@ pub fn parse(event: &PlaybackEvent) -> Parsed {
                     Parsed::Item(item(App::Tv, content_id, title, title, season, episode))
                 }
                 _ if title.is_empty() => Parsed::Untitled(App::Tv),
-                _ => Parsed::Other("TV app (not a TV episode)".to_owned()),
+                // Movies have other IDs, like "PMTFY26FTR018". Shorter
+                // videos are trailers and extras.
+                _ if !content_id.is_empty()
+                    && event.duration.is_some_and(|d| d >= TV_MOVIE_SECONDS) =>
+                {
+                    Parsed::Item(Item {
+                        kind: Kind::Movie,
+                        ..item(App::Tv, content_id, movie_title(title).0, title, 0, 0)
+                    })
+                }
+                _ => Parsed::Other("TV app (not a TV episode or movie)".to_owned()),
             }
         }
         _ => match event.app_name.as_deref().map(str::trim) {
@@ -823,6 +837,28 @@ mod tests {
         idle.title = None;
         idle.content_id = None;
         assert_eq!(parse(&idle), Parsed::Untitled(App::Tv));
+    }
+
+    #[test]
+    fn other_feature_length_tv_app_videos_are_movies() {
+        // Played on Oct 21.
+        let mut row = tv(0, true, "PMTFY26FTR018", 7599);
+        row.title = Some("Good Will Hunting".to_owned());
+        let Parsed::Item(movie) = parse(&row) else {
+            panic!("not parsed")
+        };
+        assert_eq!(movie.app, App::Tv);
+        assert_eq!(movie.kind, Kind::Movie);
+        assert_eq!(movie.key, "PMTFY26FTR018");
+        assert_eq!(movie.show_title, "Good Will Hunting");
+        assert_eq!(movie.show_key, "good will hunting");
+        assert_eq!((movie.season, movie.episode), (0, 0));
+        let other = Parsed::Other("TV app (not a TV episode or movie)".to_owned());
+        let mut trailer = tv(0, true, "PMTFY26TRL001", 150);
+        trailer.title = Some("Good Will Hunting".to_owned());
+        assert_eq!(parse(&trailer), other);
+        trailer.duration = None;
+        assert_eq!(parse(&trailer), other);
     }
 
     #[test]
