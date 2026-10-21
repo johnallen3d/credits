@@ -39,6 +39,22 @@ impl TmdbClient {
         .await
     }
 
+    pub async fn search_tv(&self, query: &str) -> Result<Paged<TvSummary>, CatalogError> {
+        self.get(
+            "/search/tv",
+            &[("query", query), ("include_adult", "false"), ("page", "1")],
+        )
+        .await
+    }
+
+    pub async fn search_movie(&self, query: &str) -> Result<Paged<MovieSummary>, CatalogError> {
+        self.get(
+            "/search/movie",
+            &[("query", query), ("include_adult", "false"), ("page", "1")],
+        )
+        .await
+    }
+
     pub async fn movie(&self, id: u64) -> Result<Movie, CatalogError> {
         self.get(
             &format!("/movie/{id}"),

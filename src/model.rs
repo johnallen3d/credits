@@ -260,6 +260,8 @@ pub struct Watched {
     pub seasons: Vec<u32>,
     /// (season, episode) pairs marked one at a time, ascending.
     pub episodes: Vec<(u32, u32)>,
+    /// Those of `episodes` marked from what played on an Apple TV.
+    pub apple_tv: Vec<(u32, u32)>,
 }
 
 impl Watched {
@@ -270,6 +272,19 @@ impl Watched {
     pub fn episode(&self, season: u32, number: u32) -> bool {
         self.season(season) || self.episodes.contains(&(season, number))
     }
+
+    /// Whether the episode's own mark came from the Apple TV.
+    pub fn from_apple_tv(&self, season: u32, number: u32) -> bool {
+        self.apple_tv.contains(&(season, number))
+    }
+}
+
+/// Whether a movie is marked watched.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct MovieWatched {
+    pub watched: bool,
+    /// Marked from what played on an Apple TV.
+    pub apple_tv: bool,
 }
 
 /// What a watched mark applies to, within one TV show.

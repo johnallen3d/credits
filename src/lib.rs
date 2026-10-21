@@ -3,6 +3,7 @@ pub mod catalog;
 pub mod config;
 pub mod model;
 mod omdb;
+pub mod playback;
 mod ratings;
 pub mod recent;
 mod services;

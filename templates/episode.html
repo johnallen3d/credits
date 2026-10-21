@@ -24,6 +24,9 @@
         {% else %}
         {% call watch::toggle(action, seen, "Episode watched", page, "episode", "Watched", "") %}{% endcall %}
         {% endif %}
+        {% if watched.from_apple_tv(*e.season_number, *e.number) %}
+        <p class="muted auto-marked">Marked watched from what played on the Apple TV. <a href="/playback">Seen on Apple TV</a></p>
+        {% endif %}
       </div>
       <section class="ratings" aria-label="Rating">
         {% if e.episode_ratings.is_unavailable() %}

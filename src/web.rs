@@ -17,16 +17,26 @@ use serde_json::json;
 use crate::catalog::{Catalog, CatalogError, ServicesError, WatchlistError};
 use crate::model::{
     EpisodeDetail, FilmographyEntry, FilmographyGroup, FilmographySort, KindFilter, MediaKind,
-    PersonDetail, RecentView, SearchHit, SeasonDetail, ServicesDetail, ServicesFilter,
-    TitleCredits, TitleDetail, WatchTarget, Watched, WatchlistDetail, WatchlistSort, title_path,
+    MovieWatched, PersonDetail, RecentView, SearchHit, SeasonDetail, ServicesDetail,
+    ServicesFilter, TitleCredits, TitleDetail, WatchTarget, Watched, WatchlistDetail,
+    WatchlistSort, title_path,
 };
+use crate::playback::{App, Kind, LiveStatus, PlaybackDetail};
 
 pub fn app(catalog: Catalog) -> Router {
     Router::new()
         .route("/", get(search_page))
         .route(
             "/about",
-            get(|| async { html(StatusCode::OK, AboutPage.render()) }),
+            get(|State(catalog): State<Catalog>| async move {
+                html(
+                    StatusCode::OK,
+                    AboutPage {
+                        live: catalog.playback_live(),
+                    }
+                    .render(),
+                )
+            }),
         )
         .route(
             "/movie/{id}",
@@ -41,6 +51,7 @@ pub fn app(catalog: Catalog) -> Router {
             "/tv/{id}/credits",
             get(|s, p| credits_page(s, p, MediaKind::Tv)),
         )
+        .route("/movie/{id}/watched", post(set_movie_watched))
         .route("/tv/{id}/watched", post(set_show_watched))
         .route("/tv/{id}/season/{number}", get(season_page))
         .route("/tv/{id}/season/{number}/watched", post(set_season_watched))
@@ -71,6 +82,8 @@ pub fn app(catalog: Catalog) -> Router {
         .route("/watchlist", get(|s, q| watchlist_page(s, q, false)))
         .route("/favorites", get(|s, q| watchlist_page(s, q, true)))
         .route("/services", get(services_page).post(save_services))
+        .route("/playback", get(playback_page))
+        .route("/playback/decide", post(decide_playback_show))
         .route("/person/{id}", get(person_page))
         .route("/api/search", get(api_search))
         .route(
@@ -95,6 +108,10 @@ pub fn app(catalog: Catalog) -> Router {
         .route("/api/watchlist", get(|s, q| api_watchlist(s, q, false)))
         .route("/api/favorites", get(|s, q| api_watchlist(s, q, true)))
         .route("/api/services", get(api_services))
+        .route(
+            "/api/playback",
+            get(|State(catalog): State<Catalog>| async move { Json(catalog.playback().await) }),
+        )
         .route(
             "/static/htmx.min.js",
             get(|| asset("text/javascript", include_str!("../static/htmx.min.js"))),
@@ -180,7 +197,9 @@ impl SavedTitles {
 
 #[derive(Template)]
 #[template(path = "about.html")]
-struct AboutPage;
+struct AboutPage {
+    live: LiveStatus,
+}
 
 #[derive(Template)]
 #[template(path = "detail.html")]
@@ -188,6 +207,8 @@ struct DetailPage {
     d: TitleDetail,
     /// Always unwatched for movies.
     watched: Watched,
+    /// Always unwatched for TV shows.
+    movie_watched: MovieWatched,
     /// On the "To watch" list.
     listed: bool,
     favorited: Option<bool>,
@@ -511,6 +532,12 @@ struct ServicesPage {
 }
 
 #[derive(Template)]
+#[template(path = "playback.html")]
+struct PlaybackPage {
+    p: PlaybackDetail,
+}
+
+#[derive(Template)]
 #[template(path = "error.html")]
 struct ErrorPage {
     heading: &'static str,
@@ -625,6 +652,10 @@ async fn detail_page(
         MediaKind::Tv if result.is_ok() => catalog.watched(id).await,
         _ => Watched::default(),
     };
+    let movie_watched = match kind {
+        MediaKind::Movie if result.is_ok() => catalog.movie_watched(id).await,
+        _ => MovieWatched::default(),
+    };
     let listed = result.is_ok() && catalog.watchlist_titles().await.contains(&(kind, id));
     let favorited = favorite_titles(&catalog)
         .await
@@ -633,6 +664,7 @@ async fn detail_page(
         result.map(|d| DetailPage {
             d,
             watched,
+            movie_watched,
             listed,
             favorited,
         }),
@@ -693,6 +725,27 @@ async fn episode_page(
         not_found_episode,
         "Couldn't load this episode",
     )
+}
+
+async fn set_movie_watched(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    Form(form): Form<WatchedForm>,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return not_found_title(MediaKind::Movie);
+    };
+    match catalog.set_movie_watched(id, form.watched).await {
+        Ok(()) => Redirect::to(&title_path(MediaKind::Movie, id)).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, id, "saving watched state failed");
+            error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save watched state",
+                "The database couldn't be updated. Please try again.",
+            )
+        }
+    }
 }
 
 async fn set_show_watched(
@@ -953,6 +1006,103 @@ async fn services_page(State(catalog): State<Catalog>) -> Response {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Couldn't load your services",
                 "The database couldn't be read. Please try again.",
+            )
+        }
+    }
+}
+
+async fn playback_page(State(catalog): State<Catalog>) -> Response {
+    html(
+        StatusCode::OK,
+        PlaybackPage {
+            p: catalog.playback().await,
+        }
+        .render(),
+    )
+}
+
+#[derive(Deserialize)]
+struct DecideForm {
+    app: String,
+    /// "episode" (the default: `show` is a show) or "movie".
+    kind: Option<String>,
+    show: String,
+    /// "use" (the chosen `tmdb_id`, or `other_id` if given) or "ignore".
+    action: String,
+    tmdb_id: Option<String>,
+    other_id: Option<String>,
+}
+
+/// Sets which TMDB show or movie something seen on the Apple TV is, or
+/// ignores it.
+async fn decide_playback_show(
+    State(catalog): State<Catalog>,
+    Form(form): Form<DecideForm>,
+) -> Response {
+    let Some(app) = App::from_id(&form.app) else {
+        return error_page(
+            StatusCode::BAD_REQUEST,
+            "Unknown app",
+            "That app isn't tracked.",
+        );
+    };
+    let Some(kind) = Kind::from_id(form.kind.as_deref().unwrap_or("episode")) else {
+        return error_page(
+            StatusCode::BAD_REQUEST,
+            "Unknown kind",
+            "Only shows and movies are matched.",
+        );
+    };
+    let id = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::parse::<u64>)
+    };
+    let tmdb_id = match form.action.as_str() {
+        "ignore" => None,
+        _ => match id(&form.other_id).or_else(|| id(&form.tmdb_id)) {
+            Some(Ok(id)) => Some(id),
+            Some(Err(_)) => {
+                return error_page(
+                    StatusCode::BAD_REQUEST,
+                    "Not a TMDB ID",
+                    match kind {
+                        Kind::Episode => {
+                            "A TMDB TV ID is a number, like the 1396 in themoviedb.org/tv/1396."
+                        }
+                        Kind::Movie => {
+                            "A TMDB movie ID is a number, like the 105 in themoviedb.org/movie/105."
+                        }
+                    },
+                );
+            }
+            None => {
+                let (title, message) = match kind {
+                    Kind::Episode => (
+                        "Choose a show",
+                        "Pick one of the TMDB shows, enter a TMDB TV ID, or ignore the show.",
+                    ),
+                    Kind::Movie => (
+                        "Choose a movie",
+                        "Pick one of the TMDB movies, enter a TMDB movie ID, or ignore the movie.",
+                    ),
+                };
+                return error_page(StatusCode::BAD_REQUEST, title, message);
+            }
+        },
+    };
+    match catalog
+        .decide_playback_show(app, kind, &form.show, tmdb_id)
+        .await
+    {
+        Ok(()) => Redirect::to("/playback").into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "saving a playback show choice failed");
+            error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save your choice",
+                "The database couldn't be written. Please try again.",
             )
         }
     }

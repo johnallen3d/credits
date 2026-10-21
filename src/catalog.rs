@@ -17,13 +17,16 @@ use crate::config::Config;
 use crate::model::{
     Availability, Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup,
     FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
-    OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings, RecentView,
-    SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup, ServiceOption, ServicesDetail,
-    ServicesState, SortRatings, TitleCredits, TitleDetail, TitleHit, UnavailableReason,
-    WatchProvider, WatchTarget, Watched, WatchlistDetail, WatchlistSort, WhereToWatch,
-    WhereToWatchState,
+    MovieWatched, OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
+    RecentView, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup, ServiceOption,
+    ServicesDetail, ServicesState, SortRatings, TitleCredits, TitleDetail, TitleHit,
+    UnavailableReason, WatchProvider, WatchTarget, Watched, WatchlistDetail, WatchlistSort,
+    WhereToWatch, WhereToWatchState,
 };
 use crate::omdb::OmdbClient;
+use crate::playback::{
+    self, App, Candidate, Kind, LiveStatus, PendingShow, Playback, PlaybackDetail,
+};
 use crate::ratings::RatingsService;
 use crate::recent::RecentlyViewed;
 use crate::services::MyServices;
@@ -115,6 +118,9 @@ pub struct Catalog {
     watchlist: Watchlist,
     favorites: Watchlist,
     services: MyServices,
+    playback: Playback,
+    /// Home Assistant media players read for playback; empty if not configured.
+    playback_players: Vec<String>,
     metadata_ttl: Duration,
     watch_region: String,
 }
@@ -156,6 +162,12 @@ impl Catalog {
             watchlist: Watchlist::new(cache.pool()),
             favorites: Watchlist::favorites(cache.pool()),
             services: MyServices::new(cache.pool()),
+            playback: Playback::new(cache.pool(), config.home_assistant.is_some()),
+            playback_players: config
+                .home_assistant
+                .as_ref()
+                .map(|ha| ha.players.clone())
+                .unwrap_or_default(),
             cache,
             metadata_ttl: config.metadata_ttl,
             watch_region: config.watch_region.clone(),
@@ -198,6 +210,159 @@ impl Catalog {
         self.watched
             .set(tv_id, target, watched, Timestamp::now())
             .await
+    }
+
+    /// Episodes and movies seen playing on the Apple TVs, and shows and
+    /// movies waiting for the user to pick their TMDB match.
+    pub async fn playback(&self) -> PlaybackDetail {
+        let (recent, waiting) = tokio::join!(self.playback.recent(50), self.playback.waiting());
+        let unreadable = recent.is_err() || waiting.is_err();
+        if let Err(e) = recent.as_ref().and(waiting.as_ref()) {
+            tracing::warn!(error = %e, "reading playback progress failed");
+        }
+        let mut pending: Vec<PendingShow> = Vec::new();
+        for d in waiting.unwrap_or_default() {
+            let label = match d.kind {
+                Kind::Episode => Some(format!("S{} E{}", d.season, d.episode)),
+                Kind::Movie => None,
+            };
+            match pending
+                .iter_mut()
+                .find(|p| p.app == d.app && p.kind == d.kind && p.show_key == d.show_key)
+            {
+                Some(p) => p.episodes.extend(label),
+                None => pending.push(PendingShow {
+                    app: d.app,
+                    kind: d.kind,
+                    show_key: d.show_key,
+                    show_title: d.show_title,
+                    note: d.note,
+                    episodes: label.into_iter().collect(),
+                    candidates: None,
+                }),
+            }
+        }
+        for p in &mut pending {
+            p.episodes.reverse();
+            p.candidates = playback::candidates(self, p.kind, &p.show_title).await;
+        }
+        PlaybackDetail {
+            live: self.playback.live(),
+            status: self.playback.status(),
+            players: self.playback_players.clone(),
+            pending,
+            recent: recent.unwrap_or_default(),
+            other: self.playback.other(),
+            unreadable,
+        }
+    }
+
+    /// Sets which TMDB show or movie (`None`: none, ignore it) an app's
+    /// show or movie is, and marks what's waiting accordingly.
+    pub async fn decide_playback_show(
+        &self,
+        app: App,
+        kind: Kind,
+        show_key: &str,
+        tmdb_id: Option<u64>,
+    ) -> Result<(), sqlx::Error> {
+        playback::decide(self, app, kind, show_key, tmdb_id).await
+    }
+
+    /// How the live feed from Home Assistant is going.
+    pub fn playback_live(&self) -> LiveStatus {
+        self.playback.live()
+    }
+
+    pub(crate) fn playback_store(&self) -> &Playback {
+        &self.playback
+    }
+
+    pub(crate) async fn mark_episode_from_apple_tv(
+        &self,
+        tv_id: u64,
+        season: u32,
+        episode: u32,
+    ) -> Result<(), sqlx::Error> {
+        self.watched
+            .mark_episode(tv_id, season, episode, "apple_tv", Timestamp::now())
+            .await
+    }
+
+    pub(crate) async fn mark_movie_from_apple_tv(&self, movie_id: u64) -> Result<(), sqlx::Error> {
+        self.watched
+            .mark_movie(movie_id, "apple_tv", Timestamp::now())
+            .await
+    }
+
+    /// Whether a movie is marked watched; not if that can't be read.
+    pub async fn movie_watched(&self, movie_id: u64) -> MovieWatched {
+        self.watched.movie(movie_id).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, movie_id, "reading watched state failed");
+            MovieWatched::default()
+        })
+    }
+
+    pub async fn set_movie_watched(&self, movie_id: u64, watched: bool) -> Result<(), sqlx::Error> {
+        self.watched
+            .set_movie(movie_id, watched, Timestamp::now())
+            .await
+    }
+
+    /// Movies matching `name`, in TMDB's order.
+    pub(crate) async fn movies_named(&self, name: &str) -> Result<Vec<Candidate>, CatalogError> {
+        let page = self.tmdb.search_movie(name).await?;
+        Ok(page
+            .results
+            .into_iter()
+            .map(|m| Candidate {
+                id: m.id,
+                name: m.title,
+                year: year(m.release_date.as_deref()),
+                overview: non_empty(m.overview),
+            })
+            .collect())
+    }
+
+    /// A movie's TMDB runtime in minutes, through the same cache as its page.
+    pub(crate) async fn movie_runtime(&self, movie_id: u64) -> Result<Option<u32>, CatalogError> {
+        let (movie, _) = self.movie_raw(movie_id).await?;
+        Ok(movie.runtime.filter(|r| *r > 0))
+    }
+
+    /// TV shows matching `name`, in TMDB's order.
+    pub(crate) async fn tv_named(&self, name: &str) -> Result<Vec<Candidate>, CatalogError> {
+        let page = self.tmdb.search_tv(name).await?;
+        Ok(page
+            .results
+            .into_iter()
+            .map(|t| Candidate {
+                id: t.id,
+                name: t.name,
+                year: year(t.first_air_date.as_deref()),
+                overview: non_empty(t.overview),
+            })
+            .collect())
+    }
+
+    /// Each episode of a season with its TMDB runtime in minutes, through
+    /// the same cache as season pages.
+    pub(crate) async fn episode_runtimes(
+        &self,
+        tv_id: u64,
+        season: u32,
+    ) -> Result<Vec<(u32, Option<u32>)>, CatalogError> {
+        let (season, _) = self
+            .cached(
+                format!("tv/{tv_id}/season/{season}"),
+                self.tmdb.season(tv_id, season),
+            )
+            .await?;
+        Ok(season
+            .episodes
+            .into_iter()
+            .map(|e| (e.episode_number, e.runtime.filter(|r| *r > 0)))
+            .collect())
     }
 
     /// The "To watch" list in `sort` order. Unlike other saved state, a

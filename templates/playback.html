@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Seen on Apple TV · credits{% endblock %}
+{% block content %}
+<section class="playback" aria-labelledby="playback-heading">
+  <h1 id="playback-heading">Seen on Apple TV</h1>
+  <p class="hint">TV episodes played in Infuse or Apple's TV app are marked watched once 90% has played or been reached, across as many sessions as it takes, or 80% if you moved on to a later episode (skipping the credits). Movies played in Infuse are marked once 90% has played, or all but the last 10 minutes (the credits). Home Assistant reports what plays{% if !p.players.is_empty() %} on {% for player in p.players %}{% if !loop.first %}, {% endif %}<code>{{ player }}</code>{% endfor %}{% endif %}.</p>
+  <div class="playback-status" role="status">
+  {% match p.live.kind() %}
+  {% when "not_configured" %}
+  <p class="rating-stale">Home Assistant isn't set up, so nothing is marked automatically. Set <code>HA_URL</code> and <code>HA_TOKEN</code> and restart.</p>
+  {% when "connecting" %}
+  <p class="muted">Connecting to Home Assistant…</p>
+  {% when "connected" %}
+  <p class="muted">Following Home Assistant live{% if let Some(since) = p.live.since_label() %} since {{ since }}{% endif %}: episodes and movies are marked as soon as they're watched.</p>
+  {% else %}
+  <p class="rating-stale">Disconnected from Home Assistant{% if let Some(since) = p.live.since_label() %} since {{ since }}{% endif %}: {{ p.live.error() }}. Retrying; meanwhile its history is read at least every 5 minutes.</p>
+  {% endmatch %}
+  {% match p.status.kind() %}
+  {% when "ok" %}
+  <p class="muted">Last read Home Assistant's history {% if let Some(at) = p.status.at_label() %}at {{ at }}{% endif %}, to catch up on what played while credits wasn't connected.</p>
+  {% when "failed" %}
+  <p class="rating-stale">Couldn't read Home Assistant's history{% if let Some(at) = p.status.at_label() %} at {{ at }}{% endif %}: {{ p.status.error() }}{% if let Some(ok) = p.status.last_ok_label() %}; last read at {{ ok }}{% endif %}. Episodes and movies already played are still marked.</p>
+  {% else %}
+  {% endmatch %}
+  </div>
+  {% if p.unreadable %}
+  <p class="rating-stale" role="status">The playback history couldn't be read from the database.</p>
+  {% endif %}
+
+  {% if !p.pending.is_empty() %}
+  <h2>Which show or movie is this?</h2>
+  {% for s in p.pending %}
+  {% let noun = s.kind.noun() %}
+  <form class="playback-choice" method="post" action="/playback/decide">
+    <input type="hidden" name="app" value="{{ s.app.id() }}">
+    <input type="hidden" name="kind" value="{{ s.kind.id() }}">
+    <input type="hidden" name="show" value="{{ s.show_key }}">
+    <h3>{{ s.show_title }} <span class="muted">· {% if s.kind.is_movie() %}Movie in {% endif %}{{ s.app.label() }}</span></h3>
+    <p class="muted">{% if let Some(note) = s.note %}{{ note }}.{% endif %}{% if !s.episodes.is_empty() %} Waiting: {% for e in s.episodes %}{% if !loop.first %}, {% endif %}{{ e }}{% endfor %}.{% endif %}</p>
+    {% match s.candidates %}
+    {% when Some(candidates) %}
+    {% if candidates.is_empty() %}
+    <p class="muted">TMDB found no {{ noun }}s by that name.</p>
+    {% else %}
+    <ul class="playback-candidates">
+      {% for c in candidates %}
+      <li><label><input type="radio" name="tmdb_id" value="{{ c.id }}"><span><strong>{{ c.name }}</strong>{% if let Some(year) = c.year %} <span class="year">({{ year }})</span>{% endif %} <a href="/{% if s.kind.is_movie() %}movie{% else %}tv{% endif %}/{{ c.id }}">details</a>{% if let Some(o) = c.overview %}<span class="overview">{{ o }}</span>{% endif %}</span></label></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% when None %}
+    <p class="rating-stale">Couldn't search TMDB right now. You can still enter the {{ noun }}'s TMDB ID.</p>
+    {% endmatch %}
+    <div class="playback-actions">
+      <label>or TMDB {% if s.kind.is_movie() %}movie{% else %}TV{% endif %} ID <input name="other_id" inputmode="numeric" pattern="[0-9]*" placeholder="e.g. {% if s.kind.is_movie() %}105{% else %}1396{% endif %}"></label>
+      <button type="submit" name="action" value="use">Use this {{ noun }}</button>
+      <button type="submit" name="action" value="ignore" class="secondary" formnovalidate>Ignore this {{ noun }}</button>
+    </div>
+  </form>
+  {% endfor %}
+  {% endif %}
+
+  <h2>Recently played</h2>
+  {% if p.recent.is_empty() %}
+  <p class="empty">Nothing yet.{% if p.status.kind() == "ok" %} Episodes and movies appear here as they're played.{% endif %}</p>
+  {% else %}
+  <table class="playback-table">
+    <thead><tr><th class="when">Last played</th><th>Episode or movie</th><th class="app">App</th><th class="num">Played</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for d in p.recent %}
+      <tr>
+        <td class="when">{{ d.last_seen_label() }}</td>
+        <td>{% if let Some(href) = d.href() %}<a href="{{ href }}">{{ d.label() }}</a>{% else %}{{ d.label() }}{% endif %}{% if d.kind.is_movie() %} <span class="muted">· movie</span>{% endif %}</td>
+        <td class="app">{{ d.app.label() }}</td>
+        <td class="num">{% if let Some(percent) = d.percent() %}{{ percent }}%{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="status-{{ d.status.as_str() }}">{{ d.status.label() }}{% if let Some(note) = d.note %}<span class="note">{{ note }}</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if !p.other.is_empty() %}
+  <p class="muted">Also played since the server started, not tracked: {{ p.other_label() }}.</p>
+  {% endif %}
+</section>
+{% endblock %}

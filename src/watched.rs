@@ -1,10 +1,10 @@
-//! TV shows, seasons and episodes marked as watched, stored next to the
-//! provider cache.
+//! TV shows, seasons, episodes and movies marked as watched, stored next to
+//! the provider cache.
 
 use jiff::Timestamp;
 use sqlx::sqlite::SqlitePool;
 
-use crate::model::{WatchTarget, Watched};
+use crate::model::{MovieWatched, WatchTarget, Watched};
 
 #[derive(Clone)]
 pub struct WatchedShows {
@@ -27,8 +27,8 @@ impl WatchedShows {
                 .bind(tv_id as i64)
                 .fetch_all(&self.pool)
                 .await?;
-        let episodes: Vec<(i64, i64)> = sqlx::query_as(
-            "SELECT season, episode FROM watched_episodes WHERE tv_id = ?
+        let episodes: Vec<(i64, i64, String)> = sqlx::query_as(
+            "SELECT season, episode, source FROM watched_episodes WHERE tv_id = ?
              ORDER BY season, episode",
         )
         .bind(tv_id as i64)
@@ -40,9 +40,14 @@ impl WatchedShows {
                 .into_iter()
                 .filter_map(|(n,)| u32::try_from(n).ok())
                 .collect(),
+            apple_tv: episodes
+                .iter()
+                .filter(|(_, _, source)| source == "apple_tv")
+                .filter_map(|(s, e, _)| Some((u32::try_from(*s).ok()?, u32::try_from(*e).ok()?)))
+                .collect(),
             episodes: episodes
                 .into_iter()
-                .filter_map(|(s, e)| Some((u32::try_from(s).ok()?, u32::try_from(e).ok()?)))
+                .filter_map(|(s, e, _)| Some((u32::try_from(s).ok()?, u32::try_from(e).ok()?)))
                 .collect(),
         })
     }
@@ -94,12 +99,110 @@ impl WatchedShows {
         };
         query.execute(&self.pool).await.map(drop)
     }
+
+    /// Marks an episode watched by `source` (e.g. "apple_tv"), keeping an
+    /// existing mark and its source.
+    pub async fn mark_episode(
+        &self,
+        tv_id: u64,
+        season: u32,
+        episode: u32,
+        source: &str,
+        at: Timestamp,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO watched_episodes (tv_id, season, episode, watched_at, source)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(tv_id as i64)
+        .bind(season)
+        .bind(episode)
+        .bind(at.as_second())
+        .bind(source)
+        .execute(&self.pool)
+        .await
+        .map(drop)
+    }
+
+    pub async fn movie(&self, movie_id: u64) -> Result<MovieWatched, sqlx::Error> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT source FROM watched_movies WHERE movie_id = ?")
+                .bind(movie_id as i64)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(MovieWatched {
+            watched: row.is_some(),
+            apple_tv: row.is_some_and(|(source,)| source == "apple_tv"),
+        })
+    }
+
+    /// Marks a movie watched or not from the web UI. Marking keeps an
+    /// existing mark and its source.
+    pub async fn set_movie(
+        &self,
+        movie_id: u64,
+        watched: bool,
+        at: Timestamp,
+    ) -> Result<(), sqlx::Error> {
+        if watched {
+            self.mark_movie(movie_id, "manual", at).await
+        } else {
+            sqlx::query("DELETE FROM watched_movies WHERE movie_id = ?")
+                .bind(movie_id as i64)
+                .execute(&self.pool)
+                .await
+                .map(drop)
+        }
+    }
+
+    /// Marks a movie watched by `source` ("manual" or "apple_tv"), keeping
+    /// an existing mark and its source.
+    pub async fn mark_movie(
+        &self,
+        movie_id: u64,
+        source: &str,
+        at: Timestamp,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO watched_movies (movie_id, watched_at, source) VALUES (?, ?, ?)",
+        )
+        .bind(movie_id as i64)
+        .bind(at.as_second())
+        .bind(source)
+        .execute(&self.pool)
+        .await
+        .map(drop)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cache::{IN_MEMORY, ProviderCache};
+
+    #[tokio::test]
+    async fn movie_marks_keep_their_source() {
+        let watched = WatchedShows::new(ProviderCache::open(IN_MEMORY).await.unwrap().pool());
+        let at = Timestamp::from_second(1_700_000_000).unwrap();
+        assert_eq!(watched.movie(105).await.unwrap(), MovieWatched::default());
+        watched.mark_movie(105, "apple_tv", at).await.unwrap();
+        watched.set_movie(105, true, at).await.unwrap();
+        let apple_tv = MovieWatched {
+            watched: true,
+            apple_tv: true,
+        };
+        assert_eq!(watched.movie(105).await.unwrap(), apple_tv);
+        assert_eq!(watched.movie(603).await.unwrap(), MovieWatched::default());
+        watched.set_movie(105, false, at).await.unwrap();
+        watched.set_movie(105, true, at).await.unwrap();
+        assert_eq!(
+            watched.movie(105).await.unwrap(),
+            MovieWatched {
+                watched: true,
+                apple_tv: false,
+            }
+        );
+    }
 
     #[tokio::test]
     async fn show_season_and_episode_marks_are_independent() {
@@ -153,7 +256,8 @@ mod tests {
             Watched {
                 show: false,
                 seasons: vec![1],
-                episodes: vec![]
+                episodes: vec![],
+                apple_tv: vec![],
             }
         );
     }

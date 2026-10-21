@@ -74,7 +74,7 @@
             {% call watch::toggle(episode_action, seen, "Episode watched", page, episode_id, "", "") %}{% endcall %}
             {% endif %}
           </div>
-          <p class="muted episode-facts">{% if let Some(day) = e.air_date_display() %}{{ day }}{% else %}Air date not announced{% endif %}{% if let Some(minutes) = e.runtime_minutes %} · {{ minutes }} min{% endif %}{% if let Some(r) = e.rating %} · <span class="episode-rating"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"> <span class="rating-score">{{ r.display() }}</span></span>{% endif %}</p>
+          <p class="muted episode-facts">{% if let Some(day) = e.air_date_display() %}{{ day }}{% else %}Air date not announced{% endif %}{% if let Some(minutes) = e.runtime_minutes %} · {{ minutes }} min{% endif %}{% if watched.from_apple_tv(*s.number, *e.number) %} · <span class="auto-marked" title="Marked watched from what played on the Apple TV">Watched on Apple TV</span>{% endif %}{% if let Some(r) = e.rating %} · <span class="episode-rating"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"> <span class="rating-score">{{ r.display() }}</span></span>{% endif %}</p>
           {% if let Some(overview) = e.overview %}
           <p class="overview"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}>{{ overview }}</p>
           {% else %}

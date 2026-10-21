@@ -97,6 +97,53 @@ item to peek at it.
 Watched marks are stored in the same SQLite database and survive restarts. If
 they can't be read, spoilers stay hidden.
 
+## Seen on Apple TV
+
+With Home Assistant set up, TV episodes played on the Apple TV are marked
+watched without a click. Set `HA_URL` (e.g. `http://homeassistant:8123`) and
+`HA_TOKEN` (a long-lived Home Assistant token for credits) in Doppler;
+`CREDITS_HA_PLAYERS` lists the `media_player` entities to read, comma
+separated (default `media_player.living_room_appletv`). Without the URL and
+token the feature is off. credits only connects out to Home Assistant; it
+still has no inbound port beyond the loopback web server.
+
+credits follows the players live over Home Assistant's WebSocket API, which
+also reports how far into the episode playback is. Each time it connects,
+it first reads each player's history from the REST API, from where the last
+read stopped (on the first run, the 10 days Home Assistant's recorder
+keeps), so time when credits wasn't running or connected is caught up as
+long as it starts at least every 10 days. If the connection drops it
+retries, waiting 5 seconds and doubling up to 5 minutes, reading the
+history on each attempt. Time spent playing adds up per episode across
+sessions. Two apps are understood:
+
+- Infuse titles episodes "New Girl - S4 ∙ E8 - Teachers".
+- Apple's TV app reports the show's name and a content ID ending in the
+  season (two digits) and episode (three): `A0178901003` is S1 E3. The
+  played duration must also fit TMDB's runtime for that episode (4 minutes
+  shorter to 8 longer), which checked out on every episode in the history.
+
+Other apps (YouTube, Music, ESPN, movies) are ignored and only totalled on
+the page. An episode counts as watched once 90% of its duration has played
+or the live position has reached 90% (skipping ahead counts), or 80% once
+a later episode of the same show has started, since players move on
+at the end credits. If Infuse doesn't report the duration, TMDB's runtime is
+used once the show is known. A row without a title continues the episode
+before it when it reports the same duration, as Infuse does after resuming.
+
+The show is matched to TMDB by exact name (ignoring case and punctuation).
+If exactly one show of that name has the episode, with a fitting runtime,
+it's used for the show's later episodes too. Otherwise the Seen on Apple TV
+page (`/playback`, linked in the footer) asks which show it is, offering
+TMDB's matches or a TMDB ID, or to ignore the show; the choice marks the
+waiting episodes and applies to later ones. Each episode is marked once:
+unmarking it by hand sticks. Auto marks are stored with `source` =
+`apple_tv` and labelled "Watched on Apple TV" on season pages and on the
+episode's page. The page shows recent episodes with how much was played,
+whether the live feed is connected and when the history was last read; the
+About page shows the connection too. If TMDB fails, matching is retried
+with the next change or read.
+
 ## To watch
 
 Movies and TV shows can be saved to a "To watch" list from their own page,
@@ -139,6 +186,8 @@ reported explicitly.
 | `/watchlist` (`?kind=movie\|tv`, `?sort=rating`, `?services=mine`) | `/api/watchlist` (same parameters) |
 | `/favorites` (`?kind=movie\|tv`, `?sort=rating`) | `/api/favorites` (same parameters) |
 | `/services` | `/api/services` |
+| `/playback` | `/api/playback` |
+| `POST /playback/decide` (form: `app`, `show`, `tv_id` or `other_id`, `action=use\|ignore`) | |
 | `POST /services` (form: one `service={provider id}` per chosen service) | |
 | `POST /movie/{id}/favorite`, `POST /tv/{id}/favorite` (form: `listed=true\|false`) | |
 | `POST /movie/{id}/watchlist`, `POST /tv/{id}/watchlist` (form: `listed=true\|false`) | |

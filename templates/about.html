@@ -9,5 +9,19 @@
   <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
   <p>Ratings via the <a href="https://www.omdbapi.com/" rel="noopener">OMDb API</a>.</p>
   <p>Where to watch data by <a href="https://www.justwatch.com/" rel="noopener">JustWatch</a>, via TMDB.</p>
+  <h2>Home Assistant</h2>
+  <div role="status">
+  {% match live.kind() %}
+  {% when "not_configured" %}
+  <p class="muted">Not set up, so episodes and movies aren't marked from the Apple TV. Set <code>HA_URL</code> and <code>HA_TOKEN</code> and restart.</p>
+  {% when "connecting" %}
+  <p class="muted">Connecting…</p>
+  {% when "connected" %}
+  <p>Connected{% if let Some(since) = live.since_label() %} since {{ since }}{% endif %}. Episodes and movies played on the Apple TV are marked as they finish.</p>
+  {% else %}
+  <p class="rating-stale">Disconnected{% if let Some(since) = live.since_label() %} since {{ since }}{% endif %}, retrying: {{ live.error() }}.</p>
+  {% endmatch %}
+  {% if live.kind() != "not_configured" %}<p><a href="/playback">Seen on Apple TV</a></p>{% endif %}
+  </div>
 </section>
 {% endblock %}

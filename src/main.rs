@@ -1,5 +1,6 @@
 use std::process::ExitCode;
 
+use credits::playback::{self, HomeAssistant};
 use credits::{Catalog, Config, app};
 use tracing_subscriber::EnvFilter;
 
@@ -32,6 +33,18 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    match &config.home_assistant {
+        Some(ha) => {
+            tracing::info!(players = ?ha.players, "marking episodes watched from Home Assistant");
+            tokio::spawn(playback::run(
+                catalog.clone(),
+                HomeAssistant::new(ha),
+                ha.players.clone(),
+            ));
+        }
+        None => tracing::info!("HA_URL or HA_TOKEN is not set; not marking episodes from Apple TV"),
+    }
 
     let listener = match tokio::net::TcpListener::bind(config.bind).await {
         Ok(listener) => listener,

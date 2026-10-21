@@ -24,7 +24,20 @@
       <div class="title-actions">
       {% call watchlist::toggle(d.kind.slug(), d.id, d.title, listed, "watchlist-toggle", page, "To watch", true) %}{% endcall %}
       {% call favorite::toggle(d.kind.slug(), d.id, d.title, favorited, "favorite-toggle", page, "Favorite", true) %}{% endcall %}
+      {% if d.kind.slug() == "movie" %}
+      <form class="watch-toggle" id="movie-watched" method="post" action="{{ page }}/watched">
+        <input type="hidden" name="watched" value="{{ !movie_watched.watched }}">
+        <button type="submit" aria-pressed="{{ movie_watched.watched }}" title="{% if movie_watched.watched %}Watched: yes{% else %}Watched: no{% endif %}">
+          {%- if movie_watched.watched %}
+          <svg class="eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          {%- else %}
+          <svg class="eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+          {%- endif %}<span>Watched</span>
+        </button>
+      </form>
+      {% endif %}
       </div>
+      {% if movie_watched.apple_tv %}<p class="muted auto-marked">Marked watched from what played on the Apple TV. <a href="/playback">Seen on Apple TV</a></p>{% endif %}
       {% if favorited.is_none() %}<p class="muted" role="status">Favorites couldn't be read. Please reload to try again.</p>{% endif %}
       <section class="ratings" aria-label="Ratings">
         {% if d.ratings.is_unavailable() %}

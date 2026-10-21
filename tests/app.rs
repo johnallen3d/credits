@@ -80,8 +80,64 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
             ),
         )
         .route(
+            "/3/search/tv",
+            get(|Query(q): Query<HashMap<String, String>>| async move {
+                let results = match q.get("query").map(String::as_str) {
+                    Some("Breaking Bad") => json!([
+                        { "id": 1396, "name": "Breaking Bad", "first_air_date": "2008-01-20",
+                          "overview": "A teacher turns to crime." }
+                    ]),
+                    Some("Dark Matter") => json!([
+                        { "id": 196322, "name": "Dark Matter", "first_air_date": "2024-05-07",
+                          "overview": "A physicist is abducted into an alternate version of his life." },
+                        { "id": 62425, "name": "Dark Matter", "first_air_date": "2015-06-12",
+                          "overview": "A spaceship crew wakes with no memory." },
+                        { "id": 334042, "name": "Dark Matter: The Official Podcast",
+                          "first_air_date": "2026-08-27" }
+                    ]),
+                    _ => json!([]),
+                };
+                Json(json!({ "results": results }))
+            }),
+        )
+        .route(
+            "/3/search/movie",
+            get(|Query(q): Query<HashMap<String, String>>| async move {
+                let results = match q.get("query").map(String::as_str) {
+                    Some("Back to the Future") => json!([
+                        { "id": 105, "title": "Back to the Future", "release_date": "1985-07-03",
+                          "overview": "Marty McFly is sent back in time." },
+                        { "id": 165, "title": "Back to the Future Part II",
+                          "release_date": "1989-11-22" }
+                    ]),
+                    Some("The Thing") => json!([
+                        { "id": 1091, "title": "The Thing", "release_date": "1982-06-25",
+                          "overview": "Researchers in Antarctica meet a shape-shifter." },
+                        { "id": 60935, "title": "The Thing", "release_date": "2011-10-12" }
+                    ]),
+                    _ => json!([]),
+                };
+                Json(json!({ "results": results }))
+            }),
+        )
+        .route(
             "/3/movie/{id}",
             get(|Path(id): Path<u64>| async move {
+                // Movies played on the Apple TV: only what matching needs.
+                let played = match id {
+                    105 => Some(("Back to the Future", "1985-07-03", 116)),
+                    1091 => Some(("The Thing", "1982-06-25", 109)),
+                    60935 => Some(("The Thing", "2011-10-12", 103)),
+                    _ => None,
+                };
+                if let Some((title, release_date, runtime)) = played {
+                    return (
+                        StatusCode::OK,
+                        Json(json!({ "id": id, "title": title, "release_date": release_date,
+                                     "runtime": runtime, "external_ids": {},
+                                     "watch/providers": { "results": {} } })),
+                    );
+                }
                 let imdb_id = match id {
                     603 => "tt0133093",
                     // Listed on OMDb with an IMDb score but no Rotten Tomatoes score.
@@ -241,6 +297,24 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
         .route(
             "/3/tv/{id}/season/{number}",
             get(|Path((id, number)): Path<(u64, u32)>| async move {
+                // Dark Matter (2024) and (2015): both have a first episode of about 48 min.
+                let runtime = match (id, number) {
+                    (196322, 1) => Some(48),
+                    (62425, 1) => Some(44),
+                    _ => None,
+                };
+                if let Some(runtime) = runtime {
+                    return (
+                        StatusCode::OK,
+                        Json(json!({
+                            "season_number": 1, "name": "Season 1", "episodes": [
+                                { "episode_number": 1, "name": "One", "runtime": runtime },
+                                { "episode_number": 2, "name": "Two",
+                                  "runtime": if id == 196322 { 58 } else { 30 } }
+                            ]
+                        })),
+                    );
+                }
                 if id != 1396 || number > 2 {
                     return (StatusCode::NOT_FOUND, Json(json!({ "status_code": 34 })));
                 }
@@ -2539,4 +2613,716 @@ async fn my_services_degrade_when_tmdb_or_storage_fail() {
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{database}{suffix}"));
     }
+}
+
+// Apple TV playback, read from a fake Home Assistant.
+
+#[derive(Clone)]
+struct FakeHa {
+    rows: Arc<std::sync::Mutex<Vec<Value>>>,
+    /// 0: answers; 401: rejects the token; other: that error status.
+    failing: Arc<AtomicUsize>,
+    /// `state_changed` event data for every WebSocket connection; `null`
+    /// closes them.
+    events: tokio::sync::broadcast::Sender<Value>,
+}
+
+impl Default for FakeHa {
+    fn default() -> Self {
+        Self {
+            rows: Arc::default(),
+            failing: Arc::default(),
+            events: tokio::sync::broadcast::channel(64).0,
+        }
+    }
+}
+
+/// Home Assistant's WebSocket API: sign in, subscribe, then events.
+async fn fake_ha_socket(state: FakeHa, mut socket: axum::extract::ws::WebSocket) {
+    use axum::extract::ws::Message;
+    let message = |v: Value| Message::Text(v.to_string().into());
+    let mut events = state.events.subscribe();
+    let _ = socket
+        .send(message(json!({ "type": "auth_required" })))
+        .await;
+    let Some(Ok(Message::Text(auth))) = socket.recv().await else {
+        return;
+    };
+    let auth: Value = serde_json::from_str(&auth).unwrap();
+    assert_eq!(auth["type"], "auth");
+    if state.failing.load(Ordering::SeqCst) == 401 || auth["access_token"] != "ha.token" {
+        let invalid = json!({ "type": "auth_invalid", "message": "Invalid access token" });
+        let _ = socket.send(message(invalid)).await;
+        return;
+    }
+    let _ = socket.send(message(json!({ "type": "auth_ok" }))).await;
+    let Some(Ok(Message::Text(subscribe))) = socket.recv().await else {
+        return;
+    };
+    let subscribe: Value = serde_json::from_str(&subscribe).unwrap();
+    assert_eq!(subscribe["type"], "subscribe_events");
+    assert_eq!(subscribe["event_type"], "state_changed");
+    let id = subscribe["id"].clone();
+    let result = json!({ "id": id, "type": "result", "success": true, "result": null });
+    let _ = socket.send(message(result)).await;
+    loop {
+        tokio::select! {
+            event = events.recv() => match event {
+                Ok(Value::Null) | Err(_) => return,
+                Ok(data) => {
+                    let event = json!({ "id": id, "type": "event", "event": {
+                        "event_type": "state_changed", "data": data } });
+                    if socket.send(message(event)).await.is_err() {
+                        return;
+                    }
+                }
+            },
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Text(text))) => {
+                    let ping: Value = serde_json::from_str(&text).unwrap();
+                    assert_eq!(ping["type"], "ping");
+                    let pong = json!({ "id": ping["id"], "type": "pong" });
+                    let _ = socket.send(message(pong)).await;
+                }
+                Some(Ok(_)) => {}
+                _ => return,
+            },
+        }
+    }
+}
+
+impl FakeHa {
+    async fn start(&self) -> String {
+        let state = self.clone();
+        let socket_state = self.clone();
+        let fake = Router::new().route(
+            "/api/websocket",
+            get(move |ws: axum::extract::ws::WebSocketUpgrade| {
+                let state = socket_state.clone();
+                async move {
+                    match state.failing.load(Ordering::SeqCst) {
+                        0 | 401 => ws.on_upgrade(move |socket| fake_ha_socket(state, socket)),
+                        status => StatusCode::from_u16(status as u16).unwrap().into_response(),
+                    }
+                }
+            }),
+        );
+        let fake = fake.route(
+            "/api/history/period/{start}",
+            get(
+                move |headers: HeaderMap, Query(q): Query<HashMap<String, String>>| {
+                    let state = state.clone();
+                    async move {
+                        let failing = state.failing.load(Ordering::SeqCst) as u16;
+                        if failing != 0 {
+                            return (StatusCode::from_u16(failing).unwrap(), Json(json!({})));
+                        }
+                        assert_eq!(
+                            headers.get("authorization").unwrap(),
+                            "Bearer ha.token",
+                            "sends the HA token"
+                        );
+                        assert_eq!(q["significant_changes_only"], "0");
+                        assert!(q.contains_key("end_time"));
+                        let rows = state.rows.lock().unwrap().clone();
+                        if q["filter_entity_id"] != "media_player.living_room_appletv" {
+                            return (StatusCode::OK, Json(json!([])));
+                        }
+                        (StatusCode::OK, Json(json!([rows])))
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    fn set_rows(&self, rows: Vec<Value>) {
+        *self.rows.lock().unwrap() = rows;
+    }
+
+    fn fail_with(&self, status: u16) {
+        self.failing.store(status as usize, Ordering::SeqCst);
+    }
+
+    /// Sends a player's new state over every WebSocket connection.
+    fn change(&self, new_state: Value) {
+        let entity_id = new_state["entity_id"].clone();
+        self.events
+            .send(json!({ "entity_id": entity_id, "old_state": null, "new_state": new_state }))
+            .unwrap();
+    }
+
+    fn disconnect(&self) {
+        self.events.send(Value::Null).unwrap();
+    }
+}
+
+/// `row` as the live feed sends it: `position` seconds into what's playing.
+fn live_row(mut row: Value, position: u32) -> Value {
+    let at = row["last_updated"].clone();
+    row["attributes"]["media_position"] = json!(position);
+    row["attributes"]["media_position_updated_at"] = at;
+    row
+}
+
+/// A history row `minutes_ago` minutes before now.
+fn ha_row(minutes_ago: i64, state: &str, attributes: Value) -> Value {
+    let at = jiff::Timestamp::now() - jiff::SignedDuration::from_mins(minutes_ago);
+    json!({ "entity_id": "media_player.living_room_appletv", "state": state,
+            "attributes": attributes, "last_changed": at.to_string(),
+            "last_updated": at.to_string() })
+}
+
+fn infuse_row(minutes_ago: i64, state: &str, title: &str, duration: u32) -> Value {
+    ha_row(
+        minutes_ago,
+        state,
+        json!({ "app_id": "com.firecore.infuse", "app_name": "Infuse", "media_title": title,
+                "media_duration": duration, "media_content_type": "video" }),
+    )
+}
+
+fn tv_app_row(
+    minutes_ago: i64,
+    state: &str,
+    title: &str,
+    content_id: &str,
+    duration: u32,
+) -> Value {
+    ha_row(
+        minutes_ago,
+        state,
+        json!({ "app_id": "com.apple.TVWatchList", "app_name": "TV", "media_title": title,
+                "media_content_id": content_id, "media_duration": duration }),
+    )
+}
+
+struct PlaybackApp {
+    t: TestApp,
+    ha: FakeHa,
+    client: credits::playback::HomeAssistant,
+    players: Vec<String>,
+}
+
+impl PlaybackApp {
+    async fn new() -> Self {
+        let ha = FakeHa::default();
+        let mut config = Config::from_lookup(|key| match key {
+            "TMDB_API_TOKEN" => Some(TOKEN.to_owned()),
+            "HA_URL" => Some("http://placeholder".to_owned()),
+            "HA_TOKEN" => Some("ha.token".to_owned()),
+            "CREDITS_DB" => Some(IN_MEMORY.to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let ha_config = config.home_assistant.as_mut().unwrap();
+        ha_config.url = ha.start().await;
+        let client = credits::playback::HomeAssistant::new(ha_config);
+        let players = ha_config.players.clone();
+        let t = build_from(config, Duration::from_secs(3600), Duration::from_secs(3600)).await;
+        Self {
+            t,
+            ha,
+            client,
+            players,
+        }
+    }
+
+    async fn sync(&self) -> Result<(), String> {
+        credits::playback::sync_once(&self.t.catalog, &self.client, &self.players).await
+    }
+
+    async fn page(&self) -> String {
+        let (status, _, body) = get_page(self.t.app(), "/playback", false).await;
+        assert_eq!(status, StatusCode::OK);
+        body
+    }
+
+    /// Follows Home Assistant live in the background, as the server does.
+    fn run(&self) {
+        tokio::spawn(credits::playback::run(
+            self.t.catalog.clone(),
+            self.client.clone(),
+            self.players.clone(),
+        ));
+    }
+
+    /// Waits until `/api/playback` passes `check`.
+    async fn wait_for(&self, what: &str, check: impl Fn(&Value) -> bool) -> Value {
+        for _ in 0..400 {
+            let (_, json) = get_json(self.t.app(), "/api/playback").await;
+            if check(&json) {
+                return json;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let (_, json) = get_json(self.t.app(), "/api/playback").await;
+        panic!("timed out waiting for {what}: {json}");
+    }
+}
+
+#[tokio::test]
+async fn playback_page_says_when_home_assistant_is_not_set_up() {
+    let body = get_page(test_app().await, "/playback", false).await.2;
+    assert!(body.contains("Home Assistant isn't set up"));
+    assert!(body.contains("Nothing yet."));
+    let (_, json) = get_json(test_app().await, "/api/playback").await;
+    assert_eq!(json["status"]["state"], "not_configured");
+    let (_, _, home) = get_page(test_app().await, "/", false).await;
+    assert!(home.contains(r#"<a href="/playback">Seen on Apple TV</a>"#));
+}
+
+#[tokio::test]
+async fn an_episode_played_to_ninety_percent_is_marked_watched() {
+    let p = PlaybackApp::new().await;
+    let pilot = "Breaking Bad - S1 ∙ E1 - Pilot";
+    // 58 min episode: 30 min, a pause, then 23 min (53 of 58 min, 91%).
+    p.ha.set_rows(vec![
+        infuse_row(120, "playing", pilot, 3480),
+        infuse_row(90, "paused", pilot, 3480),
+        infuse_row(80, "playing", pilot, 3480),
+        infuse_row(
+            57,
+            "playing",
+            "Breaking Bad - S1 ∙ E2 - Cat's in the Bag...",
+            3000,
+        ),
+        infuse_row(50, "idle", "", 0),
+        ha_row(
+            40,
+            "playing",
+            json!({ "app_id": "com.google.ios.youtube", "app_name": "YouTube" }),
+        ),
+        ha_row(10, "off", json!({})),
+    ]);
+    p.sync().await.unwrap();
+    let watched = p.t.catalog.watched(1396).await;
+    assert!(watched.episode(1, 1), "pilot marked");
+    assert!(!watched.episode(1, 2), "7 of 50 min isn't watched");
+
+    let body = p.page().await;
+    assert!(body.contains("Last read Home Assistant's history at"));
+    assert!(body.contains(r#"<a href="/tv/1396/season/1/episode/1">Breaking Bad S1 E1</a>"#));
+    assert!(body.contains("Marked watched"));
+    assert!(body.contains("Breaking Bad S1 E2"));
+    assert!(body.contains("14%"), "7 of 50 minutes");
+    assert!(body.contains("not tracked: YouTube 30 min"));
+    assert!(!body.contains("Which show or movie is this?"));
+
+    // Reading the same history again counts nothing twice.
+    p.sync().await.unwrap();
+    let (_, json) = get_json(p.t.app(), "/api/playback").await;
+    let recent = json["recent"].as_array().unwrap();
+    let e2 = recent.iter().find(|d| d["episode"] == 2).unwrap();
+    assert_eq!(e2["playing_seconds"], 7 * 60);
+    assert_eq!(e2["status"], "watching");
+    assert_eq!(json["status"]["state"], "ok");
+
+    // A manual unmark sticks: the episode was handled already.
+    p.t.catalog
+        .set_watched(
+            1396,
+            credits::model::WatchTarget::Episode {
+                season: 1,
+                number: 1,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    p.sync().await.unwrap();
+    assert!(!p.t.catalog.watched(1396).await.episode(1, 1));
+}
+
+#[tokio::test]
+async fn a_movie_played_to_ninety_percent_is_marked_watched_on_its_page() {
+    let p = PlaybackApp::new().await;
+    let movie = "Back to the Future";
+    // 116 min: 60 min, a pause, then 45 min (105 min, 90.5%).
+    p.ha.set_rows(vec![
+        infuse_row(200, "playing", movie, 6962),
+        infuse_row(140, "paused", movie, 6962),
+        infuse_row(110, "playing", movie, 6962),
+        infuse_row(65, "idle", "", 0),
+    ]);
+    p.sync().await.unwrap();
+    assert!(p.t.catalog.movie_watched(105).await.apple_tv);
+    let body = p.page().await;
+    assert!(body.contains(
+        r#"<a href="/movie/105">Back to the Future</a> <span class="muted">· movie</span>"#
+    ));
+    assert!(body.contains("Marked watched"));
+    assert!(!body.contains("Which show or movie is this?"));
+
+    let (_, _, page) = get_page(p.t.app(), "/movie/105", false).await;
+    assert!(page.contains(r#"action="/movie/105/watched""#));
+    assert!(page.contains(r#"aria-pressed="true""#));
+    assert!(page.contains("Marked watched from what played on the Apple TV."));
+
+    // Unmarking from the page sticks, and marking again is a manual mark.
+    let (status, headers) = post_form(p.t.app(), "/movie/105/watched", "watched=false").await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/movie/105");
+    p.sync().await.unwrap();
+    assert!(!p.t.catalog.movie_watched(105).await.watched);
+    post_form(p.t.app(), "/movie/105/watched", "watched=true").await;
+    let (_, _, page) = get_page(p.t.app(), "/movie/105", false).await;
+    assert!(page.contains(r#"aria-pressed="true""#));
+    assert!(!page.contains("Marked watched from what played on the Apple TV."));
+}
+
+#[tokio::test]
+async fn movies_with_one_name_wait_for_a_choice_unless_the_year_or_runtime_settles_it() {
+    let p = PlaybackApp::new().await;
+    // 107 min fits both: 1982 (109 min) and 2011 (103 min).
+    p.ha.set_rows(vec![
+        infuse_row(200, "playing", "The Thing", 6400),
+        infuse_row(90, "paused", "The Thing", 6400),
+    ]);
+    p.sync().await.unwrap();
+    let body = p.page().await;
+    assert!(body.contains("Which show or movie is this?"));
+    assert!(body.contains("2 TMDB movies named “The Thing” fit the runtime that played"));
+    assert!(body.contains(r#"<input type="radio" name="tmdb_id" value="1091">"#));
+    assert!(body.contains(r#"<a href="/movie/60935">details</a>"#));
+    assert!(body.contains("Use this movie"));
+    assert!(!body.contains("Waiting:"));
+
+    let (status, _) = post_form(
+        p.t.app(),
+        "/playback/decide",
+        "app=infuse&kind=movie&show=the+thing&action=use",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "nothing chosen");
+    let (status, _) = post_form(
+        p.t.app(),
+        "/playback/decide",
+        "app=infuse&kind=movie&show=the+thing&tmdb_id=1091&other_id=&action=use",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(p.t.catalog.movie_watched(1091).await.apple_tv);
+    assert!(!p.t.catalog.movie_watched(60935).await.watched);
+
+    // A year in the title picks the movie; a runtime that fits one does too,
+    // even with no duration reported (TMDB's runtime is used).
+    let p = PlaybackApp::new().await;
+    p.ha.set_rows(vec![
+        infuse_row(300, "playing", "The Thing (2011)", 6400),
+        infuse_row(190, "paused", "The Thing (2011)", 6400),
+        infuse_row(180, "playing", "Back to the Future", 0),
+        infuse_row(70, "paused", "Back to the Future", 0),
+    ]);
+    p.sync().await.unwrap();
+    assert!(p.t.catalog.movie_watched(60935).await.watched);
+    assert!(!p.t.catalog.movie_watched(1091).await.watched);
+    assert!(p.t.catalog.movie_watched(105).await.watched);
+}
+
+#[tokio::test]
+async fn unknown_movies_can_be_ignored() {
+    let p = PlaybackApp::new().await;
+    p.ha.set_rows(vec![
+        infuse_row(100, "playing", "Beach Trip 2019", 1800),
+        infuse_row(60, "paused", "Beach Trip 2019", 1800),
+    ]);
+    p.sync().await.unwrap();
+    let body = p.page().await;
+    assert!(body.contains("No TMDB movie is named “Beach Trip 2019”"));
+    assert!(body.contains("TMDB found no movies by that name."));
+    let (status, _) = post_form(
+        p.t.app(),
+        "/playback/decide",
+        "app=infuse&kind=movie&show=beach+trip+2019&other_id=abc&action=use",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = post_form(
+        p.t.app(),
+        "/playback/decide",
+        "app=infuse&kind=movie&show=beach+trip+2019&other_id=&action=ignore",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let body = p.page().await;
+    assert!(!body.contains("Which show or movie is this?"));
+    assert!(body.contains(">Ignored<"));
+}
+
+#[tokio::test]
+async fn ambiguous_shows_wait_for_a_choice_that_then_applies_to_later_episodes() {
+    let p = PlaybackApp::new().await;
+    p.ha.set_rows(vec![
+        tv_app_row(200, "playing", "Dark Matter", "A0052201001", 2920),
+        tv_app_row(150, "paused", "Dark Matter", "A0052201001", 2920),
+    ]);
+    p.sync().await.unwrap();
+    assert!(!p.t.catalog.watched(196322).await.episode(1, 1));
+    let body = p.page().await;
+    assert!(body.contains("Which show or movie is this?"));
+    assert!(body.contains("2 TMDB shows named “Dark Matter” fit S1 E1"));
+    assert!(body.contains("Waiting: S1 E1."));
+    assert!(body.contains(r#"<input type="radio" name="tmdb_id" value="196322">"#));
+    assert!(body.contains(r#"value="62425""#));
+    assert!(body.contains("Needs confirmation"));
+
+    let (status, _) = post_form(
+        p.t.app(),
+        "/playback/decide",
+        "app=tv&show=dark+matter&action=use",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "nothing chosen");
+
+    let (status, headers) = post_form(
+        p.t.app(),
+        "/playback/decide",
+        "app=tv&show=dark+matter&tmdb_id=196322&other_id=&action=use",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/playback");
+    assert!(p.t.catalog.watched(196322).await.episode(1, 1));
+    let body = p.page().await;
+    assert!(!body.contains("Which show or movie is this?"));
+    assert!(body.contains(r#"<a href="/tv/196322/season/1/episode/1">Dark Matter S1 E1</a>"#));
+
+    // The next episode is matched without asking.
+    p.ha.set_rows(vec![
+        tv_app_row(120, "playing", "Dark Matter", "A0052201002", 3516),
+        tv_app_row(60, "paused", "Dark Matter", "A0052201002", 3516),
+    ]);
+    p.sync().await.unwrap();
+    assert!(p.t.catalog.watched(196322).await.episode(1, 2));
+}
+
+#[tokio::test]
+async fn ignored_and_unknown_shows_are_not_marked() {
+    let p = PlaybackApp::new().await;
+    p.ha.set_rows(vec![
+        infuse_row(100, "playing", "Nowhere Show - S1 ∙ E1 - Start", 1200),
+        infuse_row(60, "paused", "Nowhere Show - S1 ∙ E1 - Start", 1200),
+    ]);
+    p.sync().await.unwrap();
+    let body = p.page().await;
+    assert!(body.contains("No TMDB show is named “Nowhere Show”"));
+    assert!(body.contains("TMDB found no shows by that name."));
+    let (status, _) = post_form(
+        p.t.app(),
+        "/playback/decide",
+        "app=infuse&show=nowhere+show&other_id=abc&action=use",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = post_form(
+        p.t.app(),
+        "/playback/decide",
+        "app=infuse&show=nowhere+show&other_id=&action=ignore",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let body = p.page().await;
+    assert!(!body.contains("Which show or movie is this?"));
+    assert!(body.contains(">Ignored<"));
+}
+
+#[tokio::test]
+async fn home_assistant_and_tmdb_failures_are_retried() {
+    let p = PlaybackApp::new().await;
+    let pilot = "Breaking Bad - S1 ∙ E1 - Pilot";
+    p.ha.set_rows(vec![
+        infuse_row(120, "playing", pilot, 3480),
+        infuse_row(60, "paused", pilot, 3480),
+    ]);
+
+    p.ha.fail_with(401);
+    assert!(p.sync().await.unwrap_err().contains("rejected the token"));
+    let body = p.page().await;
+    assert!(body.contains("Couldn't read Home Assistant's history at"));
+    assert!(body.contains("Home Assistant rejected the token (HA_TOKEN)"));
+
+    p.ha.fail_with(0);
+    p.t.tmdb.set_down(true);
+    p.sync().await.unwrap();
+    assert!(!p.t.catalog.watched(1396).await.episode(1, 1));
+    let body = p.page().await;
+    assert!(body.contains("Last read Home Assistant's history at"));
+    assert!(body.contains("TMDB couldn&#39;t be reached"));
+    assert!(body.contains("will retry"));
+
+    p.ha.fail_with(502);
+    p.t.tmdb.set_down(false);
+    let error = p.sync().await.unwrap_err();
+    assert!(error.contains("502"), "{error}");
+    assert!(
+        p.t.catalog.watched(1396).await.episode(1, 1),
+        "marked from what was already read"
+    );
+    let body = p.page().await;
+    assert!(body.contains("last read at"));
+}
+
+#[tokio::test]
+async fn credits_skipped_missing_durations_and_later_matches_still_mark() {
+    let p = PlaybackApp::new().await;
+    let pilot = "Breaking Bad - S1 ∙ E1 - Pilot";
+    p.ha.set_rows(vec![
+        // 85% of the pilot, then the next episode: the credits were skipped.
+        infuse_row(300, "playing", pilot, 3480),
+        infuse_row(
+            251,
+            "playing",
+            "Breaking Bad - S1 ∙ E2 - Cat's in the Bag...",
+            3000,
+        ),
+        infuse_row(
+            240,
+            "paused",
+            "Breaking Bad - S1 ∙ E2 - Cat's in the Bag...",
+            3000,
+        ),
+        // Infuse didn't say how long this one is; TMDB's 58 min is used.
+        infuse_row(
+            200,
+            "playing",
+            "Breaking Bad - S2 ∙ E1 - Seven Thirty-Seven",
+            0,
+        ),
+        infuse_row(
+            145,
+            "paused",
+            "Breaking Bad - S2 ∙ E1 - Seven Thirty-Seven",
+            0,
+        ),
+        // Dark Matter E1 fits two shows, E2 only one: that settles E1 too.
+        tv_app_row(140, "playing", "Dark Matter", "A0052201001", 2920),
+        tv_app_row(90, "playing", "Dark Matter", "A0052201002", 3516),
+        tv_app_row(30, "paused", "Dark Matter", "A0052201002", 3516),
+    ]);
+    p.sync().await.unwrap();
+    let bb = p.t.catalog.watched(1396).await;
+    assert!(bb.episode(1, 1), "85% and the next episode started");
+    assert!(!bb.episode(1, 2), "11 of 50 min");
+    assert!(bb.episode(2, 1), "55 of TMDB's 58 min");
+    let dm = p.t.catalog.watched(196322).await;
+    assert!(dm.episode(1, 1) && dm.episode(1, 2));
+    let body = p.page().await;
+    assert!(!body.contains("Which show or movie is this?"));
+}
+
+#[tokio::test]
+async fn eighty_percent_alone_is_not_watched() {
+    let p = PlaybackApp::new().await;
+    let pilot = "Breaking Bad - S1 ∙ E1 - Pilot";
+    p.ha.set_rows(vec![
+        infuse_row(300, "playing", pilot, 3480),
+        infuse_row(251, "paused", pilot, 3480),
+    ]);
+    p.sync().await.unwrap();
+    assert!(!p.t.catalog.watched(1396).await.episode(1, 1));
+    let (_, json) = get_json(p.t.app(), "/api/playback").await;
+    assert_eq!(json["recent"][0]["status"], "watching");
+}
+
+#[tokio::test]
+async fn live_positions_mark_episodes_and_reconnecting_catches_up() {
+    let p = PlaybackApp::new().await;
+    p.run();
+    p.wait_for("connected", |j| j["live"]["state"] == "connected")
+        .await;
+    let body = p.page().await;
+    assert!(body.contains("Following Home Assistant live since"));
+    let (_, _, about) = get_page(p.t.app(), "/about", false).await;
+    assert!(about.contains("Connected since"));
+
+    // 5 minutes played from 47 minutes in, then a skip to 55 minutes: only
+    // the live position shows the pilot was watched.
+    let pilot = "Breaking Bad - S1 ∙ E1 - Pilot";
+    p.ha.change(live_row(infuse_row(60, "playing", pilot, 3480), 2820));
+    p.ha.change(
+        json!({ "entity_id": "light.kitchen", "state": "on", "attributes": {},
+                        "last_updated": jiff::Timestamp::now().to_string() }),
+    );
+    p.ha.change(live_row(infuse_row(55, "paused", pilot, 3480), 3300));
+    let json = p
+        .wait_for("the pilot marked", |j| j["recent"][0]["status"] == "marked")
+        .await;
+    assert_eq!(json["recent"][0]["playing_seconds"], 300);
+    assert_eq!(json["recent"][0]["max_position"], 3300);
+    assert!(p.t.catalog.watched(1396).await.episode(1, 1));
+    assert!(p.page().await.contains("94%"));
+
+    // Played while the connection was down: read from the history once
+    // it's back.
+    let e2 = "Breaking Bad - S1 ∙ E2 - Cat's in the Bag...";
+    p.ha.set_rows(vec![
+        infuse_row(55, "paused", pilot, 3480),
+        infuse_row(50, "playing", e2, 3000),
+        infuse_row(3, "paused", e2, 3000),
+    ]);
+    p.ha.disconnect();
+    p.wait_for("disconnected", |j| j["live"]["state"] == "disconnected")
+        .await;
+    let body = p.page().await;
+    assert!(body.contains("Disconnected from Home Assistant since"));
+    assert!(body.contains("connection to Home Assistant lost"));
+    p.wait_for("reconnected and caught up", |j| {
+        j["live"]["state"] == "connected" && j["recent"][0]["status"] == "marked"
+    })
+    .await;
+    assert!(p.t.catalog.watched(1396).await.episode(1, 2));
+}
+
+#[tokio::test]
+async fn live_feed_problems_show_on_about_and_playback_pages() {
+    let (_, _, about) = get_page(test_app().await, "/about", false).await;
+    assert!(about.contains("Not set up, so episodes and movies aren't marked"));
+
+    let p = PlaybackApp::new().await;
+    p.ha.fail_with(401);
+    p.run();
+    let json = p
+        .wait_for("disconnected", |j| j["live"]["state"] == "disconnected")
+        .await;
+    assert_eq!(
+        json["live"]["error"],
+        "Home Assistant rejected the token (HA_TOKEN)"
+    );
+    let (_, _, about) = get_page(p.t.app(), "/about", false).await;
+    assert!(about.contains("Disconnected since"));
+    assert!(about.contains("retrying: Home Assistant rejected the token (HA_TOKEN)"));
+    let body = p.page().await;
+    assert!(body.contains("Couldn't read Home Assistant's history"));
+}
+
+#[tokio::test]
+async fn season_and_episode_pages_label_episodes_marked_from_the_apple_tv() {
+    let p = PlaybackApp::new().await;
+    let pilot = "Breaking Bad - S1 ∙ E1 - Pilot";
+    p.ha.set_rows(vec![
+        infuse_row(120, "playing", pilot, 3480),
+        infuse_row(60, "paused", pilot, 3480),
+    ]);
+    p.sync().await.unwrap();
+    p.t.catalog
+        .set_watched(
+            1396,
+            credits::model::WatchTarget::Episode {
+                season: 1,
+                number: 2,
+            },
+            true,
+        )
+        .await
+        .unwrap();
+    let (_, _, season) = get_page(p.t.app(), "/tv/1396/season/1", false).await;
+    assert_eq!(season.matches("Watched on Apple TV").count(), 1, "only E1");
+    let (_, _, episode) = get_page(p.t.app(), "/tv/1396/season/1/episode/1", false).await;
+    assert!(episode.contains("Marked watched from what played on the Apple TV"));
+    let (_, _, episode) = get_page(p.t.app(), "/tv/1396/season/1/episode/2", false).await;
+    assert!(!episode.contains("Marked watched from what played on the Apple TV"));
 }
