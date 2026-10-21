@@ -21,6 +21,7 @@ pub use app::App;
 pub use client::{Client, ClientError};
 pub use config::TuiConfig;
 
+use api::RecentKind;
 use app::{Change, Content, Request, Response, Saved, Target};
 
 /// Takes over the terminal until the user quits.
@@ -37,6 +38,7 @@ async fn event_loop(terminal: &mut DefaultTerminal, client: Client) -> io::Resul
     let (tx, mut rx) = mpsc::unbounded_channel::<(u64, Response)>();
     let mut events = EventStream::new();
     let mut app = App::new(client.base());
+    send(&client, &tx, app.load_recent());
     loop {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
         if app.quit {
@@ -71,6 +73,7 @@ fn send(client: &Client, tx: &mpsc::UnboundedSender<(u64, Response)>, request: R
     tokio::spawn(async move {
         let answer = match request {
             Request::Search { seq, query } => (seq, Response::Search(client.search(&query).await)),
+            Request::Recent { seq } => (seq, Response::Recent(client.recent().await)),
             Request::Page { seq, target } => (seq, Response::Page(fetch(&client, target).await)),
             Request::Save(change) => (0, Response::Saved(change, save(&client, change).await)),
         };
@@ -109,11 +112,20 @@ pub async fn save(client: &Client, change: Change) -> Result<Saved, ClientError>
     })
 }
 
-/// Loads the page `target` links to.
+/// Loads the page `target` links to. Titles and people then count as
+/// recently viewed; like on the web, failing to record that never fails the page.
 pub async fn fetch(client: &Client, target: Target) -> Result<Content, ClientError> {
     Ok(match target {
-        Target::Title(kind, id) => Content::Title(Box::new(client.title(kind, id).await?)),
-        Target::Person(id) => Content::Person(Box::new(client.person(id).await?)),
+        Target::Title(kind, id) => {
+            let title = client.title(kind, id).await?;
+            let _ = client.record_view(kind.into(), id).await;
+            Content::Title(Box::new(title))
+        }
+        Target::Person(id) => {
+            let person = client.person(id).await?;
+            let _ = client.record_view(RecentKind::Person, id).await;
+            Content::Person(Box::new(person))
+        }
         Target::Season(show, number) => {
             Content::Season(Box::new(client.season(show, number).await?))
         }

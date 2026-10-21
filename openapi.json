@@ -58,6 +58,123 @@
         }
       }
     },
+    "/api/recent": {
+      "get": {
+        "summary": "Recently viewed title and person pages, most recent first, as listed on\nthe home page.",
+        "operationId": "api_recent",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentViews"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Records that a title or person page was opened, as opening its web page\ndoes; the other `/api/…` reads never count. Answers with the new list.",
+        "operationId": "api_record_view",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentViews"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be read or updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/movie/{id}": {
       "get": {
         "summary": "A movie: metadata, key crew, cast, ratings and where to watch.",
@@ -2783,6 +2900,64 @@
           "unavailable"
         ]
       },
+      "RecentKind": {
+        "type": "string",
+        "description": "Which kind of page a recently viewed entry links to: \"movie\", \"tv\" or\n\"person\".",
+        "enum": [
+          "movie",
+          "tv",
+          "person"
+        ]
+      },
+      "RecentView": {
+        "type": "object",
+        "description": "A title or person page as listed under \"Recently viewed\" on the home page.",
+        "required": [
+          "kind",
+          "id",
+          "name"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RecentKind"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RecentViews": {
+        "type": "object",
+        "description": "Recently opened title and person pages, most recent first.",
+        "required": [
+          "recent"
+        ],
+        "properties": {
+          "recent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecentView"
+            }
+          }
+        }
+      },
       "SearchHit": {
         "oneOf": [
           {
@@ -3539,6 +3714,24 @@
           "no_imdb_id",
           "provider_error"
         ]
+      },
+      "ViewedBody": {
+        "type": "object",
+        "description": "A title or person page a client opened.",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RecentKind"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "WatchProvider": {
         "type": "object",

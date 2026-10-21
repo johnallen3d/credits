@@ -18,10 +18,10 @@ use crate::model::{
     Availability, Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup,
     FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
     MovieWatched, OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
-    RecentView, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup, ServiceOption,
-    ServicesDetail, ServicesState, SortRatings, TitleCredits, TitleDetail, TitleHit, TitleMarks,
-    UnavailableReason, WatchProvider, WatchTarget, Watched, WatchedMarks, WatchlistDetail,
-    WatchlistSort, WhereToWatch, WhereToWatchState,
+    RecentKind, RecentView, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup,
+    ServiceOption, ServicesDetail, ServicesState, SortRatings, TitleCredits, TitleDetail, TitleHit,
+    TitleMarks, UnavailableReason, WatchProvider, WatchTarget, Watched, WatchedMarks,
+    WatchlistDetail, WatchlistSort, WhereToWatch, WhereToWatchState,
 };
 use crate::omdb::OmdbClient;
 use crate::playback::{
@@ -107,6 +107,15 @@ pub enum WatchlistError {
     Database(#[from] sqlx::Error),
 }
 
+/// Why a page couldn't be recorded as viewed.
+#[derive(Debug, thiserror::Error)]
+pub enum RecentError {
+    #[error(transparent)]
+    Page(#[from] CatalogError),
+    #[error("recording the view failed: {0}")]
+    Database(#[from] sqlx::Error),
+}
+
 #[derive(Clone)]
 pub struct Catalog {
     tmdb: TmdbClient,
@@ -180,6 +189,22 @@ impl Catalog {
         if let Err(e) = self.recent.record(&view, Timestamp::now()).await {
             tracing::warn!(error = %e, path = view.path(), "recording recent view failed");
         }
+    }
+
+    /// Records a page that a client such as the terminal client opened from
+    /// the JSON API, looking up its name and artwork; answers with the list.
+    pub async fn view(&self, kind: RecentKind, id: u64) -> Result<Vec<RecentView>, RecentError> {
+        let view = match kind.title() {
+            Some(kind) => RecentView::of_title(&self.title_detail(kind, id).await?),
+            None => RecentView::of_person(&self.person(id, FilmographySort::Date).await?),
+        };
+        self.recent.record(&view, Timestamp::now()).await?;
+        Ok(self.recent.list().await?)
+    }
+
+    /// Recently opened title and person pages, most recent first.
+    pub async fn read_recently_viewed(&self) -> Result<Vec<RecentView>, sqlx::Error> {
+        self.recent.list().await
     }
 
     /// Recently opened title and person pages, most recent first; empty if

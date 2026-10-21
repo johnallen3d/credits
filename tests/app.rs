@@ -704,6 +704,91 @@ async fn home_page_lists_recently_viewed_titles_and_people() {
 }
 
 #[tokio::test]
+async fn json_api_lists_and_records_recently_viewed_pages() {
+    let database = temp_database("api-recent");
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, &database).await;
+    let (status, json) = get_json(t.app(), "/api/recent").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json, json!({ "recent": [] }));
+
+    get_page(t.app(), "/movie/603", false).await;
+    let (status, json) = post_json(
+        t.app(),
+        "/api/recent",
+        json!({ "kind": "person", "id": 6384 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["recent"][0]["name"], "Keanu Reeves");
+    let (_, listed) = get_json(t.app(), "/api/recent").await;
+    assert_eq!(listed, json, "answers with the new list");
+    assert_eq!(
+        json["recent"][1],
+        json!({
+            "kind": "movie",
+            "id": 603,
+            "name": "The Matrix",
+            "year": "1999",
+            "image_url": "https://img.test/t/p/w342/matrix.jpg",
+        })
+    );
+    post_json(t.app(), "/api/recent", json!({ "kind": "tv", "id": 1396 })).await;
+    let (_, _, body) = get_page(t.app(), "/", false).await;
+    let breaking_bad = body.find(r#"<a href="/tv/1396">"#).unwrap();
+    let keanu = body.find(r#"<a href="/person/6384">"#).unwrap();
+    assert!(breaking_bad < keanu, "the home page shows API views too");
+
+    let (status, _) = post_json(
+        t.app(),
+        "/api/recent",
+        json!({ "kind": "movie", "id": 404 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = post_json(
+        t.app(),
+        "/api/recent",
+        json!({ "kind": "episode", "id": 1 }),
+    )
+    .await;
+    assert!(status.is_client_error());
+    let (_, json) = get_json(t.app(), "/api/recent").await;
+    assert_eq!(json["recent"].as_array().unwrap().len(), 3);
+
+    // An unreadable list is an error, never an empty one.
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query("ALTER TABLE recently_viewed RENAME TO recently_viewed_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, json) = get_json(t.app(), "/api/recent").await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(json["error"].as_str().unwrap().contains("couldn't be read"));
+    let (status, json) = post_json(
+        t.app(),
+        "/api/recent",
+        json!({ "kind": "movie", "id": 603 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("nothing was saved")
+    );
+    drop(t);
+    pool.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
+}
+
+#[tokio::test]
 async fn about_page_carries_tmdb_and_omdb_attribution() {
     let (status, _, body) = get_page(test_app().await, "/about", false).await;
     assert_eq!(status, StatusCode::OK);
@@ -2197,7 +2282,19 @@ async fn favorites_persist_and_storage_failures_never_look_empty() {
 }
 
 async fn put_json(app: Router, uri: &str, body: Value) -> (StatusCode, Value) {
-    let request = Request::put(uri)
+    send_json(app, Request::put(uri), body).await
+}
+
+async fn post_json(app: Router, uri: &str, body: Value) -> (StatusCode, Value) {
+    send_json(app, Request::post(uri), body).await
+}
+
+async fn send_json(
+    app: Router,
+    request: axum::http::request::Builder,
+    body: Value,
+) -> (StatusCode, Value) {
+    let request = request
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .unwrap();
@@ -3685,6 +3782,7 @@ async fn fulfil(client: &tui::Client, app: &mut tui::App, request: tui::app::Req
     use tui::app::{Request, Response};
     let (seq, response) = match request {
         Request::Search { seq, query } => (seq, Response::Search(client.search(&query).await)),
+        Request::Recent { seq } => (seq, Response::Recent(client.recent().await)),
         Request::Page { seq, target } => (seq, Response::Page(tui::fetch(client, target).await)),
         Request::Save(change) => (0, Response::Saved(change, tui::save(client, change).await)),
     };
@@ -4613,6 +4711,135 @@ async fn terminal_client_toggles_to_watch_favorite_and_watched() {
     assert!(
         screen(&mut app).contains("Favorites couldn't be read, so it can't be changed; r reloads.")
     );
+    drop(t);
+    pool.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
+}
+
+#[tokio::test]
+async fn terminal_client_lists_recently_viewed_pages_on_the_empty_search_screen() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    let load = app.load_recent();
+    fulfil(&client, &mut app, load).await;
+    let empty = screen(&mut app);
+    assert!(
+        empty.contains("Pages you open will be listed here."),
+        "{empty}"
+    );
+    assert!(press(&mut app, KeyCode::Down).is_empty());
+    assert!(app.editing, "nothing to move into");
+
+    // Pages opened on the web are listed, most recent first.
+    get_page(t.app(), "/tv/1396", false).await;
+    get_page(t.app(), "/movie/603", false).await;
+    let load = app.load_recent();
+    fulfil(&client, &mut app, load).await;
+    let recent = screen(&mut app);
+    assert!(recent.contains("Recently viewed"), "{recent}");
+    let matrix = recent.find("Movie  The Matrix (1999)").expect(&recent);
+    let breaking_bad = recent.find("TV     Breaking Bad (2008)").expect(&recent);
+    assert!(matrix < breaking_bad, "{recent}");
+
+    // ↓ moves into them and Enter opens one, like search results.
+    assert!(press(&mut app, KeyCode::Down).is_empty());
+    assert!(!app.editing);
+    press(&mut app, KeyCode::Char('j'));
+    let open = press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        open.as_slice(),
+        [tui::app::Request::Page {
+            target: tui::app::Target::Title(tui::api::Kind::Tv, 1396),
+            ..
+        }]
+    ));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+
+    // Opening a page here counts too: going back lists it first.
+    let back = press(&mut app, KeyCode::Esc);
+    assert!(matches!(
+        back.as_slice(),
+        [tui::app::Request::Recent { .. }]
+    ));
+    fulfil(&client, &mut app, back.into_iter().next().unwrap()).await;
+    let recent = screen(&mut app);
+    let breaking_bad = recent.find("TV     Breaking Bad (2008)").expect(&recent);
+    let matrix = recent.find("Movie  The Matrix (1999)").expect(&recent);
+    assert!(breaking_bad < matrix, "{recent}");
+
+    // From the box, Enter opens the highlighted one.
+    press(&mut app, KeyCode::Tab);
+    assert!(app.editing);
+    let open = press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        open.as_slice(),
+        [tui::app::Request::Page {
+            target: tui::app::Target::Title(tui::api::Kind::Tv, 1396),
+            ..
+        }]
+    ));
+
+    // Typing replaces them with results; clearing the box brings them back.
+    let mut app = tui::App::new(&base);
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Backspace);
+    let load = app
+        .tick(std::time::Instant::now() + tui::app::SEARCH_DEBOUNCE)
+        .expect("an emptied box rereads the list");
+    assert!(matches!(load, tui::app::Request::Recent { .. }));
+    fulfil(&client, &mut app, load).await;
+    assert!(screen(&mut app).contains("TV     Breaking Bad (2008)"));
+}
+
+#[tokio::test]
+async fn terminal_client_shows_an_unreadable_recent_list_as_an_error() {
+    let mut app = tui::App::new("http://127.0.0.1:9");
+    let offline = tui::Client::new("http://127.0.0.1:9");
+    let load = app.load_recent();
+    fulfil(&offline, &mut app, load).await;
+    let failed = screen(&mut app);
+    assert!(
+        failed.contains("Can't reach the credits server at http://127.0.0.1:9"),
+        "{failed}"
+    );
+    assert!(failed.contains("Press Enter to try again."), "{failed}");
+    assert!(!failed.contains("Pages you open"), "{failed}");
+    let retry = press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        retry.as_slice(),
+        [tui::app::Request::Recent { .. }]
+    ));
+
+    // The server's own explanation comes through too.
+    let database = temp_database("tui-recent");
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, &database).await;
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query("ALTER TABLE recently_viewed RENAME TO recently_viewed_unavailable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    let load = app.load_recent();
+    fulfil(&client, &mut app, load).await;
+    let failed = screen(&mut app);
+    assert!(
+        failed.contains("Recently viewed pages couldn't be read"),
+        "{failed}"
+    );
+    // Opening a page still works when it can't be recorded.
+    let open = app.open(tui::app::Target::Title(tui::api::Kind::Movie, 603));
+    fulfil(&client, &mut app, open).await;
+    assert!(screen(&mut app).contains("The Matrix"));
     drop(t);
     pool.close().await;
     for suffix in ["", "-wal", "-shm"] {

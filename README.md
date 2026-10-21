@@ -52,7 +52,8 @@ theme = "rose-pine"   # optional: rose-pine (default), tokyo-night, catppuccin, 
 - Search movies, TV shows and people from one box (HTMX, live results)
 - Keyboard navigation: ↑/↓ move through results (or Recently viewed when
   the box is empty), Enter opens the highlighted item
-- Home page shows the 12 most recently viewed titles and people
+- Home page shows the 12 most recently viewed titles and people,
+  including pages opened in the terminal client
 - Movie and TV pages: poster, key crew (directors and writers; for TV,
   creators and most frequent directors), top-billed cast, season list
 - Full credits pages with the whole cast and crew by department
@@ -186,6 +187,9 @@ out to Home Assistant.
 - `credits` browses a running server over its `/api/…` JSON; no database,
   TMDB token or Doppler needed
 - Live search (debounced) for movies, TV shows and people
+- Empty search box lists the recently viewed titles and people shared
+  with the web home page; ↓/Enter move into and open them like results
+- Opening a title or person here counts as viewing it, as on the web
 - Movie and TV pages: facts, ratings, overview, where to watch (your
   services starred), key crew and top cast
 - TV pages list seasons: number, name, episode count, year, watched mark
@@ -225,8 +229,9 @@ out to Home Assistant.
   unknown, and watched marks unreadable (spoilers stay hidden)
 - Lists: unreadable lists or services shown as errors (never empty),
   titles of unknown availability, stale listings and ratings
+- Unreadable recently viewed list shown as an error, never as empty
 - Server unreachable, not found or provider errors are shown in place;
-  `r` (or Enter on a failed search) retries
+  `r` (or Enter on a failed search or recent list) retries
 - Toggle failures (server unreachable, refused save) show in a status
   line and change nothing; marks the server couldn't read show as
   unreadable (`?`) and can't be toggled
@@ -238,6 +243,7 @@ out to Home Assistant.
 | HTML | JSON |
 |------|------|
 | `/?q=…` (full page, or results fragment for HTMX) | `/api/search?q=…` |
+| `/` (Recently viewed while the box is empty) | `/api/recent` |
 | `/movie/{id}`, `/tv/{id}` | `/api/movie/{id}`, `/api/tv/{id}` |
 | `/movie/{id}/credits`, `/tv/{id}/credits` | `/api/movie/{id}/credits`, `/api/tv/{id}/credits` |
 | `/tv/{id}/season/{n}` | `/api/tv/{id}/season/{n}` |
@@ -269,6 +275,7 @@ JSON writes (same rules as the forms; answer with the new state):
 | `PUT /api/movie/{id}/favorite`, `PUT /api/tv/{id}/favorite` | `{"listed": bool}` | `marks` (+ `watched` for TV) |
 | `PUT /api/movie/{id}/watched`, `PUT /api/tv/{id}/watched` | `{"watched": bool}` | `marks` (+ `watched` for TV) |
 | `PUT /api/tv/{id}/season/{n}/watched`, `PUT /api/tv/{id}/season/{n}/episode/{e}/watched` | `{"watched": bool}` | the show's watched marks |
+| `POST /api/recent` (counts a page as viewed; `GET /api/…` reads never do) | `{"kind": "movie\|tv\|person", "id": n}` | the recently viewed list |
 
 HTML and JSON both go through `Catalog` (`src/catalog.rs`) and the types in
 `src/model.rs`.

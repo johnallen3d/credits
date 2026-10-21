@@ -169,33 +169,53 @@ pub fn person_path(id: u64) -> String {
     format!("/person/{id}")
 }
 
-/// Which kind of page a recently viewed entry links to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Which kind of page a recently viewed entry links to: "movie", "tv" or
+/// "person".
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum RecentKind {
-    Title(MediaKind),
+    Movie,
+    Tv,
     Person,
 }
 
 impl RecentKind {
     pub fn slug(self) -> &'static str {
         match self {
-            RecentKind::Title(kind) => kind.slug(),
+            RecentKind::Movie => "movie",
+            RecentKind::Tv => "tv",
             RecentKind::Person => "person",
         }
     }
 
     pub fn from_slug(slug: &str) -> Option<Self> {
         match slug {
-            "movie" => Some(RecentKind::Title(MediaKind::Movie)),
-            "tv" => Some(RecentKind::Title(MediaKind::Tv)),
             "person" => Some(RecentKind::Person),
-            _ => None,
+            _ => MediaKind::from_slug(slug).map(Self::from),
+        }
+    }
+
+    /// The title kind, or `None` for a person.
+    pub fn title(self) -> Option<MediaKind> {
+        match self {
+            RecentKind::Movie => Some(MediaKind::Movie),
+            RecentKind::Tv => Some(MediaKind::Tv),
+            RecentKind::Person => None,
+        }
+    }
+}
+
+impl From<MediaKind> for RecentKind {
+    fn from(kind: MediaKind) -> Self {
+        match kind {
+            MediaKind::Movie => RecentKind::Movie,
+            MediaKind::Tv => RecentKind::Tv,
         }
     }
 }
 
 /// A title or person page as listed under "Recently viewed" on the home page.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RecentView {
     pub kind: RecentKind,
     pub id: u64,
@@ -207,7 +227,7 @@ pub struct RecentView {
 impl RecentView {
     pub fn of_title(d: &TitleDetail) -> Self {
         Self {
-            kind: RecentKind::Title(d.kind),
+            kind: d.kind.into(),
             id: d.id,
             name: d.title.clone(),
             year: d.year.clone(),
@@ -226,9 +246,9 @@ impl RecentView {
     }
 
     pub fn path(&self) -> String {
-        match self.kind {
-            RecentKind::Title(kind) => title_path(kind, self.id),
-            RecentKind::Person => person_path(self.id),
+        match self.kind.title() {
+            Some(kind) => title_path(kind, self.id),
+            None => person_path(self.id),
         }
     }
 
@@ -237,18 +257,24 @@ impl RecentView {
     }
 
     pub fn label(&self) -> &'static str {
-        match self.kind {
-            RecentKind::Title(kind) => kind.label(),
-            RecentKind::Person => "Person",
+        match self.kind.title() {
+            Some(kind) => kind.label(),
+            None => "Person",
         }
     }
 
     pub fn missing_image_label(&self) -> &'static str {
         match self.kind {
-            RecentKind::Title(_) => "No artwork",
             RecentKind::Person => "No photo",
+            _ => "No artwork",
         }
     }
+}
+
+/// Recently opened title and person pages, most recent first.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct RecentViews {
+    pub recent: Vec<RecentView>,
 }
 
 /// Which parts of a TV show have been marked as watched. Season pages blur

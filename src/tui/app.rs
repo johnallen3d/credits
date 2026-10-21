@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::api::{
-    Episode, Kind, List, Marks, MarksUpdate, Person, SearchHit, Season, ServicesState, Title,
-    Watched,
+    Episode, Kind, List, Marks, MarksUpdate, Person, RecentView, SearchHit, Season, ServicesState,
+    Title, Watched,
 };
 use super::client::ClientError;
 
@@ -55,6 +55,7 @@ pub struct ListView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
     Search { seq: u64, query: String },
+    Recent { seq: u64 },
     Page { seq: u64, target: Target },
     Save(Change),
 }
@@ -62,6 +63,7 @@ pub enum Request {
 #[derive(Debug)]
 pub enum Response {
     Search(Result<Vec<SearchHit>, ClientError>),
+    Recent(Result<Vec<RecentView>, ClientError>),
     Page(Result<Content, ClientError>),
     Saved(Change, Result<Saved, ClientError>),
 }
@@ -165,6 +167,30 @@ pub struct Search {
     seq: u64,
     due: Option<Instant>,
     pub cursor: Cursor,
+    /// Listed while the box is empty.
+    pub recent: Recent,
+}
+
+impl Search {
+    /// Whether the box is empty, so recently viewed pages stand in for results.
+    pub fn showing_recent(&self) -> bool {
+        self.query.trim().is_empty() && self.results.is_empty() && self.error.is_none()
+    }
+
+    /// Whether what's shown is a failure that Enter retries.
+    fn failed(&self) -> bool {
+        self.error.is_some() || (self.showing_recent() && self.recent.error.is_some())
+    }
+}
+
+/// Recently viewed pages. The last list stays up while a refresh is out.
+#[derive(Debug, Default)]
+pub struct Recent {
+    pub views: Vec<RecentView>,
+    /// Why the list couldn't be read; it is then never shown as empty.
+    pub error: Option<String>,
+    pub loaded: bool,
+    seq: u64,
 }
 
 /// The help overlay scrolls independently of the page underneath it.
@@ -279,6 +305,29 @@ impl App {
                     }
                 }
             }
+            Response::Recent(result) => {
+                let recent = &mut self.search.recent;
+                if seq != recent.seq {
+                    return;
+                }
+                recent.loaded = true;
+                // The order changes underneath, so the highlight starts over
+                // at the page viewed last.
+                if self.search.showing_recent() {
+                    self.search.cursor = Cursor::default();
+                }
+                let recent = &mut self.search.recent;
+                match result {
+                    Ok(views) => {
+                        recent.views = views;
+                        recent.error = None;
+                    }
+                    Err(e) => {
+                        recent.views.clear();
+                        recent.error = Some(capitalize(&e.to_string()));
+                    }
+                }
+            }
             Response::Page(result) => {
                 if let Some(screen) = self.stack.iter_mut().find(|s| s.seq == seq) {
                     screen.load = loaded(result);
@@ -301,6 +350,13 @@ impl App {
             Some(screen) => &mut screen.cursor,
             None => &mut self.search.cursor,
         }
+    }
+
+    /// Fetches recently viewed pages for the empty search box.
+    pub fn load_recent(&mut self) -> Request {
+        let seq = self.seq();
+        self.search.recent.seq = seq;
+        Request::Recent { seq }
     }
 
     /// Opens a link from the current page.
@@ -326,7 +382,7 @@ impl App {
                 self.query_changed(now);
             }
             KeyCode::Down => {
-                if !self.search.results.is_empty() {
+                if super::ui::selected_target(self).is_some() {
                     self.editing = false;
                 }
             }
@@ -337,10 +393,10 @@ impl App {
                     self.editing = false;
                     return self.send_search().into_iter().collect();
                 }
-                if self.search.error.is_some() {
+                if self.search.failed() {
                     return self.reload().into_iter().collect();
                 }
-                if !self.search.searching && !self.search.results.is_empty() {
+                if !self.search.searching {
                     return self.open_selected().into_iter().collect();
                 }
             }
@@ -355,8 +411,11 @@ impl App {
             KeyCode::Tab | KeyCode::BackTab if on_search => self.editing = true,
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('/') => {
-                self.stack.clear();
                 self.editing = true;
+                if !self.stack.is_empty() {
+                    self.stack.clear();
+                    return vec![self.load_recent()];
+                }
             }
             KeyCode::Char('j') | KeyCode::Down => self.cursor_mut().step(1),
             KeyCode::Char('k') | KeyCode::Up => {
@@ -375,7 +434,7 @@ impl App {
                 let cursor = self.cursor_mut();
                 cursor.selected = cursor.links.saturating_sub(1);
             }
-            KeyCode::Enter if on_search && self.search.error.is_some() => {
+            KeyCode::Enter if on_search && self.search.failed() => {
                 return self.reload().into_iter().collect();
             }
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
@@ -384,6 +443,9 @@ impl App {
             KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('h') | KeyCode::Left => {
                 if self.stack.pop().is_none() {
                     self.editing = true;
+                } else if self.stack.is_empty() {
+                    // The page just left is now the most recently viewed.
+                    return vec![self.load_recent()];
                 }
             }
             KeyCode::Char('r') => return self.reload().into_iter().collect(),
@@ -782,14 +844,16 @@ impl App {
         self.search.due = None;
         let query = self.search.query.trim().to_owned();
         if query.is_empty() {
-            // Emptying the box clears the results; a fresh seq drops any in flight.
+            // Emptying the box clears the results; a fresh seq drops any in
+            // flight. Recently viewed pages show instead, freshly read.
             let seq = self.seq();
             self.search = Search {
                 query: std::mem::take(&mut self.search.query),
                 seq,
+                recent: std::mem::take(&mut self.search.recent),
                 ..Search::default()
             };
-            return None;
+            return Some(self.load_recent());
         }
         if query == self.search.answered && !self.search.searching {
             return None;

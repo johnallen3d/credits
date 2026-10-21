@@ -61,6 +61,51 @@ pub struct KnownForHit {
     pub title: String,
 }
 
+/// What a recently viewed entry links to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecentKind {
+    Movie,
+    Tv,
+    Person,
+    #[serde(other)]
+    Other,
+}
+
+impl RecentKind {
+    pub fn slug(self) -> &'static str {
+        match self {
+            RecentKind::Movie => "movie",
+            RecentKind::Tv => "tv",
+            RecentKind::Person => "person",
+            RecentKind::Other => "other",
+        }
+    }
+}
+
+impl From<Kind> for RecentKind {
+    fn from(kind: Kind) -> Self {
+        match kind {
+            Kind::Movie => RecentKind::Movie,
+            Kind::Tv => RecentKind::Tv,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RecentViews {
+    pub recent: Vec<RecentView>,
+}
+
+/// A title or person page opened on the web or here, most recent first.
+#[derive(Clone, Debug, Deserialize)]
+pub struct RecentView {
+    pub kind: RecentKind,
+    pub id: u64,
+    pub name: String,
+    pub year: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Title {
     pub kind: Kind,

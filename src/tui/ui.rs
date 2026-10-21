@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::api::{
     Availability, Credit, Episode, EpisodeRatings, KeyCrew, Kind, List, ListServices, Marks,
-    Metadata, Person, PersonCredit, Rating, RatingSource, Ratings, SearchHit, Season,
+    Metadata, Person, PersonCredit, Rating, RatingSource, Ratings, RecentKind, SearchHit, Season,
     ServicesState, SortRatings, State, Title, UnavailableReason, Watched, WhereToWatch,
 };
 use super::app::{App, Content, ListName, ListView, Load, Screen, Status, Target};
@@ -311,7 +311,7 @@ fn screen_name(screen: &Screen) -> String {
 
 fn page(app: &App, width: u16) -> Page {
     let Some(screen) = app.stack.last() else {
-        return search_page(app);
+        return search_page(app, width);
     };
     match &screen.load {
         Load::Ready(Content::Title(t)) => title_page(t, width),
@@ -342,8 +342,11 @@ fn status_page(title: String, failure: Option<&str>, width: u16) -> Page {
     page
 }
 
-fn search_page(app: &App) -> Page {
+fn search_page(app: &App, width: u16) -> Page {
     let search = &app.search;
+    if search.showing_recent() {
+        return recent_page(app, width);
+    }
     let mut page = Page::new("Results");
     if let Some(error) = &search.error {
         page.line(Line::styled(error.clone(), Style::new().fg(palette().warn)));
@@ -351,9 +354,7 @@ fn search_page(app: &App) -> Page {
         return page;
     }
     if search.results.is_empty() {
-        let text = if search.query.trim().is_empty() {
-            "Type to search movies, TV shows and people.".to_owned()
-        } else if search.searching || search.answered.is_empty() {
+        let text = if search.searching || search.answered.is_empty() {
             "Searching…".to_owned()
         } else {
             format!("No results for “{}”.", search.answered)
@@ -387,23 +388,70 @@ fn search_page(app: &App) -> Page {
                 ("Person", Target::Person(p.id), p.name.clone(), detail)
             }
         };
-        page.link(
-            Line::from(vec![
-                Span::styled(format!("  {kind:<7}"), Style::new().fg(palette().accent)),
-                Span::raw(name).bold(),
-                Span::styled(
-                    if detail.is_empty() {
-                        detail
-                    } else {
-                        format!("  {detail}")
-                    },
-                    dim(),
-                ),
-            ]),
-            target,
-        );
+        hit_link(&mut page, kind, target, name, detail);
     }
     page
+}
+
+/// The empty search box: recently viewed pages, opened like results.
+fn recent_page(app: &App, width: u16) -> Page {
+    let recent = &app.search.recent;
+    let mut page = Page::new("Recently viewed");
+    if let Some(error) = &recent.error {
+        page.warn(error.clone(), width);
+        page.line(Line::styled("Press Enter to try again.", dim()));
+        return page;
+    }
+    let mut views = recent
+        .views
+        .iter()
+        .filter_map(|v| {
+            let (kind, target) = match v.kind {
+                RecentKind::Movie => (Kind::Movie.label(), Target::Title(Kind::Movie, v.id)),
+                RecentKind::Tv => (Kind::Tv.label(), Target::Title(Kind::Tv, v.id)),
+                RecentKind::Person => ("Person", Target::Person(v.id)),
+                RecentKind::Other => return None,
+            };
+            let name = match &v.year {
+                Some(year) => format!("{} ({year})", v.name),
+                None => v.name.clone(),
+            };
+            Some((kind, target, name))
+        })
+        .peekable();
+    if views.peek().is_none() {
+        page.line(Line::styled(
+            "Type to search movies, TV shows and people.",
+            dim(),
+        ));
+        if recent.loaded {
+            page.line(Line::styled("Pages you open will be listed here.", dim()));
+        }
+        return page;
+    }
+    for (kind, target, name) in views {
+        hit_link(&mut page, kind, target, name, String::new());
+    }
+    page
+}
+
+/// A search result or recently viewed page: its kind, then its name.
+fn hit_link(page: &mut Page, kind: &str, target: Target, name: String, detail: String) {
+    page.link(
+        Line::from(vec![
+            Span::styled(format!("  {kind:<7}"), Style::new().fg(palette().accent)),
+            Span::raw(name).bold(),
+            Span::styled(
+                if detail.is_empty() {
+                    detail
+                } else {
+                    format!("  {detail}")
+                },
+                dim(),
+            ),
+        ]),
+        target,
+    );
 }
 
 fn title_page(t: &Title, width: u16) -> Page {

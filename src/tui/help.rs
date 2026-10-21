@@ -69,7 +69,7 @@ fn bindings(app: &App) -> Vec<Binding> {
     add(
         "Navigation",
         "Enter / l / →",
-        "Open highlighted link; Enter retries a failed search",
+        "Open highlighted link; Enter retries a failed search or recent list",
         browsing,
     );
     add(

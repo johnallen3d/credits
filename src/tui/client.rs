@@ -5,8 +5,8 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 
 use super::api::{
-    ApiError, Episode, Kind, List, MarksUpdate, Person, SearchHit, SearchResults, Season, Title,
-    Watched,
+    ApiError, Episode, Kind, List, MarksUpdate, Person, RecentKind, RecentView, RecentViews,
+    SearchHit, SearchResults, Season, Title, Watched,
 };
 use super::app::{ListName, ListView};
 
@@ -50,6 +50,29 @@ impl Client {
     pub async fn search(&self, query: &str) -> Result<Vec<SearchHit>, ClientError> {
         let results: SearchResults = self.get("/api/search", &[("q", query)]).await?;
         Ok(results.results)
+    }
+
+    /// Recently viewed title and person pages, most recent first.
+    pub async fn recent(&self) -> Result<Vec<RecentView>, ClientError> {
+        let views: RecentViews = self.get("/api/recent", &[]).await?;
+        Ok(views.recent)
+    }
+
+    /// Counts a title or person page as viewed, as opening it on the web does.
+    pub async fn record_view(
+        &self,
+        kind: RecentKind,
+        id: u64,
+    ) -> Result<Vec<RecentView>, ClientError> {
+        let body = serde_json::json!({ "kind": kind.slug(), "id": id });
+        let views: RecentViews = self
+            .send(
+                self.http
+                    .post(format!("{}/api/recent", self.base))
+                    .json(&body),
+            )
+            .await?;
+        Ok(views.recent)
     }
 
     pub async fn title(&self, kind: Kind, id: u64) -> Result<Title, ClientError> {

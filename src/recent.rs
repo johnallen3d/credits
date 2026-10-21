@@ -74,11 +74,10 @@ impl RecentlyViewed {
 mod tests {
     use super::*;
     use crate::cache::{IN_MEMORY, ProviderCache};
-    use crate::model::MediaKind;
 
     fn movie(id: u64) -> RecentView {
         RecentView {
-            kind: RecentKind::Title(MediaKind::Movie),
+            kind: RecentKind::Movie,
             id,
             name: format!("Movie {id}"),
             year: None,

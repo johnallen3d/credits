@@ -15,13 +15,13 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoResponses, OpenApi, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::catalog::{Catalog, CatalogError, ServicesError, WatchlistError};
+use crate::catalog::{Catalog, CatalogError, RecentError, ServicesError, WatchlistError};
 use crate::model::{
     EpisodeDetail, EpisodeWithWatched, FilmographyEntry, FilmographyGroup, FilmographySort,
-    KindFilter, MediaKind, MovieWatched, MovieWithMarks, PersonDetail, RecentView, SearchHit,
-    SeasonDetail, SeasonWithWatched, ServicesDetail, ServicesFilter, TitleCredits, TitleDetail,
-    TitleMarksUpdate, TvWithWatched, WatchTarget, Watched, WatchedMarks, WatchlistDetail,
-    WatchlistSort, title_path,
+    KindFilter, MediaKind, MovieWatched, MovieWithMarks, PersonDetail, RecentKind, RecentView,
+    RecentViews, SearchHit, SeasonDetail, SeasonWithWatched, ServicesDetail, ServicesFilter,
+    TitleCredits, TitleDetail, TitleMarksUpdate, TvWithWatched, WatchTarget, Watched, WatchedMarks,
+    WatchlistDetail, WatchlistSort, title_path,
 };
 use crate::playback::{App, Kind, LiveStatus, PlaybackDetail};
 
@@ -134,6 +134,7 @@ pub fn app(catalog: Catalog) -> Router {
 fn api() -> OpenApiRouter<Catalog> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(api_search))
+        .routes(routes!(api_recent, api_record_view))
         .routes(routes!(api_movie))
         .routes(routes!(api_tv))
         .routes(routes!(api_movie_credits))
@@ -206,6 +207,13 @@ enum WriteErrors {
 #[derive(Deserialize, ToSchema)]
 struct ListedBody {
     listed: bool,
+}
+
+/// A title or person page a client opened.
+#[derive(Deserialize, ToSchema)]
+struct ViewedBody {
+    kind: RecentKind,
+    id: u64,
 }
 
 /// Marks something watched or not.
@@ -1303,6 +1311,59 @@ async fn api_search(
         Err(e) => {
             tracing::warn!(error = %e, %query, "api search failed");
             api_error(status_for(&e), user_message(&e))
+        }
+    }
+}
+
+/// Recently viewed title and person pages, most recent first, as listed on
+/// the home page.
+#[utoipa::path(
+    get,
+    path = "/api/recent",
+    responses((status = OK, body = RecentViews), ReadError)
+)]
+async fn api_recent(State(catalog): State<Catalog>) -> Response {
+    match catalog.read_recently_viewed().await {
+        Ok(recent) => Json(RecentViews { recent }).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "api recent views read failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "recently viewed pages couldn't be read",
+            )
+        }
+    }
+}
+
+/// Records that a title or person page was opened, as opening its web page
+/// does; the other `/api/…` reads never count. Answers with the new list.
+#[utoipa::path(
+    post,
+    path = "/api/recent",
+    request_body = ViewedBody,
+    responses((status = OK, body = RecentViews), WriteErrors)
+)]
+async fn api_record_view(
+    State(catalog): State<Catalog>,
+    body: Result<Json<ViewedBody>, JsonRejection>,
+) -> Response {
+    let body = match body {
+        Ok(Json(body)) => body,
+        Err(e) => return api_error(e.status(), &e.body_text()),
+    };
+    match catalog.view(body.kind, body.id).await {
+        Ok(recent) => Json(RecentViews { recent }).into_response(),
+        Err(RecentError::Page(CatalogError::NotFound)) => api_not_found(),
+        Err(RecentError::Page(e)) => {
+            tracing::warn!(error = %e, kind = ?body.kind, id = body.id, "api view lookup failed");
+            api_error(status_for(&e), user_message(&e))
+        }
+        Err(e @ RecentError::Database(_)) => {
+            tracing::warn!(error = %e, kind = ?body.kind, id = body.id, "api view save failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "recently viewed pages couldn't be updated, so nothing was saved",
+            )
         }
     }
 }
