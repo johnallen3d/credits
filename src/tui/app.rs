@@ -297,7 +297,7 @@ impl App {
                 }
             }
             // Leaves the box even without results, so w and f can open the lists.
-            KeyCode::Tab | KeyCode::Esc => self.editing = false,
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Esc => self.editing = false,
             KeyCode::Enter => {
                 if self.search.due.is_some() {
                     self.editing = false;
@@ -318,6 +318,7 @@ impl App {
     fn page_key(&mut self, key: KeyEvent, ctrl: bool) -> Vec<Request> {
         let on_search = self.stack.is_empty();
         match key.code {
+            KeyCode::Tab | KeyCode::BackTab if on_search => self.editing = true,
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('/') => {
                 self.stack.clear();

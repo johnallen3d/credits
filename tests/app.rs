@@ -3771,6 +3771,75 @@ async fn terminal_client_searches_and_opens_titles_and_people_over_http() {
     ));
 }
 
+#[test]
+fn terminal_client_tabs_between_search_box_and_results_without_resetting_cursor() {
+    for query in ["matrix", ""] {
+        for back_to_box in [KeyCode::Tab, KeyCode::BackTab] {
+            let mut app = tui::App::new("http://localhost");
+            app.search.query = query.to_owned();
+            app.search.answered = query.to_owned();
+            app.search.results = (0..60)
+                .map(|id| {
+                    tui::api::SearchHit::Movie(tui::api::TitleHit {
+                        id,
+                        title: format!("Result {id}"),
+                        year: Some("1999".to_owned()),
+                    })
+                })
+                .collect();
+            assert!(screen(&mut app).contains("Tab/↓/Enter results"));
+            assert!(press(&mut app, KeyCode::Tab).is_empty());
+            assert!(!app.editing);
+            for _ in 0..45 {
+                press(&mut app, KeyCode::Down);
+            }
+            let results = screen(&mut app);
+            assert!(results.contains("Tab/Shift-Tab search box"));
+            let selected = app.search.cursor.selected;
+            let scroll = app.search.cursor.scroll;
+            assert_eq!(selected, 45);
+            assert!(scroll > 0, "exercise a scrolled result list");
+            let target = tui::ui::selected_target(&app);
+
+            assert!(press(&mut app, back_to_box).is_empty());
+            assert!(app.editing);
+            screen(&mut app);
+            assert_eq!(app.search.query, query);
+            assert_eq!(app.search.answered, query);
+            assert_eq!(app.search.results.len(), 60);
+            assert_eq!(app.search.cursor.selected, selected);
+            assert_eq!(app.search.cursor.scroll, scroll);
+            assert!(app.search_due().is_none(), "focus alone never searches");
+
+            assert!(press(&mut app, KeyCode::Tab).is_empty());
+            assert!(!app.editing);
+            assert_eq!(screen(&mut app), results);
+            assert_eq!(tui::ui::selected_target(&app), target);
+            assert_eq!(app.search.cursor.selected, selected);
+            assert_eq!(app.search.cursor.scroll, scroll);
+        }
+    }
+}
+
+#[test]
+fn terminal_client_tabs_handle_empty_search_but_leave_other_pages_alone() {
+    let mut app = tui::App::new("http://localhost");
+    for key in [KeyCode::Tab, KeyCode::BackTab] {
+        assert!(press(&mut app, key).is_empty());
+        assert!(!app.editing);
+        assert!(press(&mut app, key).is_empty());
+        assert!(app.editing);
+        assert!(app.search.query.is_empty());
+    }
+
+    app.open(tui::app::Target::Person(6384));
+    for key in [KeyCode::Tab, KeyCode::BackTab] {
+        assert!(press(&mut app, key).is_empty());
+        assert!(!app.editing);
+        assert_eq!(app.stack.len(), 1);
+    }
+}
+
 #[tokio::test]
 async fn terminal_client_shows_degraded_and_failed_states() {
     // No OMDb key: ratings are unavailable but the page still renders.

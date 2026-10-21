@@ -225,8 +225,9 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hints = match app.stack.last().map(|s| s.target) {
         _ if app.editing => {
-            "type to search · ↓/Enter results · Esc then w/f lists · Ctrl-U clear · Ctrl-C quit"
+            "type to search · Tab/↓/Enter results · Esc then w/f lists · Ctrl-U clear · Ctrl-C quit"
         }
+        None => "j/k move · Enter open · Tab/Shift-Tab search box · w/f lists · r reload · q quit",
         Some(Target::List(ListName::Watchlist, _)) => {
             "j/k move · Enter open · b/F/x toggle · t/o kind/sort · m services · f Favorites · Esc back · q quit"
         }

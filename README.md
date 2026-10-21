@@ -210,8 +210,10 @@ out to Home Assistant.
 - Lists filter and sort like the web page: `t` cycles All / Movies / TV,
   `o` toggles Added / Rating, `m` toggles On my services (To watch, once
   services are chosen)
-- Keys: type to search, ↓/Enter into results, Esc leaves the box, j/k or
-  ↑/↓ move, Enter/l open, Esc/Backspace/h back, `/` new search, `w`/`f`
+- Keys: type to search, Tab/↓/Enter into results, Tab/Shift-Tab back to
+  the box (keeps query and selected result; Tab returns to that row),
+  Esc leaves the box, j/k or ↑/↓ move, Enter/l open, Esc/Backspace/h back,
+  `/` new search, `w`/`f`
   lists, `b`/`F`/`x`/`X` toggles, `r` reload, `s` peek, `[`/`]`
   previous/next episode, `q` or Ctrl-C quit
 - Shows the server's degraded states: stale details, ratings, episode
