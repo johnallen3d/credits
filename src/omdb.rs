@@ -163,7 +163,11 @@ impl OmdbClient {
             Err(OmdbError::QuotaExhausted)
         } else if status == StatusCode::UNAUTHORIZED || lowered.contains("api key") {
             Err(OmdbError::Unauthorized)
-        } else if lowered.contains("incorrect imdb id") || lowered.contains("not found") {
+        } else if lowered.contains("incorrect imdb id")
+            || lowered.contains("not found")
+            // OMDb's answer for identifiers it has no record of, e.g. recent titles.
+            || lowered.contains("error getting data")
+        {
             Ok(None)
         } else {
             Err(OmdbError::Unavailable(format!("OMDb error: {error}")))

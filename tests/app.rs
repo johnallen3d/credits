@@ -148,6 +148,8 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                     603 => "tt0133093",
                     // Listed on OMDb with an IMDb score but no Rotten Tomatoes score.
                     6060 => "tt6060000",
+                    // Unknown to OMDb, which answers "Error getting data.".
+                    4040 => "tt4040000",
                     _ => return (StatusCode::NOT_FOUND, Json(json!({ "status_code": 34 }))),
                 };
                 let watch_providers = if id == 603 {
@@ -516,6 +518,9 @@ impl FakeOmdb {
                                 StatusCode::UNAUTHORIZED,
                                 Json(json!({ "Response": "False", "Error": "Request limit reached!" })),
                             );
+                        }
+                        Some("tt4040000") => {
+                            json!({ "Response": "False", "Error": "Error getting data." })
                         }
                         _ => json!({ "Response": "False", "Error": "Incorrect IMDb ID." }),
                     };
@@ -1087,6 +1092,21 @@ async fn ratings_are_cached_between_requests() {
     get_page(t.app(), "/movie/603", false).await;
     get_json(t.app(), "/api/movie/603").await;
     assert_eq!(t.omdb.calls(), 1);
+}
+
+#[tokio::test]
+async fn titles_omdb_has_no_data_for_are_cached_as_unrated() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (status, json) = get_json(t.app(), "/api/movie/4040").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ratings"]["state"], "fresh");
+    assert!(json["ratings"]["preferred"].is_null());
+    get_json(t.app(), "/api/movie/4040").await;
+    assert_eq!(
+        t.omdb.calls(),
+        1,
+        "the miss is cached, not retried per view"
+    );
 }
 
 #[tokio::test]
