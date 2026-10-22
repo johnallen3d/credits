@@ -94,10 +94,24 @@ footer.site .site-nav { flex-wrap: wrap; align-items: center; }
 .original { margin: 0; color: var(--muted); }
 .ratings { margin: .75rem 0; }
 .rating { margin: 0; }
-.rating.preferred { font-size: 1.15rem; }
-.rating.other { font-size: .9rem; color: var(--muted); }
-.rating-score { display: inline-block; min-width: 4.5rem; font-variant-numeric: tabular-nums; }
-.rating-source { width: 2.4rem; height: 1.1rem; object-fit: contain; object-position: left center; vertical-align: -.2rem; }
+/* Score rings: every rating is the same circle, filled to its score as a
+   percentage in the source's color, with the source's mark on its corner.
+   --p comes from the markup; the size scales with --ring. */
+.ring { --ring: 1.75rem; --tone: var(--muted); position: relative; display: inline-grid; place-items: center; flex: none; width: var(--ring); height: var(--ring); vertical-align: middle; }
+.ring::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(var(--tone) calc(var(--p) * 1%), var(--line) 0);
+  --hole: calc(100% - max(2.5px, var(--ring) * .11)); mask: radial-gradient(farthest-side, transparent var(--hole), #000 calc(var(--hole) + .5px)); }
+.ring.rt-fresh { --tone: #fa320a; }
+.ring.rt-rotten { --tone: #0ac855; }
+.ring.imdb { --tone: #f5c518; }
+.ring-score { font-size: calc(var(--ring) * .4); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; color: var(--fg); }
+.ring-mark { position: absolute; right: calc(var(--ring) * -.16); bottom: calc(var(--ring) * -.12); width: calc(var(--ring) * .45); height: calc(var(--ring) * .45); object-fit: contain; }
+.ring.imdb .ring-mark { width: calc(var(--ring) * .56); right: calc(var(--ring) * -.26); }
+.rating-rings { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.75rem; }
+.ratings .rating, .ratings .episode-rating { display: flex; align-items: center; gap: .75rem; }
+.ratings .rating .ring { --ring: 2.25rem; }
+.ratings .rating.preferred .ring { --ring: 3rem; }
+.rating-label { display: flex; flex-direction: column; line-height: 1.25; font-size: .95rem; }
+.rating-label .muted { font-size: .8rem; }
 .rating-stale { margin: .25rem 0 0; font-size: .85rem; color: var(--error-fg); }
 .where-to-watch .region { font-size: .9rem; font-weight: 400; }
 .where-to-watch summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; list-style: none; }
@@ -167,8 +181,6 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .sort-note { margin: 0 0 .4rem; font-size: .9rem; }
 .sort-note:has(+ :not(.sort-note)) { margin-bottom: 1rem; }
 .credit-rating { white-space: nowrap; margin-left: .25rem; }
-.credit-rating .rating-source { width: 2rem; height: .95rem; vertical-align: -.15rem; }
-.credit-rating .rating-score { min-width: 0; }
 .filmography { list-style: none; padding: 0; margin: 0 0 1.5rem; }
 .filmography li { display: grid; grid-template-columns: 3.5rem 46px 1fr; align-items: center; gap: .5rem .75rem; padding: .35rem 0; border-bottom: 1px solid var(--line); }
 .filmography > li > a { display: block; line-height: 0; text-decoration: none; }
@@ -188,8 +200,10 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .episode-facts { margin: .15rem 0 .4rem; font-size: .9rem; }
 .episode-facts .auto-marked { white-space: nowrap; }
 .episode-rating { white-space: nowrap; }
-.episode-rating .rating-source { width: 2rem; height: .95rem; vertical-align: -.15rem; }
-.episode-rating .rating-score { min-width: 0; color: var(--fg); }
+.episode-facts .ring { --ring: 1.5rem; margin: 0 .2rem; }
+/* Beside service logos (22px squares) a 24px circle reads as the same size;
+   the gap clears the ring's corner mark. */
+.watchlist .credit-rating .ring { --ring: 1.5rem; margin-right: .4rem; }
 .episode-ratings-note, .section > .rating-stale { margin: 0 0 .75rem; font-size: .9rem; }
 /* Spoilers: blurred until watched; focus (click or tab) peeks at one. Eye toggles flip watched marks. */
 .watch-state { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; margin: 0 0 1rem; }
@@ -210,15 +224,11 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .filmography.with-toggle li { grid-template-columns: 3.5rem 46px 1fr auto; }
 .filmography .watchlist-toggle button { border-color: transparent; background: none; }
 .filmography li.empty-row { display: block; padding: .75rem 0; }
-/* Person page: title over kind and role, then a rating column. Scores are
-   right-aligned in a fixed width so they end on one line, and each source
-   icon is centred in the same fixed box. */
-.filmography.columns li { grid-template-columns: 3.5rem 46px 1fr 7rem auto; }
+/* Person page: title over kind and role, then a column of score rings. */
+.filmography.columns li { grid-template-columns: 3.5rem 46px 1fr 3.5rem auto; }
 .credit-title .credit-role { display: block; margin-top: .15rem; font-size: .9rem; }
 .credit-role .badge { margin-left: 0; margin-right: .15rem; font-size: .7rem; }
-.filmography.columns .credit-rating { margin-left: 0; display: flex; align-items: center; gap: .35rem; }
-.filmography.columns .credit-rating .rating-score { width: 3.6rem; flex: none; text-align: right; }
-.filmography.columns .credit-rating .rating-source { width: 2rem; flex: none; object-position: center; }
+.filmography.columns .credit-rating { margin-left: 0; display: flex; justify-content: center; }
 .bookmark.inline { width: 1em; height: 1em; vertical-align: -.15em; }
 .watchlist h1 { margin: 0 0 1rem; }
 .watched-detail { display: block; font-size: .85rem; }
@@ -227,8 +237,8 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .episode-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
 .watch-toggle .icon-only { padding: .3rem; }
 .watched-mark { color: var(--person); }
-.spoiler .overview:not(.muted), .spoiler .episode-rating .rating-score { filter: blur(5px); user-select: none; cursor: pointer; transition: filter .15s; }
-.spoiler .overview:focus, .spoiler .episode-rating:focus .rating-score { filter: none; user-select: auto; cursor: auto; }
+.spoiler .overview:not(.muted), .spoiler .episode-rating :is(.ring, .rating-note) { filter: blur(5px); user-select: none; cursor: pointer; transition: filter .15s; }
+.spoiler .overview:focus, .spoiler .episode-rating:focus :is(.ring, .rating-note) { filter: none; user-select: auto; cursor: auto; }
 .spoiler .overview:focus, .spoiler .episode-rating:focus { outline: none; }
 .still { flex: none; width: 200px; height: 113px; object-fit: cover; border-radius: 4px; background: var(--line); }
 .still.missing { display: flex; align-items: center; justify-content: center; font-size: .8rem; color: var(--muted); }
@@ -264,7 +274,7 @@ body:has(.detail #movie-watched [aria-pressed="true"], .detail #seasons > .watch
   /* Too narrow for a rating column: the score goes under the role. */
   .filmography.columns li { grid-template-columns: 3.5rem 46px 1fr auto; }
   .filmography.columns li > :not(.credit-title, .credit-rating) { grid-row: span 2; }
-  .filmography.columns .credit-rating { grid-column: 3; grid-row: 2; align-self: start; }
+  .filmography.columns .credit-rating { grid-column: 3; grid-row: 2; align-self: start; justify-content: flex-start; margin-top: .35rem; }
   .filmography.columns .credit-title { align-self: end; }
   .credit-list li { padding: .35rem 0; }
   .episode { display: block; padding: .6rem; }

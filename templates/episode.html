@@ -32,7 +32,7 @@
         {% if e.episode_ratings.is_unavailable() %}
         <p class="rating muted">{{ e.episode_ratings.unavailable_message() }}</p>
         {% else if let Some(r) = e.rating %}
-        <p class="rating preferred"><span class="episode-rating"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}><strong class="rating-score">{{ r.display() }}</strong></span> <img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"></p>
+        <p class="rating preferred"><span class="episode-rating"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}>{% include "_rating.html" %}<span class="rating-label">{{ r.source.label() }}<span class="muted rating-note">{{ r.note() }}</span></span></span></p>
         {% else %}
         <p class="rating preferred muted">No IMDb score</p>
         {% endif %}

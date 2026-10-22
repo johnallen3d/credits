@@ -1035,14 +1035,14 @@ async fn every_theme_in_the_picker_has_a_stylesheet_palette() {
 async fn movie_prefers_rotten_tomatoes_and_tv_prefers_imdb() {
     let (_, _, body) = get_page(test_app().await, "/movie/603", false).await;
     assert!(body.contains(
-        r#"<p class="rating preferred"><strong class="rating-score">83%</strong><img class="rating-source" src="/static/rt-fresh.svg" alt="Rotten Tomatoes: Fresh" title="Rotten Tomatoes: Fresh"></p>"#
+        r#"<p class="rating preferred"><span class="ring rt-fresh" style="--p:83" role="img" aria-label="Rotten Tomatoes: Fresh, 83%" title="Rotten Tomatoes: Fresh, 83%"><span class="ring-score" aria-hidden="true">83</span><img class="ring-mark" src="/static/rt-fresh.svg" alt=""></span><span class="rating-label">Rotten Tomatoes<span class="muted">Fresh</span></span></p>"#
     ));
-    assert!(body.contains(r#"<span class="rating-score">8.7/10</span><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb">"#));
+    assert!(body.contains(r#"<p class="rating other"><span class="ring imdb" style="--p:87" role="img" aria-label="IMDb, 8.7/10""#));
     assert!(!body.contains("73/100"), "unsupported sources are dropped");
 
     let (_, _, body) = get_page(test_app().await, "/tv/1396", false).await;
     assert!(body.contains(
-        r#"<strong class="rating-score">9.5/10</strong><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb"> <span class="muted">(2,300,000 votes)</span>"#
+        r#"aria-label="IMDb, 9.5/10" title="IMDb, 9.5/10"><span class="ring-score" aria-hidden="true">95</span><img class="ring-mark" src="/static/imdb.svg" alt=""></span><span class="rating-label">IMDb<span class="muted">9.5/10 · 2,300,000 votes</span></span>"#
     ));
 }
 
@@ -1052,7 +1052,7 @@ async fn missing_preferred_score_is_unavailable_not_substituted() {
     assert!(body.contains("No Rotten Tomatoes score"));
     assert!(
         body.contains(
-            r#"<p class="rating other"><span class="rating-score">6.1/10</span><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb"></p>"#
+            r#"<p class="rating other"><span class="ring imdb" style="--p:61" role="img" aria-label="IMDb, 6.1/10""#
         )
     );
 
@@ -1099,7 +1099,7 @@ async fn expired_ratings_are_refetched_and_served_stale_when_omdb_fails() {
     t.omdb.set_down(true);
     let (status, _, body) = get_page(t.app(), "/tv/1396", false).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains(r#"<strong class="rating-score">9.5/10</strong>"#));
+    assert!(body.contains(r#"aria-label="IMDb, 9.5/10""#));
     assert!(body.contains("Couldn't refresh ratings; showing scores from "));
 
     let (_, json) = get_json(t.app(), "/api/tv/1396").await;
@@ -1366,7 +1366,7 @@ async fn episode_page_shows_episode_cast_and_crew() {
     );
     // Unwatched: score and summary blurred.
     assert!(body.contains(r#"class="meta spoiler" id="episode""#));
-    assert!(body.contains(r#"<strong class="rating-score">9.0/10</strong>"#));
+    assert!(body.contains(r#"aria-label="IMDb, 9.0/10""#));
     assert!(body.contains(r#"<p class="overview" tabindex="0" title="Spoiler: select to peek">A chemistry teacher is diagnosed.</p>"#));
 
     let (status, json) = get_json(t.app(), "/api/tv/1396/season/1/episode/1").await;
@@ -1480,7 +1480,7 @@ async fn season_page_shows_imdb_episode_ratings() {
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
     let (status, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains(r#"58 min · <span class="episode-rating" tabindex="0" title="Spoiler: select to peek"><img class="rating-source" src="/static/imdb.svg" alt="IMDb" title="IMDb"> <span class="rating-score">9.0/10</span></span>"#));
+    assert!(body.contains(r#"58 min · <span class="episode-rating" tabindex="0" title="Spoiler: select to peek"><span class="ring imdb" style="--p:90" role="img" aria-label="IMDb, 9.0/10""#));
     assert_eq!(
         body.matches("episode-rating\"").count(),
         1,
@@ -1509,7 +1509,7 @@ async fn episode_rating_problems_never_break_the_season_page() {
     t.omdb.set_down(true);
     let (status, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains(r#"<span class="rating-score">9.0/10</span>"#));
+    assert!(body.contains(r#"aria-label="IMDb, 9.0/10""#));
     assert!(body.contains("Couldn't refresh episode ratings; showing scores from "));
 
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
@@ -1907,8 +1907,8 @@ async fn filmography_sorts_by_rotten_tomatoes_then_imdb() {
         r##"<a href="/person/6384?sort=rating#filmography-heading" aria-current="true">Rating</a>"##
     ));
     assert!(body.contains(r##"<a href="/person/6384#filmography-heading">Date</a>"##));
-    assert!(body.contains(r#"<span class="rating-score">83%</span><img class="rating-source" src="/static/rt-fresh.svg" alt="Rotten Tomatoes: Fresh" title="Rotten Tomatoes: Fresh">"#));
-    assert!(body.contains(r#"<span class="rating-score">9.5/10</span>"#));
+    assert!(body.contains(r#"<span class="ring rt-fresh" style="--p:83" role="img" aria-label="Rotten Tomatoes: Fresh, 83%" title="Rotten Tomatoes: Fresh, 83%"><span class="ring-score" aria-hidden="true">83</span><img class="ring-mark" src="/static/rt-fresh.svg" alt=""></span>"#));
+    assert!(body.contains(r#"aria-label="IMDb, 9.5/10""#));
     assert!(body.contains("Credits without a Rotten Tomatoes or IMDb score are listed last"));
     let filmography = &body[body.find(r#"id="filmography-heading""#).unwrap()..];
     let bb = filmography.find(r#"<a href="/tv/1396">"#).unwrap();
@@ -1921,7 +1921,7 @@ async fn filmography_sorts_by_rotten_tomatoes_then_imdb() {
             r##"<a href="/person/6384#filmography-heading" aria-current="true">Date</a>"##
         )
     );
-    assert!(body.contains(r#"<span class="rating-score">83%</span>"#));
+    assert!(body.contains(r#"aria-label="Rotten Tomatoes: Fresh, 83%""#));
     assert!(!body.contains("are listed last"));
 }
 
@@ -1959,7 +1959,7 @@ async fn rating_sort_is_cached_and_survives_provider_problems() {
     t.omdb.set_down(true);
     let (_, _, body) = get_page(t.app(), "/person/6384?sort=rating", false).await;
     assert!(body.contains("Couldn't refresh some ratings; using scores from as early as "));
-    assert!(body.contains(r#"<span class="rating-score">83%</span>"#));
+    assert!(body.contains(r#"aria-label="Rotten Tomatoes: Fresh, 83%""#));
 
     let t = build(TOKEN, None, Duration::from_secs(3600)).await;
     let (status, _, body) = get_page(t.app(), "/person/6384?sort=rating", false).await;
@@ -2691,7 +2691,7 @@ async fn watchlist_sorts_by_rating_and_reports_problems() {
     assert_eq!(json["titles"][1]["rating"]["source"], "rotten_tomatoes");
     let (_, _, body) = get_page(t.app(), "/watchlist?sort=rating", false).await;
     assert!(body.contains(r#"<a href="/watchlist?sort=rating" aria-current="true">Rating</a>"#));
-    assert!(body.contains(r#"<span class="rating-score">83%</span>"#));
+    assert!(body.contains(r#"aria-label="Rotten Tomatoes: Fresh, 83%""#));
     assert!(!body.contains("listed last"), "every title is scored");
 
     let t = build(TOKEN, None, Duration::from_secs(3600)).await;
@@ -4450,19 +4450,19 @@ async fn terminal_client_browses_seasons_and_episodes_hiding_spoilers() {
     assert!(season.contains("Jan 20, 2008"), "{season}");
     assert!(season.contains("58m"), "{season}");
     assert!(
-        season.contains("IMDb ▒▒▒▒▒▒"),
+        season.contains("◌  ▒▒ IMDb"),
         "unwatched score hidden: {season}"
     );
-    assert!(!season.contains("9.0/10"), "{season}");
+    assert!(!season.contains(" 90 IMDb"), "{season}");
     assert!(season.contains("s peeks the highlighted one"), "{season}");
 
     // s peeks the highlighted episode, and again hides it.
     press(&mut app, KeyCode::Char('s'));
     let peeked = screen(&mut app);
-    assert!(peeked.contains("IMDb 9.0/10"), "{peeked}");
+    assert!(peeked.contains("●  90 IMDb"), "{peeked}");
     assert!(peeked.contains("peeking"), "{peeked}");
     press(&mut app, KeyCode::Char('s'));
-    assert!(!screen(&mut app).contains("9.0/10"));
+    assert!(!screen(&mut app).contains(" 90 IMDb"));
 
     // Enter opens the episode, its summary hidden until peeked.
     let open = press(&mut app, KeyCode::Enter);
@@ -4489,7 +4489,7 @@ async fn terminal_client_browses_seasons_and_episodes_hiding_spoilers() {
         peeked.contains("A chemistry teacher is diagnosed."),
         "{peeked}"
     );
-    assert!(peeked.contains("IMDb 9.0/10"), "{peeked}");
+    assert!(peeked.contains("│ 90 │  9.0/10"), "{peeked}");
 
     // Enter on a credited person opens them.
     let open = press(&mut app, KeyCode::Enter);
@@ -4525,7 +4525,7 @@ async fn terminal_client_browses_seasons_and_episodes_hiding_spoilers() {
     let reload = press(&mut app, KeyCode::Char('r'));
     fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
     let season = screen(&mut app);
-    assert!(season.contains("IMDb 9.0/10"), "{season}");
+    assert!(season.contains("●  90 IMDb"), "{season}");
     assert!(season.contains("✓"), "{season}");
 
     // Unreadable marks keep everything hidden, and say so.
@@ -4544,7 +4544,7 @@ async fn terminal_client_browses_seasons_and_episodes_hiding_spoilers() {
         season.contains("Watched marks couldn't be read"),
         "{season}"
     );
-    assert!(!season.contains("9.0/10"), "{season}");
+    assert!(!season.contains(" 90 IMDb"), "{season}");
     let open = app.open(tui::app::Target::Episode(1396, 1, 1));
     fulfil(&client, &mut app, open).await;
     let episode = screen(&mut app);
@@ -4624,7 +4624,7 @@ async fn terminal_client_shows_to_watch_and_favorites_with_filters() {
     let list = screen(&mut app);
     assert!(!list.contains("Breaking Bad"), "{list}");
     assert!(
-        list.contains("The Matrix  ■♥·  RT 83%      ★ Netflix"),
+        list.contains("The Matrix  ■♥·  ◕  83 RT    ★ Netflix"),
         "{list}"
     );
     let tv = press(&mut app, KeyCode::Char('t'));
@@ -4728,7 +4728,7 @@ async fn terminal_client_lists_say_when_ratings_are_stale_or_missing() {
     let reload = press(&mut app, KeyCode::Char('r'));
     fulfil(&client, &mut app, reload.into_iter().next().unwrap()).await;
     let list = screen(&mut app);
-    assert!(list.contains("The Matrix  □♥·  RT 83%"), "{list}");
+    assert!(list.contains("The Matrix  □♥·  ◕  83 RT"), "{list}");
     assert!(
         list.contains("Couldn't refresh some ratings; using scores from as early as "),
         "{list}"
@@ -4848,11 +4848,11 @@ async fn terminal_client_toggles_to_watch_favorite_and_watched() {
     // On a season, x marks the highlighted episode, revealing its score.
     let open = app.open(tui::app::Target::Season(1396, 1));
     fulfil(&client, &mut app, open).await;
-    assert!(screen(&mut app).contains("IMDb ▒▒▒▒▒▒"));
+    assert!(screen(&mut app).contains("◌  ▒▒ IMDb"));
     let save = press(&mut app, KeyCode::Char('x'));
     fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
     let season = screen(&mut app);
-    assert!(season.contains("IMDb 9.0/10"), "{season}");
+    assert!(season.contains("●  90 IMDb"), "{season}");
     assert!(season.contains("Episode marked watched."), "{season}");
     assert!(t.catalog.watched(1396).await.episode(1, 1));
 
@@ -5449,7 +5449,7 @@ async fn terminal_client_filters_and_sorts_person_filmography() {
         page.contains("Breaking Bad") && page.contains("The Matrix"),
         "{page}"
     );
-    assert!(page.contains("RT 83%"), "date order is rated too");
+    assert!(page.contains("◕  83 RT"), "date order is rated too");
 
     // The kind filter is applied here, without a request.
     assert!(press(&mut app, KeyCode::Char('l')).len() == 1);
@@ -5498,7 +5498,7 @@ async fn terminal_client_filters_and_sorts_person_filmography() {
     let rated = filmography(&mut app);
     assert!(rated.contains("Sort Date · Rating"), "{rated}");
     assert!(
-        rated.contains("IMDb 9.5/10") && rated.contains("RT 83%"),
+        rated.contains("●  95 IMDb") && rated.contains("◕  83 RT"),
         "{rated}"
     );
     assert!(
@@ -5518,7 +5518,7 @@ async fn terminal_client_filters_and_sorts_person_filmography() {
         stale.contains("Couldn't refresh some ratings; using scores from as early as"),
         "{stale}"
     );
-    assert!(stale.contains("RT 83%"), "{stale}");
+    assert!(stale.contains("◕  83 RT"), "{stale}");
 
     // Without a ratings key, credits stay in date order.
     let base = serve(build(TOKEN, None, Duration::from_secs(3600)).await.app()).await;

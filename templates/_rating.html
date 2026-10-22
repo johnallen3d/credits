@@ -1,0 +1,2 @@
+{# A score ring for `r`: filled to the score as a percentage in the source's color, the source's mark on its corner. -#}
+<span class="ring {{ r.tone() }}" style="--p:{{ r.ring_percent() }}" role="img" aria-label="{{ r.ring_label() }}" title="{{ r.ring_label() }}"><span class="ring-score" aria-hidden="true">{{ r.ring_percent() }}</span><img class="ring-mark" src="{{ r.icon() }}" alt=""></span>

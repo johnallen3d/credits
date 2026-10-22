@@ -346,6 +346,19 @@ impl Rating {
             _ => format!("{:.1}/{}", self.score, self.scale),
         }
     }
+
+    /// The score as a whole percentage, the figure in a score ring:
+    /// IMDb's 9.2/10 is 92.
+    pub fn percent(&self) -> u32 {
+        (self.score / f64::from(self.scale.max(1)) * 100.0)
+            .round()
+            .clamp(0.0, 100.0) as u32
+    }
+
+    /// Rotten Tomatoes calls a Tomatometer of 60% or more "Fresh".
+    pub fn is_fresh(&self) -> bool {
+        self.source == RatingSource::RottenTomatoes && self.score >= 60.0
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

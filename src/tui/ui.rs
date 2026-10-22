@@ -25,7 +25,7 @@ const NAME_COLUMN: usize = 28;
 const TITLE_COLUMN: usize = 40;
 const EPISODE_COLUMN: usize = 36;
 /// Stands in for an unwatched episode's score.
-const HIDDEN_SCORE: &str = "▒▒▒▒▒▒";
+const HIDDEN_SCORE: &str = "▒▒";
 
 #[derive(Default)]
 pub struct Page {
@@ -668,11 +668,17 @@ fn season_page(s: &Season, screen: &Screen, width: u16) -> Page {
             Span::raw(format!("{}  ", pad(&e.title, column))),
             Span::styled(format!("{aired:<14}{minutes:<7} "), dim()),
         ];
-        spans.push(match &e.rating {
-            Some(r) if shown => Span::raw(format!("{:<12}", score(r))),
-            Some(_) => Span::styled(format!("{:<12}", format!("IMDb {HIDDEN_SCORE}")), dim()),
-            None => Span::raw(" ".repeat(12)),
-        });
+        match &e.rating {
+            Some(r) if shown => spans.extend(short_score(r)),
+            Some(_) => spans.push(Span::styled(
+                format!(
+                    "{:<SCORE_WIDTH$}",
+                    format!("{HIDDEN_RING} {HIDDEN_SCORE:>3} IMDb")
+                ),
+                dim(),
+            )),
+            None => spans.push(Span::raw(" ".repeat(SCORE_WIDTH))),
+        }
         if seen {
             let mark = if watched.is_some_and(|w| w.from_apple_tv(s.number, e.number)) {
                 "✓ Apple TV"
@@ -753,11 +759,16 @@ fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
         ));
     } else {
         match &e.rating {
-            Some(r) if shown => page.line(Line::raw(format!("  {}", score(r))).bold()),
-            Some(_) => page.line(Line::styled(
-                format!("  IMDb {HIDDEN_SCORE}  hidden until watched; s peeks"),
-                dim(),
-            )),
+            Some(r) if shown => ring_blocks(&mut page, &[ring_block(r)], width),
+            Some(r) => ring_blocks(
+                &mut page,
+                &[RingBlock {
+                    ring: big_ring(None),
+                    label: r.source.label().to_owned(),
+                    note: "Hidden until watched; s peeks".to_owned(),
+                }],
+                width,
+            ),
             None => page.line(Line::styled("  No IMDb score", dim())),
         }
         episode_ratings_notes(&mut page, &e.episode_ratings, "ratings", width);
@@ -797,11 +808,6 @@ fn episode_page(e: &Episode, screen: &Screen, width: u16) -> Page {
 
 fn watched_episode(watched: Option<&Watched>, season: u32, number: u32) -> bool {
     watched.is_some_and(|w| w.episode(season, number))
-}
-
-/// An episode's IMDb score, like `IMDb 9.0/10`.
-fn score(r: &Rating) -> String {
-    format!("{} {}", r.source.label(), r.display())
 }
 
 fn episode_ratings_message(r: &EpisodeRatings) -> &'static str {
@@ -977,23 +983,21 @@ fn credit_rows(page: &mut Page, credits: &[PersonCredit]) {
         if let Some(n) = c.episode_count {
             role = join_dot(&role, &plural(n, "ep"));
         }
-        page.link(
-            Line::from(vec![
-                Span::styled(format!("  {year:<4}  "), dim()),
-                Span::styled(
-                    format!("{:<5} ", c.kind.label()),
-                    Style::new().fg(palette().accent),
-                ),
-                Span::raw(format!("{}  ", pad(&c.title, column))),
-                Span::raw(match &c.rating {
-                    Some(r) => format!("{:<12}", short_score(r)),
-                    None if rated => " ".repeat(12),
-                    None => String::new(),
-                }),
-                Span::styled(role, dim()),
-            ]),
-            Target::Title(c.kind, c.id),
-        );
+        let mut spans = vec![
+            Span::styled(format!("  {year:<4}  "), dim()),
+            Span::styled(
+                format!("{:<5} ", c.kind.label()),
+                Style::new().fg(palette().accent),
+            ),
+            Span::raw(format!("{}  ", pad(&c.title, column))),
+        ];
+        match &c.rating {
+            Some(r) => spans.extend(short_score(r)),
+            None if rated => spans.push(Span::raw(" ".repeat(SCORE_WIDTH))),
+            None => {}
+        }
+        spans.push(Span::styled(role, dim()));
+        page.link(Line::from(spans), Target::Title(c.kind, c.id));
     }
 }
 
@@ -1081,7 +1085,7 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
             spans.push(Span::raw("  "));
         }
         if let Some(r) = &e.rating {
-            spans.push(Span::raw(format!("{:<12}", short_score(r))));
+            spans.extend(short_score(r));
         }
         if let Some(a) = &e.availability {
             spans.extend(availability(a));
@@ -1355,13 +1359,146 @@ fn sort_ratings_notes(page: &mut Page, r: &SortRatings, order: Order, width: u16
     }
 }
 
-/// A list row's score, like `RT 94%` or `IMDb 8.7/10`.
-fn short_score(r: &Rating) -> String {
+/// Columns a row's score takes, padding included: `◕  83 RT    `.
+const SCORE_WIDTH: usize = 12;
+/// The ring of a score that's hidden until the episode is watched.
+const HIDDEN_RING: char = '◌';
+
+/// A row's score ring, like `◕  83 RT`: a circle filled to the nearest
+/// quarter of the score as a percentage, in the source's color, then the
+/// percentage and source, padded to `SCORE_WIDTH`.
+fn short_score(r: &Rating) -> Vec<Span<'static>> {
     let source = match r.source {
         RatingSource::RottenTomatoes => "RT",
         other => other.label(),
     };
-    format!("{source} {}", r.display())
+    let quarter = ['○', '◔', '◑', '◕', '●'][(r.percent() as usize + 12) / 25];
+    vec![
+        Span::styled(quarter.to_string(), Style::new().fg(tone(r))),
+        Span::raw(format!(" {:>3} ", r.percent())).bold(),
+        Span::styled(format!("{source:<w$}", w = SCORE_WIDTH - 6), dim()),
+    ]
+}
+
+/// A score ring's color: Rotten Tomatoes fresh or rotten, or IMDb.
+fn tone(r: &Rating) -> ratatui::style::Color {
+    match r.source {
+        RatingSource::RottenTomatoes if r.is_fresh() => palette().rt_fresh,
+        RatingSource::RottenTomatoes => palette().rt_rotten,
+        _ => palette().imdb,
+    }
+}
+
+/// A three-line score ring for title and episode pages:
+///
+/// ```text
+/// ╭────╮
+/// │ 83 │
+/// ╰────╯
+/// ```
+///
+/// The border fills clockwise from the top middle in the source's color,
+/// in proportion to the score, as the web's ring does; the rest stays dim.
+/// `None` draws an empty ring with the score hidden.
+fn big_ring(r: Option<&Rating>) -> [Vec<Span<'static>>; 3] {
+    const TOP: [&str; 6] = ["╭", "─", "─", "─", "─", "╮"];
+    const BOTTOM: [&str; 6] = ["╰", "─", "─", "─", "─", "╯"];
+    // Border cells clockwise from the top middle: (row, column).
+    let mut order = Vec::with_capacity(14);
+    order.extend((3..6).map(|x| (0, x)));
+    order.push((1, 5));
+    order.extend((0..6).rev().map(|x| (2, x)));
+    order.push((1, 0));
+    order.extend((0..3).map(|x| (0, x)));
+    let filled = r.map_or(0, |r| (r.percent() as usize * order.len() + 50) / 100);
+    let on = Style::new().fg(r.map_or(palette().dim, tone)).bold();
+    let style = |row: usize, x: usize| {
+        if order[..filled].contains(&(row, x)) {
+            on
+        } else {
+            dim()
+        }
+    };
+    let edge = |row: usize, cells: [&'static str; 6]| -> Vec<Span<'static>> {
+        cells
+            .iter()
+            .enumerate()
+            .map(|(x, c)| Span::styled(*c, style(row, x)))
+            .collect()
+    };
+    let middle = match r {
+        Some(r) => Span::raw(format!("{:^4}", r.percent())).bold(),
+        None => Span::styled(format!("{HIDDEN_SCORE:^4}"), dim()),
+    };
+    [
+        edge(0, TOP),
+        vec![
+            Span::styled("│", style(1, 0)),
+            middle,
+            Span::styled("│", style(1, 5)),
+        ],
+        edge(2, BOTTOM),
+    ]
+}
+
+/// A big ring with its source and a note beside it.
+struct RingBlock {
+    ring: [Vec<Span<'static>>; 3],
+    label: String,
+    note: String,
+}
+
+/// A rating's ring, named, with IMDb's own score and votes or the
+/// Tomatometer verdict as the note, as on the web.
+fn ring_block(r: &Rating) -> RingBlock {
+    let note = match r.source {
+        RatingSource::RottenTomatoes if r.is_fresh() => "Fresh".to_owned(),
+        RatingSource::RottenTomatoes => "Rotten".to_owned(),
+        _ => match r.votes {
+            Some(votes) => format!("{} · {} votes", r.display(), thousands(votes)),
+            None => r.display(),
+        },
+    };
+    RingBlock {
+        ring: big_ring(Some(r)),
+        label: r.source.label().to_owned(),
+        note,
+    }
+}
+
+/// Rings side by side, or stacked when they don't fit across `width`.
+fn ring_blocks(page: &mut Page, blocks: &[RingBlock], width: u16) {
+    const INDENT: &str = "  ";
+    const RING: usize = 6;
+    const GAP: usize = 4;
+    let text = |b: &RingBlock| b.label.width().max(b.note.width());
+    let across = INDENT.len()
+        + blocks.iter().map(|b| RING + 2 + text(b)).sum::<usize>()
+        + GAP * blocks.len().saturating_sub(1);
+    let rows: Vec<&[RingBlock]> = if across <= width as usize {
+        vec![blocks]
+    } else {
+        blocks.chunks(1).collect()
+    };
+    for row in rows {
+        for line in 0..3 {
+            let mut spans = vec![Span::raw(INDENT)];
+            for (i, b) in row.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw(" ".repeat(GAP)));
+                }
+                spans.extend(b.ring[line].iter().cloned());
+                let (words, style) = match line {
+                    0 => (b.label.as_str(), Style::new().bold()),
+                    1 => (b.note.as_str(), dim()),
+                    _ => ("", Style::new()),
+                };
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(format!("{words:<w$}", w = text(b)), style));
+            }
+            page.line(Line::from(spans));
+        }
+    }
 }
 
 /// The user's services that include a title, starred as on title pages.
@@ -1414,31 +1551,19 @@ fn ratings(page: &mut Page, r: &Ratings, width: u16) {
         page.line(Line::styled(format!("  {message}"), dim()));
         return;
     }
-    match &r.preferred {
-        Some(p) => {
-            let mut spans = vec![
-                Span::raw(format!("  {:<8}", p.display())).bold(),
-                Span::raw(p.source.label()),
-            ];
-            if let Some(votes) = p.votes {
-                spans.push(Span::styled(
-                    format!(" ({} votes)", thousands(votes)),
-                    dim(),
-                ));
-            }
-            page.line(Line::from(spans));
-        }
-        None => page.line(Line::styled(
-            format!("  No {} score", r.preferred_source.label()),
-            dim(),
-        )),
-    }
-    for other in &r.others {
+    if r.preferred.is_none() {
         page.line(Line::styled(
-            format!("  {:<8}{}", other.display(), other.source.label()),
+            format!("  No {} score", r.preferred_source.label()),
             dim(),
         ));
     }
+    let blocks: Vec<RingBlock> = r
+        .preferred
+        .iter()
+        .chain(&r.others)
+        .map(ring_block)
+        .collect();
+    ring_blocks(page, &blocks, width);
     if r.state == State::Stale {
         let day = fetched_day(&r.fetched_at)
             .map(|d| format!("; showing scores from {d}"))

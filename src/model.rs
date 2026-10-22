@@ -1632,6 +1632,40 @@ impl Rating {
         self.score / f64::from(self.scale.max(1)) * 100.0
     }
 
+    /// `percent` as a whole number, the figure inside a score ring: IMDb's
+    /// one decimal makes 9.2/10 exactly 92.
+    pub fn ring_percent(&self) -> u32 {
+        self.percent().round().clamp(0.0, 100.0) as u32
+    }
+
+    /// The ring's color class: the source, and for Rotten Tomatoes the verdict.
+    pub fn tone(&self) -> &'static str {
+        match self.source {
+            RatingSource::Imdb => "imdb",
+            RatingSource::RottenTomatoes if self.is_fresh() => "rt-fresh",
+            RatingSource::RottenTomatoes => "rt-rotten",
+        }
+    }
+
+    /// Accessible name and tooltip for a ring, with the score in its own
+    /// form: "Rotten Tomatoes: Fresh, 83%" or "IMDb, 9.2/10".
+    pub fn ring_label(&self) -> String {
+        format!("{}, {}", self.icon_label(), self.display())
+    }
+
+    /// The line under a title page's source name: IMDb's own score and
+    /// votes ("8.7/10 · 2,300,000 votes"), or the Tomatometer verdict.
+    pub fn note(&self) -> String {
+        match self.source {
+            RatingSource::RottenTomatoes if self.is_fresh() => "Fresh".to_owned(),
+            RatingSource::RottenTomatoes => "Rotten".to_owned(),
+            RatingSource::Imdb => match self.votes_display() {
+                Some(votes) => format!("{} · {votes} votes", self.display()),
+                None => self.display(),
+            },
+        }
+    }
+
     /// The score a credit is sorted by: Rotten Tomatoes, falling back to IMDb.
     pub fn for_sorting(ratings: &Ratings) -> Option<Rating> {
         let scores = || ratings.preferred.iter().chain(&ratings.others);

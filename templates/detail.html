@@ -43,14 +43,16 @@
         {% if d.ratings.is_unavailable() %}
         <p class="rating muted">{{ d.ratings.unavailable_message() }}</p>
         {% else %}
+        <div class="rating-rings">
         {% if let Some(r) = d.ratings.preferred %}
-        <p class="rating preferred"><strong class="rating-score">{{ r.display() }}</strong><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}">{% if let Some(votes) = r.votes_display() %} <span class="muted">({{ votes }} votes)</span>{% endif %}</p>
+        <p class="rating preferred">{% include "_rating.html" %}<span class="rating-label">{{ r.source.label() }}<span class="muted">{{ r.note() }}</span></span></p>
         {% else %}
         <p class="rating preferred muted">No {{ d.ratings.preferred_source.label() }} score</p>
         {% endif %}
         {% for r in d.ratings.others %}
-        <p class="rating other"><span class="rating-score">{{ r.display() }}</span><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}"></p>
+        <p class="rating other">{% include "_rating.html" %}<span class="rating-label">{{ r.source.label() }}<span class="muted">{{ r.note() }}</span></span></p>
         {% endfor %}
+        </div>
         {% if d.ratings.is_stale() %}
         <p class="rating-stale">Couldn't refresh ratings{% if let Some(day) = d.ratings.fetched_on() %}; showing scores from {{ day }}{% endif %}.</p>
         {% endif %}

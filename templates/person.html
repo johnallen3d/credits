@@ -80,7 +80,7 @@
           <span class="year">{% if let Some(year) = e.year %}{{ year }}{% else %}TBA{% endif %}</span>
           <a href="{{ e.path() }}" tabindex="-1" aria-hidden="true">{% if let Some(url) = e.poster_url %}<img class="poster thumb" src="{{ url }}" alt="" loading="lazy" width="46" height="69">{% else %}<span class="poster thumb missing">No artwork</span>{% endif %}</a>
           <span class="credit-title"><a href="{{ e.path() }}">{{ e.title }}</a><span class="credit-role muted"><span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if let Some(role) = e.role %} {% if g.is_acting() %}as {% endif %}{{ role }}{% endif %}{% if let Some(eps) = e.episodes_label() %} · {{ eps }}{% endif %}</span></span>
-          <span class="credit-rating">{% if let Some(r) = e.rating %}<span class="rating-score">{{ r.display() }}</span><img class="rating-source" src="{{ r.icon() }}" alt="{{ r.icon_label() }}" title="{{ r.icon_label() }}">{% endif %}</span>
+          <span class="credit-rating">{% if let Some(r) = e.rating %}{% include "_rating.html" %}{% endif %}</span>
           <div class="title-actions">
           {% call watchlist::toggle(e.kind.slug(), e.id, e.title, self.is_listed(e), crate::web::watchlist_toggle_id(e), self.back_to(e), "", true) %}{% endcall %}
           {% call favorite::toggle(e.kind.slug(), e.id, e.title, self.is_favorite(e), crate::web::favorite_toggle_id(e), self.favorite_back_to(e), "", true) %}{% endcall %}
