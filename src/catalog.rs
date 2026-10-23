@@ -18,11 +18,12 @@ use crate::model::{
     Availability, Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup,
     FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
     MovieWatched, OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
-    RecentKind, RecentView, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup,
-    ServiceOption, ServicesDetail, ServicesState, ShowProgress, SortRatings, TitleCredits,
-    TitleDetail, TitleHit, TitleMarks, UnavailableReason, WatchProvider, WatchTarget, Watched,
-    WatchedList, WatchedMarks, WatchedSort, WatchedSource, WatchedTitle, WatchlistDetail,
-    WatchlistSort, WhereToWatch, WhereToWatchState, hide_cast_episode_counts,
+    RecentKind, RecentView, ReleaseDate, ReleaseKind, Releases, SearchHit, SeasonDetail,
+    SeasonSummary, Service, ServiceGroup, ServiceOption, ServicesDetail, ServicesState,
+    ShowProgress, SortRatings, TitleCredits, TitleDetail, TitleHit, TitleMarks, UnavailableReason,
+    WatchProvider, WatchTarget, Watched, WatchedList, WatchedMarks, WatchedSort, WatchedSource,
+    WatchedTitle, WatchlistDetail, WatchlistSort, WhereToWatch, WhereToWatchState,
+    hide_cast_episode_counts, local_today,
 };
 use crate::omdb::OmdbClient;
 use crate::playback::{
@@ -1364,7 +1365,7 @@ impl Catalog {
 
     async fn movie_raw(&self, id: u64) -> Result<(tmdb::Movie, Metadata), CatalogError> {
         self.cached_if(format!("movie/{id}"), self.tmdb.movie(id), |m| {
-            m.watch_providers.is_some()
+            m.watch_providers.is_some() && m.release_dates.is_some()
         })
         .await
     }
@@ -1429,6 +1430,12 @@ impl Catalog {
     fn movie(&self, mut m: tmdb::Movie, ratings: Ratings, metadata: Metadata) -> TitleDetail {
         let people = Summary::from(self.movie_people(&m));
         let where_to_watch = self.where_to_watch(m.watch_providers.take(), metadata);
+        let releases = releases(
+            &self.watch_region,
+            m.release_dates.take().unwrap_or_default(),
+            m.release_date.as_deref(),
+            local_today(),
+        );
         TitleDetail {
             kind: MediaKind::Movie,
             id: m.id,
@@ -1440,6 +1447,7 @@ impl Catalog {
             status: non_empty(m.status),
             genres: m.genres.into_iter().map(|g| g.name).collect(),
             runtime_minutes: m.runtime.filter(|r| *r > 0),
+            releases,
             seasons: None,
             episodes: None,
             poster_url: self.image(POSTER_SIZE, m.poster_path),
@@ -1470,6 +1478,7 @@ impl Catalog {
             status: non_empty(t.status),
             genres: t.genres.into_iter().map(|g| g.name).collect(),
             runtime_minutes: None,
+            releases: None,
             seasons: t.number_of_seasons,
             episodes: t.number_of_episodes,
             poster_url: self.image(POSTER_SIZE, t.poster_path),
@@ -2024,6 +2033,66 @@ fn is_add_on(name: &str) -> bool {
     ADD_ON_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
 }
 
+/// `region`'s theatrical, digital and physical dates and certification, or
+/// the movie's primary date when the region lists none of those dates.
+fn releases(
+    region: &str,
+    all: tmdb::ReleaseDates,
+    primary: Option<&str>,
+    today: jiff::civil::Date,
+) -> Option<Releases> {
+    let listed: Vec<(u8, jiff::civil::Date, Option<String>)> = all
+        .results
+        .into_iter()
+        .filter(|r| r.iso_3166_1.eq_ignore_ascii_case(region))
+        .flat_map(|r| r.release_dates)
+        .filter_map(|r| {
+            let date = r.release_date.as_deref()?.get(..10)?.parse().ok()?;
+            Some((r.kind?, date, non_empty(r.certification)))
+        })
+        .collect();
+    let earliest = |kind: u8| {
+        listed
+            .iter()
+            .filter(|(k, _, _)| *k == kind)
+            .map(|(_, d, _)| *d)
+            .min()
+    };
+    let release = |kind, date: jiff::civil::Date| ReleaseDate {
+        kind,
+        date: date.to_string(),
+        upcoming: date > today,
+    };
+    let mut dates: Vec<ReleaseDate> = [
+        (ReleaseKind::Theatrical, earliest(3).or_else(|| earliest(2))),
+        (ReleaseKind::Digital, earliest(4)),
+        (ReleaseKind::Physical, earliest(5)),
+    ]
+    .into_iter()
+    .filter_map(|(kind, date)| Some(release(kind, date?)))
+    .collect();
+    if dates.is_empty()
+        && let Some(date) = primary.and_then(|d| d.parse().ok())
+    {
+        dates.push(release(ReleaseKind::Primary, date));
+    }
+    // The theatrical rating, else whichever release carries one.
+    let certification = [3, 2]
+        .into_iter()
+        .find_map(|kind| {
+            listed
+                .iter()
+                .find(|(k, _, c)| *k == kind && c.is_some())
+                .and_then(|(_, _, c)| c.clone())
+        })
+        .or_else(|| listed.iter().find_map(|(_, _, c)| c.clone()));
+    (!dates.is_empty() || certification.is_some()).then(|| Releases {
+        region: region.to_owned(),
+        certification,
+        dates,
+    })
+}
+
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.trim().is_empty())
 }
@@ -2082,6 +2151,71 @@ mod tests {
         assert_eq!(options.iter().filter(|(g, _)| *g == Popular).count(), 10);
         assert_eq!(options.iter().filter(|(g, _)| *g == More).count(), 3);
         assert!(!options.iter().any(|(_, n)| n.contains("Channel")));
+    }
+
+    #[test]
+    fn releases_pick_the_regions_earliest_dates_and_fall_back_to_primary() {
+        let all: tmdb::ReleaseDates = serde_json::from_value(serde_json::json!({ "results": [
+            { "iso_3166_1": "US", "release_dates": [
+                { "type": 1, "release_date": "2026-09-01T00:00:00.000Z", "certification": "" },
+                { "type": 2, "release_date": "2026-10-09T00:00:00.000Z", "certification": "" },
+                { "type": 3, "release_date": "2026-11-20T00:00:00.000Z", "certification": "" },
+                { "type": 3, "release_date": "2026-10-16T00:00:00.000Z", "certification": "PG-13" },
+                { "type": 4, "release_date": "2026-09-30T00:00:00.000Z", "certification": "R" },
+                { "type": 5, "release_date": "bad", "certification": "" }
+            ] },
+            { "iso_3166_1": "GB", "release_dates": [
+                { "type": 6, "release_date": "2027-03-01T00:00:00.000Z", "certification": "12A" }
+            ] }
+        ]}))
+        .unwrap();
+        let today = "2026-10-01".parse().unwrap();
+        let us = releases("US", all, Some("2026-09-01"), today).unwrap();
+        assert_eq!(us.region, "US");
+        assert_eq!(
+            us.certification.as_deref(),
+            Some("PG-13"),
+            "the theatrical rating"
+        );
+        let dates: Vec<_> = us
+            .dates
+            .iter()
+            .map(|d| (d.kind, d.date.as_str(), d.upcoming))
+            .collect();
+        assert_eq!(
+            dates,
+            [
+                (ReleaseKind::Theatrical, "2026-10-16", true),
+                (ReleaseKind::Digital, "2026-09-30", false),
+            ],
+            "earliest wide release; unparseable dates dropped"
+        );
+
+        let limited: tmdb::ReleaseDates = serde_json::from_value(serde_json::json!({ "results": [
+            { "iso_3166_1": "US", "release_dates": [
+                { "type": 2, "release_date": "2026-10-09T00:00:00.000Z" }
+            ] }
+        ]}))
+        .unwrap();
+        let limited = releases("US", limited, None, today).unwrap();
+        assert_eq!(limited.dates[0].kind, ReleaseKind::Theatrical);
+        assert_eq!(limited.dates[0].date, "2026-10-09");
+
+        let gb: tmdb::ReleaseDates = serde_json::from_value(serde_json::json!({ "results": [
+            { "iso_3166_1": "GB", "release_dates": [
+                { "type": 6, "release_date": "2027-03-01T00:00:00.000Z", "certification": "12A" }
+            ] }
+        ]}))
+        .unwrap();
+        let gb = releases("GB", gb, Some("2026-09-01"), today).unwrap();
+        assert_eq!(gb.certification.as_deref(), Some("12A"));
+        assert_eq!(gb.dates.len(), 1, "TV airings don't count");
+        assert_eq!(gb.dates[0].kind, ReleaseKind::Primary);
+        assert_eq!(gb.dates[0].date, "2026-09-01");
+        assert!(!gb.dates[0].upcoming);
+
+        assert!(releases("US", Default::default(), None, today).is_none());
+        assert!(releases("US", Default::default(), Some(""), today).is_none());
     }
 
     #[test]

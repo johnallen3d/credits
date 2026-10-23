@@ -133,6 +133,7 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; }
+.facts dd.upcoming { color: var(--accent); }
 
 .about { padding-bottom: 2rem; }
 .about h2 { font-size: 1.1rem; margin-top: 2rem; }

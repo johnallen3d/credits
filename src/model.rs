@@ -526,6 +526,8 @@ pub struct TitleDetail {
     pub genres: Vec<String>,
     /// Movies only.
     pub runtime_minutes: Option<u32>,
+    /// Movies only; `None` when TMDB has no dates at all.
+    pub releases: Option<Releases>,
     /// TV only.
     pub seasons: Option<u32>,
     /// TV only.
@@ -558,6 +560,80 @@ impl TitleDetail {
 
     pub fn has_more_credits(&self) -> bool {
         self.cast_total > self.cast.len() || self.crew_total > 0
+    }
+}
+
+/// When a movie comes out in the configured region, from TMDB.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct Releases {
+    /// The ISO 3166-1 region the dates and certification are for.
+    pub region: String,
+    /// The region's age rating, like "PG-13".
+    pub certification: Option<String>,
+    /// In theaters, digital, then physical, each its earliest date. When the
+    /// region has none of those, just TMDB's primary release date.
+    pub dates: Vec<ReleaseDate>,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ReleaseDate {
+    pub kind: ReleaseKind,
+    /// "2010-07-16".
+    pub date: String,
+    /// Whether the date is after today.
+    pub upcoming: bool,
+}
+
+impl ReleaseDate {
+    pub fn label(&self) -> &'static str {
+        self.kind.label(self.upcoming)
+    }
+
+    /// "Jul 16, 2010", or "Coming Oct 16" for a date still to come.
+    pub fn display(&self) -> String {
+        release_day(&self.date, local_today())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseKind {
+    /// Wide theatrical, or limited when there is no wide release.
+    Theatrical,
+    Digital,
+    Physical,
+    /// TMDB's primary release date, used when the region has no dates.
+    Primary,
+}
+
+impl ReleaseKind {
+    pub fn label(self, upcoming: bool) -> &'static str {
+        match self {
+            ReleaseKind::Theatrical => "In theaters",
+            ReleaseKind::Digital => "Digital",
+            ReleaseKind::Physical => "Physical",
+            ReleaseKind::Primary if upcoming => "Release",
+            ReleaseKind::Primary => "Released",
+        }
+    }
+}
+
+/// Today's date in the local time zone.
+pub fn local_today() -> jiff::civil::Date {
+    Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::system())
+        .date()
+}
+
+/// A release date as "Jul 16, 2010", or "Coming Oct 16" once `today` is
+/// before it, with the year only when it isn't this year's.
+pub fn release_day(date: &str, today: jiff::civil::Date) -> String {
+    match date.parse::<jiff::civil::Date>() {
+        Ok(d) if d > today && d.year() == today.year() => {
+            format!("Coming {}", d.strftime("%b %-d"))
+        }
+        Ok(d) if d > today => format!("Coming {}", d.strftime("%b %-d, %Y")),
+        _ => display_date(date),
     }
 }
 
@@ -1874,6 +1950,16 @@ impl EpisodeRatings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_days_read_as_coming_until_they_pass() {
+        let today = "2026-10-01".parse().unwrap();
+        assert_eq!(release_day("2010-07-16", today), "Jul 16, 2010");
+        assert_eq!(release_day("2026-10-01", today), "Oct 1, 2026");
+        assert_eq!(release_day("2026-10-16", today), "Coming Oct 16");
+        assert_eq!(release_day("2027-01-08", today), "Coming Jan 8, 2027");
+        assert_eq!(release_day("soon", today), "soon");
+    }
 
     #[test]
     fn seasons_collapse_into_runs_with_specials_last() {

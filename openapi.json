@@ -3022,6 +3022,64 @@
           }
         }
       },
+      "ReleaseDate": {
+        "type": "object",
+        "required": [
+          "kind",
+          "date",
+          "upcoming"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ReleaseKind"
+          },
+          "date": {
+            "type": "string",
+            "description": "\"2010-07-16\"."
+          },
+          "upcoming": {
+            "type": "boolean",
+            "description": "Whether the date is after today."
+          }
+        }
+      },
+      "ReleaseKind": {
+        "type": "string",
+        "enum": [
+          "theatrical",
+          "digital",
+          "physical",
+          "primary"
+        ]
+      },
+      "Releases": {
+        "type": "object",
+        "description": "When a movie comes out in the configured region, from TMDB.",
+        "required": [
+          "region",
+          "dates"
+        ],
+        "properties": {
+          "region": {
+            "type": "string",
+            "description": "The ISO 3166-1 region the dates and certification are for."
+          },
+          "certification": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The region's age rating, like \"PG-13\"."
+          },
+          "dates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseDate"
+            },
+            "description": "In theaters, digital, then physical, each its earliest date. When the\nregion has none of those, just TMDB's primary release date."
+          }
+        }
+      },
       "SearchHit": {
         "oneOf": [
           {
@@ -3622,6 +3680,17 @@
             "format": "int32",
             "description": "Movies only.",
             "minimum": 0
+          },
+          "releases": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Releases",
+                "description": "Movies only; `None` when TMDB has no dates at all."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "seasons": {
             "type": [

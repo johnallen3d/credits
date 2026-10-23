@@ -58,7 +58,10 @@ impl TmdbClient {
     pub async fn movie(&self, id: u64) -> Result<Movie, CatalogError> {
         self.get(
             &format!("/movie/{id}"),
-            &[("append_to_response", "external_ids,credits,watch/providers")],
+            &[(
+                "append_to_response",
+                "external_ids,credits,watch/providers,release_dates",
+            )],
         )
         .await
     }
@@ -214,6 +217,33 @@ pub struct Movie {
     /// Absent from cache entries saved before it was requested.
     #[serde(rename = "watch/providers")]
     pub watch_providers: Option<WatchProviders>,
+    /// Absent from cache entries saved before it was requested.
+    pub release_dates: Option<ReleaseDates>,
+}
+
+/// A movie's releases, grouped by ISO 3166-1 region code.
+#[derive(Serialize, Deserialize, Default)]
+pub struct ReleaseDates {
+    #[serde(default)]
+    pub results: Vec<RegionReleases>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RegionReleases {
+    pub iso_3166_1: String,
+    #[serde(default)]
+    pub release_dates: Vec<Release>,
+}
+
+/// One release: `kind` is TMDB's type, 1 premiere, 2 limited theatrical,
+/// 3 theatrical, 4 digital, 5 physical, 6 TV.
+#[derive(Serialize, Deserialize)]
+pub struct Release {
+    pub certification: Option<String>,
+    /// An ISO 8601 timestamp, like "2010-07-16T00:00:00.000Z".
+    pub release_date: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: Option<u8>,
 }
 
 #[derive(Serialize, Deserialize)]

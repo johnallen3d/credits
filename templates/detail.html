@@ -64,6 +64,10 @@
         {% endfor %}
         {% if !d.genres.is_empty() %}<dt>Genres</dt><dd>{{ d.genres|join(", ") }}</dd>{% endif %}
         {% if let Some(minutes) = d.runtime_minutes %}<dt>Runtime</dt><dd>{{ minutes }} min</dd>{% endif %}
+        {% if let Some(releases) = d.releases %}
+        {% for r in releases.dates %}<dt>{{ r.label() }}</dt><dd{% if r.upcoming %} class="upcoming"{% endif %}>{{ r.display() }}</dd>{% endfor %}
+        {% if let Some(rating) = releases.certification %}<dt>Rated</dt><dd>{{ rating }}</dd>{% endif %}
+        {% endif %}
         {% if let Some(seasons) = d.seasons %}<dt>Seasons</dt><dd>{{ seasons }}</dd>{% endif %}
         {% if let Some(episodes) = d.episodes %}<dt>Episodes</dt><dd>{{ episodes }}</dd>{% endif %}
         {% if let Some(status) = d.status %}<dt>Status</dt><dd>{{ status }}</dd>{% endif %}

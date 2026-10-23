@@ -118,6 +118,8 @@ pub struct Title {
     #[serde(default)]
     pub genres: Vec<String>,
     pub runtime_minutes: Option<u32>,
+    /// Movies only; a server too old to send them has none.
+    pub releases: Option<Releases>,
     pub seasons: Option<u32>,
     pub episodes: Option<u32>,
     pub ratings: Ratings,
@@ -136,6 +138,45 @@ pub struct Title {
     /// A server too old to send them can't say what's saved.
     pub marks: Option<Marks>,
     pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Releases {
+    pub certification: Option<String>,
+    #[serde(default)]
+    pub dates: Vec<ReleaseDate>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ReleaseDate {
+    pub kind: ReleaseKind,
+    pub date: String,
+    #[serde(default)]
+    pub upcoming: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseKind {
+    Theatrical,
+    Digital,
+    Physical,
+    Primary,
+    #[serde(other)]
+    Other,
+}
+
+impl ReleaseKind {
+    pub fn label(self, upcoming: bool) -> &'static str {
+        match self {
+            ReleaseKind::Theatrical => "In theaters",
+            ReleaseKind::Digital => "Digital",
+            ReleaseKind::Physical => "Physical",
+            ReleaseKind::Primary if upcoming => "Release",
+            ReleaseKind::Primary => "Released",
+            ReleaseKind::Other => "Release",
+        }
+    }
 }
 
 /// Whether a title is on To watch and Favorites and watched (a TV show as a

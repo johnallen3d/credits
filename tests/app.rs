@@ -141,7 +141,8 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         StatusCode::OK,
                         Json(json!({ "id": id, "title": title, "release_date": release_date,
                                      "runtime": runtime, "external_ids": {},
-                                     "watch/providers": { "results": {} } })),
+                                     "watch/providers": { "results": {} },
+                                     "release_dates": { "results": [] } })),
                     );
                 }
                 let imdb_id = match id {
@@ -183,6 +184,31 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         "flatrate": [{ "provider_id": 8, "provider_name": "Netflix",
                                        "logo_path": "/netflix.jpg", "display_priority": 4 }] } } })
                 };
+                let release_dates = match id {
+                    603 => json!({ "results": [
+                        { "iso_3166_1": "US", "release_dates": [
+                            { "type": 1, "release_date": "1999-03-24T00:00:00.000Z", "certification": "" },
+                            { "type": 3, "release_date": "1999-03-31T00:00:00.000Z", "certification": "R" },
+                            { "type": 4, "release_date": "1999-09-21T00:00:00.000Z", "certification": "R" },
+                            { "type": 5, "release_date": "1999-09-21T00:00:00.000Z", "certification": "" }
+                        ] },
+                        { "iso_3166_1": "GB", "release_dates": [
+                            { "type": 3, "release_date": "1999-06-11T00:00:00.000Z", "certification": "15" }
+                        ] }
+                    ] }),
+                    // Not out yet in the default region.
+                    4040 => json!({ "results": [
+                        { "iso_3166_1": "US", "release_dates": [
+                            { "type": 3, "release_date": "2099-10-16T00:00:00.000Z", "certification": "" }
+                        ] }
+                    ] }),
+                    // Dated elsewhere only.
+                    _ => json!({ "results": [
+                        { "iso_3166_1": "GB", "release_dates": [
+                            { "type": 3, "release_date": "1999-06-11T00:00:00.000Z", "certification": "15" }
+                        ] }
+                    ] }),
+                };
                 (
                     StatusCode::OK,
                     Json(json!({
@@ -193,6 +219,7 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         "poster_path": "/matrix.jpg", "backdrop_path": null,
                         "external_ids": { "imdb_id": imdb_id },
                         "watch/providers": watch_providers,
+                        "release_dates": release_dates,
                         "credits": {
                             "cast": [
                                 { "id": 6384, "name": "Keanu Reeves", "character": "Neo",
@@ -2890,6 +2917,103 @@ async fn where_to_watch_survives_tmdb_outages_and_older_cache_entries() {
     }
 }
 
+#[tokio::test]
+async fn movie_pages_show_release_dates_in_the_region() {
+    let (_, _, body) = get_page(test_app().await, "/movie/603", false).await;
+    assert!(body.contains("<dt>In theaters</dt><dd>Mar 31, 1999</dd>"));
+    assert!(body.contains("<dt>Digital</dt><dd>Sep 21, 1999</dd>"));
+    assert!(body.contains("<dt>Physical</dt><dd>Sep 21, 1999</dd>"));
+    assert!(body.contains("<dt>Rated</dt><dd>R</dd>"));
+    assert!(
+        !body.contains("Jun 11, 1999"),
+        "other regions are not shown"
+    );
+
+    let (_, _, body) = get_page(test_app().await, "/movie/4040", false).await;
+    assert!(body.contains(r#"<dt>In theaters</dt><dd class="upcoming">Coming Oct 16, 2099</dd>"#));
+    assert!(!body.contains("<dt>Rated</dt>"));
+
+    let (_, _, body) = get_page(test_app().await, "/movie/6060", false).await;
+    assert!(
+        body.contains("<dt>Released</dt><dd>Mar 31, 1999</dd>"),
+        "TMDB's primary date when the region has none"
+    );
+    assert!(!body.contains("<dt>In theaters</dt>"));
+
+    let (_, _, body) = get_page(test_app().await, "/tv/1396", false).await;
+    assert!(!body.contains("<dt>Released</dt>"), "movies only");
+
+    let (_, json) = get_json(test_app().await, "/api/movie/603").await;
+    assert_eq!(
+        json["releases"],
+        json!({ "region": "US", "certification": "R", "dates": [
+            { "kind": "theatrical", "date": "1999-03-31", "upcoming": false },
+            { "kind": "digital", "date": "1999-09-21", "upcoming": false },
+            { "kind": "physical", "date": "1999-09-21", "upcoming": false }
+        ] })
+    );
+    let (_, json) = get_json(test_app().await, "/api/movie/4040").await;
+    assert_eq!(json["releases"]["dates"][0]["upcoming"], true);
+    let (_, json) = get_json(test_app().await, "/api/tv/1396").await;
+    assert_eq!(json["releases"], Value::Null);
+
+    let ttl = Duration::from_secs(3600);
+    let config = Config::from_lookup(|key| match key {
+        "TMDB_API_TOKEN" => Some(TOKEN.to_owned()),
+        "CREDITS_DB" => Some(IN_MEMORY.to_owned()),
+        "CREDITS_REGION" => Some("gb".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+    let t = build_from(config, ttl, ttl).await;
+    let (_, _, body) = get_page(t.app(), "/movie/6060", false).await;
+    assert!(body.contains("<dt>In theaters</dt><dd>Jun 11, 1999</dd>"));
+    assert!(body.contains("<dt>Rated</dt><dd>15</dd>"));
+}
+
+#[tokio::test]
+async fn movies_cached_before_release_dates_are_refetched_once() {
+    let database = temp_database("release-dates");
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, &database).await;
+    get_page(t.app(), "/movie/603", false).await;
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query("UPDATE provider_cache SET payload = json_remove(payload, '$.release_dates')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert_eq!(
+        t.tmdb.calls(),
+        2,
+        "a fresh entry without dates is refetched"
+    );
+    assert!(body.contains("<dt>In theaters</dt><dd>Mar 31, 1999</dd>"));
+    get_page(t.app(), "/movie/603", false).await;
+    assert_eq!(t.tmdb.calls(), 2, "and then served from the cache");
+
+    sqlx::query("UPDATE provider_cache SET payload = json_remove(payload, '$.release_dates')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    t.tmdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert_eq!(status, StatusCode::OK, "the page survives without dates");
+    assert!(
+        body.contains("<dt>Released</dt><dd>Mar 31, 1999</dd>"),
+        "falls back to the primary date"
+    );
+
+    drop(t);
+    pool.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{database}{suffix}"));
+    }
+}
+
 fn chosen_names(json: &Value) -> Vec<&str> {
     json["chosen"]
         .as_array()
@@ -4036,6 +4160,12 @@ async fn terminal_client_searches_and_opens_titles_and_people_over_http() {
     assert!(movie.contains("The Matrix"), "{movie}");
     assert!(movie.contains("Search › The Matrix"), "{movie}");
     assert!(movie.contains("Ratings"), "{movie}");
+    assert!(
+        movie.contains(
+            "In theaters Mar 31, 1999 · Digital Sep 21, 1999 · Physical Sep 21, 1999 · Rated R"
+        ),
+        "{movie}"
+    );
 
     // Back to the results, down to Keanu Reeves, and open his page.
     press(&mut app, KeyCode::Esc);

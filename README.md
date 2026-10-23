@@ -43,7 +43,7 @@ mise run tui   # terminal client
 | `OMDB_API_KEY` | unset | Ratings |
 | `CREDITS_BIND` | `127.0.0.1:3000` | Listen address (no auth: keep it local) |
 | `CREDITS_DB` | `./credits.db` | SQLite cache and lists |
-| `CREDITS_REGION` | `US` | Country for where to watch |
+| `CREDITS_REGION` | `US` | Country for where to watch and release dates |
 | `HA_URL`, `HA_TOKEN` | unset | Home Assistant, enables Seen on Apple TV |
 | `CREDITS_HA_PLAYERS` | `media_player.living_room_appletv` | Players to follow |
 

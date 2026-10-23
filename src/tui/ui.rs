@@ -11,8 +11,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::api::{
     Availability, Credit, Episode, EpisodeRatings, KeyCrew, Kind, List, ListServices, Marks,
-    Metadata, Person, PersonCredit, Rating, RatingSource, Ratings, RecentKind, SearchHit, Season,
-    ServicesState, SortRatings, State, Title, TitleCredits, UnavailableReason, Watched,
+    Metadata, Person, PersonCredit, Rating, RatingSource, Ratings, RecentKind, Releases, SearchHit,
+    Season, ServicesState, SortRatings, State, Title, TitleCredits, UnavailableReason, Watched,
     WatchedList, WatchedSource, WhereToWatch,
 };
 use super::app::{App, Content, ListName, ListView, Load, Screen, Source, Status, Target};
@@ -501,6 +501,9 @@ fn title_page(t: &Title, width: u16) -> Page {
         facts.push(status.clone());
     }
     page.line(Line::styled(facts.join(" · "), dim()));
+    if let Some(releases) = &t.releases {
+        release_line(&mut page, releases);
+    }
     if let Some(tagline) = t.tagline.as_ref().filter(|s| !s.is_empty()) {
         page.line(Line::styled(tagline.clone(), dim().italic()));
     }
@@ -536,6 +539,38 @@ fn title_page(t: &Title, width: u16) -> Page {
         page.line(Line::styled("c opens the full cast and crew.", dim()));
     }
     page
+}
+
+/// "In theaters Coming Oct 16 · Digital Sep 30, 2026 · Rated PG-13", with
+/// dates still to come in the accent colour.
+fn release_line(page: &mut Page, releases: &Releases) {
+    let today = crate::model::local_today();
+    let mut spans = Vec::new();
+    for r in &releases.dates {
+        if !spans.is_empty() {
+            spans.push(Span::styled(" · ", dim()));
+        }
+        spans.push(Span::styled(
+            format!("{} ", r.kind.label(r.upcoming)),
+            dim(),
+        ));
+        let day = crate::model::release_day(&r.date, today);
+        spans.push(if r.upcoming {
+            Span::styled(day, Style::new().fg(palette().accent))
+        } else {
+            Span::raw(day)
+        });
+    }
+    if let Some(rating) = &releases.certification {
+        if !spans.is_empty() {
+            spans.push(Span::styled(" · ", dim()));
+        }
+        spans.push(Span::styled("Rated ", dim()));
+        spans.push(Span::raw(rating.clone()));
+    }
+    if !spans.is_empty() {
+        page.line(Line::from(spans));
+    }
 }
 
 /// Everyone credited: cast in billing order, then crew by department.
