@@ -1376,6 +1376,10 @@ pub struct WatchlistDetail {
     /// To watch only: the user's services and how complete the titles' offers are.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub services: Option<ListServices>,
+    /// To watch only: titles on the whole list whose release dates couldn't
+    /// be loaded, so they have no `release_status`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_unknown: Option<usize>,
 }
 
 /// How the "To watch" list is ordered.
@@ -1791,6 +1795,78 @@ pub struct FilmographyEntry {
     /// theaters now. Omitted when not.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub in_theaters: bool,
+    /// To watch only: a movie's soonest theatrical or digital date in the
+    /// region, while it's still to come. Omitted when none is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_release: Option<ReleaseDate>,
+    /// To watch only: whether it can be watched at home yet. Omitted when
+    /// its release dates couldn't be loaded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_status: Option<ReleaseStatus>,
+}
+
+/// Whether a To watch title can be watched at home today.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseStatus {
+    /// Out on digital in the region, or an older title with no release
+    /// pending. TV shows once their first episode has aired.
+    OutNow,
+    /// A regional theatrical or digital release is still ahead, including a
+    /// movie in theaters but not yet on digital, or a show yet to air.
+    ComingSoon,
+}
+
+/// Which To watch titles show, by `ReleaseStatus`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReleaseFilter {
+    #[default]
+    All,
+    OutNow,
+    ComingSoon,
+}
+
+impl ReleaseFilter {
+    pub const ALL: [ReleaseFilter; 3] = [
+        ReleaseFilter::All,
+        ReleaseFilter::OutNow,
+        ReleaseFilter::ComingSoon,
+    ];
+
+    /// The `release` query parameter; anything unrecognised means all.
+    pub fn from_query(value: Option<&str>) -> Self {
+        match value {
+            Some("out_now") => ReleaseFilter::OutNow,
+            Some("coming_soon") => ReleaseFilter::ComingSoon,
+            _ => ReleaseFilter::All,
+        }
+    }
+
+    /// The `release` query value selecting this filter; none for all.
+    pub fn query(self) -> Option<&'static str> {
+        match self {
+            ReleaseFilter::All => None,
+            ReleaseFilter::OutNow => Some("out_now"),
+            ReleaseFilter::ComingSoon => Some("coming_soon"),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ReleaseFilter::All => "All",
+            ReleaseFilter::OutNow => "Out now",
+            ReleaseFilter::ComingSoon => "Coming soon",
+        }
+    }
+
+    /// Titles whose status is unknown are left out of `OutNow` and `ComingSoon`.
+    pub fn matches(self, e: &FilmographyEntry) -> bool {
+        match self {
+            ReleaseFilter::All => true,
+            ReleaseFilter::OutNow => e.release_status == Some(ReleaseStatus::OutNow),
+            ReleaseFilter::ComingSoon => e.release_status == Some(ReleaseStatus::ComingSoon),
+        }
+    }
 }
 
 impl FilmographyEntry {

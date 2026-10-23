@@ -28,7 +28,15 @@
     <span class="segments"><a href="{{ self.services_href(ServicesFilter::Any) }}"{% if !services.is_mine() %} aria-current="true"{% endif %}>Anywhere <span class="count">{{ self.services_count(ServicesFilter::Any) }}</span></a><a href="{{ self.services_href(ServicesFilter::Mine) }}"{% if services.is_mine() %} aria-current="true"{% endif %}>On my services <span class="count">{{ self.services_count(ServicesFilter::Mine) }}</span></a></span>
   </nav>
   {% endif %}{% endif %}
+  {% if !favorites %}
+  <nav class="sort" aria-label="Filter by release">
+    <span class="muted">Release</span>
+    <span class="segments">{% for r in ReleaseFilter::ALL %}<a href="{{ self.release_href(r) }}"{% if r == release %} aria-current="true"{% endif %}>{{ r.label() }} <span class="count">{{ self.release_count(r) }}</span></a>{% endfor %}</span>
+  </nav>
+  {% endif %}
   </div>
+  {% let unknown = self.release_unknown() %}
+  {% if unknown > 0 %}<p class="muted sort-note">Couldn't check the release dates of {{ unknown }} {% if unknown == 1 %}title{% else %}titles{% endif %} right now{% if release != ReleaseFilter::All %}, so {% if unknown == 1 %}it's{% else %}they're{% endif %} left out{% endif %}.</p>{% endif %}
   {% if let Some(svc) = w.services %}
   {% if svc.state.is_chosen() %}
   {% if svc.unknown > 0 %}<p class="muted sort-note">Couldn't check where {{ svc.unknown }} {% if svc.unknown == 1 %}title is{% else %}titles are{% endif %} available right now{% if services.is_mine() %}, so {% if svc.unknown == 1 %}it's{% else %}they're{% endif %} left out{% endif %}.</p>{% endif %}
@@ -51,7 +59,7 @@
     <li>
       <span class="year">{% if let Some(year) = e.year %}{{ year }}{% else %}TBA{% endif %}</span>
       <a href="{{ e.path() }}" tabindex="-1" aria-hidden="true">{% if let Some(url) = e.poster_url %}<img class="poster thumb" src="{{ url }}" alt="" loading="lazy" width="46" height="69">{% else %}<span class="poster thumb missing">No artwork</span>{% endif %}</a>
-      <span><a href="{{ e.path() }}">{{ e.title }}</a> <span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if e.in_theaters %} <span class="badge in-theaters">In theaters</span>{% endif %}{% if let Some(r) = e.rating %} <span class="credit-rating">{% include "_rating.html" %}</span>{% endif %}
+      <span><a href="{{ e.path() }}">{{ e.title }}</a> <span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if e.in_theaters %} <span class="badge in-theaters">In theaters</span>{% endif %}{% if let Some(r) = e.next_release %} <span class="next-release">{{ r.label() }} {{ r.display() }}</span>{% endif %}{% if let Some(r) = e.rating %} <span class="credit-rating">{% include "_rating.html" %}</span>{% endif %}
       {%- if let Some(a) = e.availability %}
       {%- if a.is_unavailable() %} <span class="service-badges muted">Availability unknown</span>
       {%- else if !a.services.is_empty() %} <span class="service-badges{% if a.is_stale() %} stale{% endif %}"{% if a.is_stale() %}{% if let Some(day) = a.fetched_on() %} title="Listed on {{ day }}"{% endif %}{% endif %}><span class="visually-hidden">On your services:</span>{% for svc in a.services %}{% if let Some(logo) = svc.logo_url %}<img class="service-badge" src="{{ logo }}" alt="{{ svc.name }}" title="{{ svc.name }}" width="22" height="22" loading="lazy">{% else %}<span class="service-badge text">{{ svc.name }}</span>{% endif %}{% endfor %}</span>
@@ -63,7 +71,7 @@
       </div>
     </li>
     {% else %}
-    <li class="empty-row"><span class="muted">{% if services.is_mine() %}None of {% if kind == KindFilter::Tv %}the TV shows{% else if kind == KindFilter::Movie %}the movies{% else %}the titles{% endif %} on your list are on your services.{% else %}No {% if kind == KindFilter::Tv %}TV shows{% else %}movies{% endif %} on your list.{% endif %}</span></li>
+    <li class="empty-row"><span class="muted">{{ self.empty_message() }}</span></li>
     {% endfor %}
   </ul>
   {% endif %}

@@ -106,6 +106,36 @@ pub struct ListView {
     pub mine: bool,
     /// Watched only.
     pub source: Source,
+    /// To watch only.
+    pub release: Release,
+}
+
+/// Which To watch titles show: all, or only those out now or coming soon.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Release {
+    #[default]
+    All,
+    OutNow,
+    ComingSoon,
+}
+
+impl Release {
+    pub fn next(self) -> Self {
+        match self {
+            Release::All => Release::OutNow,
+            Release::OutNow => Release::ComingSoon,
+            Release::ComingSoon => Release::All,
+        }
+    }
+
+    /// The `release` query value; none for all.
+    pub fn query(self) -> Option<&'static str> {
+        match self {
+            Release::All => None,
+            Release::OutNow => Some("out_now"),
+            Release::ComingSoon => Some("coming_soon"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -562,6 +592,12 @@ impl App {
             KeyCode::Char('a') if self.on_list(ListName::Watched) => {
                 return self
                     .change_view(|v| v.source = v.source.next())
+                    .into_iter()
+                    .collect();
+            }
+            KeyCode::Char('e') if self.on_list(ListName::Watchlist) => {
+                return self
+                    .change_view(|v| v.release = v.release.next())
                     .into_iter()
                     .collect();
             }

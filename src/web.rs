@@ -19,7 +19,7 @@ use crate::catalog::{Catalog, CatalogError, RecentError, ServicesError, Watchlis
 use crate::model::{
     EpisodeDetail, EpisodeWithWatched, FilmographyEntry, FilmographyGroup, FilmographySort,
     KindFilter, MediaKind, Metadata, MovieWatched, MovieWithMarks, PersonDetail, RecentKind,
-    RecentView, RecentViews, ReleaseList, ReleasesDetail, SearchHit, SeasonDetail,
+    RecentView, RecentViews, ReleaseFilter, ReleaseList, ReleasesDetail, SearchHit, SeasonDetail,
     SeasonWithWatched, ServicesDetail, ServicesFilter, SourceFilter, TitleCredits, TitleDetail,
     TitleMarksUpdate, TvWithWatched, WatchTarget, Watched, WatchedList, WatchedMarks, WatchedSort,
     WatchedSource, WatchedTitle, WatchlistDetail, WatchlistSort, encode_query_value, title_path,
@@ -467,7 +467,9 @@ struct WatchlistPage {
     kind: KindFilter,
     /// To watch only; always `Any` for Favorites.
     services: ServicesFilter,
-    /// The titles of `kind` and `services`, in the list's order.
+    /// To watch only; always `All` for Favorites.
+    release: ReleaseFilter,
+    /// The titles of `kind`, `services` and `release`, in the list's order.
     shown: Vec<FilmographyEntry>,
     favorites: bool,
     listed: HashSet<(MediaKind, u64)>,
@@ -475,10 +477,12 @@ struct WatchlistPage {
 }
 
 impl WatchlistPage {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         w: WatchlistDetail,
         kind: KindFilter,
         services: ServicesFilter,
+        release: ReleaseFilter,
         favorites: bool,
         listed: HashSet<(MediaKind, u64)>,
         favorited: Option<HashSet<(MediaKind, u64)>>,
@@ -489,16 +493,22 @@ impl WatchlistPage {
         } else {
             ServicesFilter::Any
         };
+        let release = if favorites {
+            ReleaseFilter::All
+        } else {
+            release
+        };
         let shown = w
             .titles
             .iter()
-            .filter(|e| kind.matches(e.kind) && services.matches(e))
+            .filter(|e| kind.matches(e.kind) && services.matches(e) && release.matches(e))
             .cloned()
             .collect();
         WatchlistPage {
             w,
             kind,
             services,
+            release,
             shown,
             favorites,
             listed,
@@ -524,39 +534,90 @@ impl WatchlistPage {
             .map(|titles| titles.contains(&(e.kind, e.id)))
     }
 
-    /// Titles of `kind` within the current services filter.
-    fn kind_count(&self, kind: &KindFilter) -> usize {
+    /// Titles matching `kind`, `services` and `release`.
+    fn count(&self, kind: KindFilter, services: ServicesFilter, release: ReleaseFilter) -> usize {
         self.w
             .titles
             .iter()
-            .filter(|e| kind.matches(e.kind) && self.services.matches(e))
+            .filter(|e| kind.matches(e.kind) && services.matches(e) && release.matches(e))
             .count()
     }
 
-    /// Titles of the current kind within `services`.
+    /// Titles of `kind` within the other current filters.
+    fn kind_count(&self, kind: &KindFilter) -> usize {
+        self.count(*kind, self.services, self.release)
+    }
+
+    /// Titles within `services` and the other current filters.
     fn services_count(&self, services: ServicesFilter) -> usize {
-        self.w
-            .titles
-            .iter()
-            .filter(|e| self.kind.matches(e.kind) && services.matches(e))
-            .count()
+        self.count(self.kind, services, self.release)
+    }
+
+    /// Titles within `release` and the other current filters.
+    fn release_count(&self, release: &ReleaseFilter) -> usize {
+        self.count(self.kind, self.services, *release)
+    }
+
+    fn href(
+        &self,
+        sort: WatchlistSort,
+        kind: KindFilter,
+        services: ServicesFilter,
+        release: ReleaseFilter,
+    ) -> String {
+        watchlist_href(sort, kind, services, release, self.favorites)
     }
 
     fn kind_href(&self, kind: &KindFilter) -> String {
-        watchlist_href(self.w.sort, *kind, self.services, self.favorites)
+        self.href(self.w.sort, *kind, self.services, self.release)
     }
 
     fn sort_href(&self, sort: WatchlistSort) -> String {
-        watchlist_href(sort, self.kind, self.services, self.favorites)
+        self.href(sort, self.kind, self.services, self.release)
     }
 
     fn services_href(&self, services: ServicesFilter) -> String {
-        watchlist_href(self.w.sort, self.kind, services, self.favorites)
+        self.href(self.w.sort, self.kind, services, self.release)
+    }
+
+    fn release_href(&self, release: &ReleaseFilter) -> String {
+        self.href(self.w.sort, self.kind, self.services, *release)
     }
 
     /// Where a removal returns to: this page as it is.
     fn back(&self) -> String {
-        watchlist_href(self.w.sort, self.kind, self.services, self.favorites)
+        self.href(self.w.sort, self.kind, self.services, self.release)
+    }
+
+    /// Titles on the list whose release dates couldn't be loaded.
+    fn release_unknown(&self) -> usize {
+        self.w.release_unknown.unwrap_or(0)
+    }
+
+    /// Says what the filters left out, e.g. "None of the movies on your list are out now."
+    fn empty_message(&self) -> String {
+        let titles = match self.kind {
+            KindFilter::All => "titles",
+            KindFilter::Movie => "movies",
+            KindFilter::Tv => "TV shows",
+        };
+        let mut what = Vec::new();
+        if self.services.is_mine() {
+            what.push("on your services");
+        }
+        match self.release {
+            ReleaseFilter::All => {}
+            ReleaseFilter::OutNow => what.push("out now"),
+            ReleaseFilter::ComingSoon => what.push("coming soon"),
+        }
+        if what.is_empty() {
+            format!("No {titles} on your list.")
+        } else {
+            format!(
+                "None of the {titles} on your list are {}.",
+                what.join(" and ")
+            )
+        }
     }
 }
 
@@ -564,6 +625,7 @@ fn watchlist_href(
     sort: WatchlistSort,
     kind: KindFilter,
     services: ServicesFilter,
+    release: ReleaseFilter,
     favorites: bool,
 ) -> String {
     let path = if favorites {
@@ -580,6 +642,9 @@ fn watchlist_href(
     }
     if services.is_mine() {
         query.push("services=mine".to_owned());
+    }
+    if let Some(release) = release.query() {
+        query.push(format!("release={release}"));
     }
     if query.is_empty() {
         path.to_owned()
@@ -749,6 +814,8 @@ struct WatchlistParams {
     kind: Option<String>,
     /// To watch only: "mine" shows titles on the user's services.
     services: Option<String>,
+    /// To watch only: "out_now" or "coming_soon".
+    release: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1127,6 +1194,7 @@ async fn watchlist_page(
     let sort = WatchlistSort::from_query(params.sort.as_deref());
     let kind = KindFilter::from_query(params.kind.as_deref());
     let services = ServicesFilter::from_query(params.services.as_deref());
+    let release = ReleaseFilter::from_query(params.release.as_deref());
     let result = if favorites {
         catalog.favorites(sort).await
     } else {
@@ -1138,7 +1206,8 @@ async fn watchlist_page(
             let favorited = favorite_titles(&catalog).await;
             html(
                 StatusCode::OK,
-                WatchlistPage::new(w, kind, services, favorites, listed, favorited).render(),
+                WatchlistPage::new(w, kind, services, release, favorites, listed, favorited)
+                    .render(),
             )
         }
         Err(e) => {
@@ -1164,6 +1233,7 @@ async fn watchlist_page(
         ("kind" = Option<MediaKind>, Query, description = "Only movies or only TV; anything else means all"),
         ("sort" = Option<WatchlistSort>, Query, description = "Defaults to `added`"),
         ("services" = Option<String>, Query, description = "`mine`: only titles on your services, once any are chosen"),
+        ("release" = Option<String>, Query, description = "`out_now`: only titles watchable at home today; `coming_soon`: only those with a release still ahead. Titles whose dates couldn't be loaded match neither"),
     ),
     responses((status = OK, body = WatchlistDetail), ReadError)
 )]
@@ -1193,6 +1263,7 @@ async fn api_list(
     let sort = WatchlistSort::from_query(params.sort.as_deref());
     let kind = KindFilter::from_query(params.kind.as_deref());
     let services = ServicesFilter::from_query(params.services.as_deref());
+    let release = ReleaseFilter::from_query(params.release.as_deref());
     let result = if favorites {
         catalog.favorites(sort).await
     } else {
@@ -1201,8 +1272,11 @@ async fn api_list(
     match result {
         Ok(mut w) => {
             let chosen = w.services.as_ref().is_some_and(|s| s.state.is_chosen());
-            w.titles
-                .retain(|e| kind.matches(e.kind) && (!chosen || services.matches(e)));
+            w.titles.retain(|e| {
+                kind.matches(e.kind)
+                    && (!chosen || services.matches(e))
+                    && (favorites || release.matches(e))
+            });
             catalog.mark_entries(&mut w.titles).await;
             Json(w).into_response()
         }

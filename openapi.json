@@ -724,6 +724,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "release",
+            "in": "query",
+            "description": "`out_now`: only titles watchable at home today; `coming_soon`: only those with a release still ahead. Titles whose dates couldn't be loaded match neither",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2390,6 +2399,28 @@
           "in_theaters": {
             "type": "boolean",
             "description": "To watch and Favorites only: a movie playing in the region's\ntheaters now. Omitted when not."
+          },
+          "next_release": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseDate",
+                "description": "To watch only: a movie's soonest theatrical or digital date in the\nregion, while it's still to come. Omitted when none is."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "release_status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseStatus",
+                "description": "To watch only: whether it can be watched at home yet. Omitted when\nits release dates couldn't be loaded."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -3199,6 +3230,14 @@
         "description": "The movies TMDB lists as playing in the region's theaters, or coming\nsoon to them.",
         "enum": [
           "now_playing",
+          "coming_soon"
+        ]
+      },
+      "ReleaseStatus": {
+        "type": "string",
+        "description": "Whether a To watch title can be watched at home today.",
+        "enum": [
+          "out_now",
           "coming_soon"
         ]
       },
@@ -4349,6 +4388,14 @@
                 "type": "null"
               }
             ]
+          },
+          "release_unknown": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "To watch only: titles on the whole list whose release dates couldn't\nbe loaded, so they have no `release_status`.",
+            "minimum": 0
           }
         }
       },

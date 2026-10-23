@@ -16,7 +16,7 @@ use super::api::{
     UnavailableReason, Watched, WatchedList, WatchedSource, WhereToWatch,
 };
 use super::app::{
-    App, Content, ListName, ListView, Load, ReleaseList, Screen, Source, Status, Target,
+    App, Content, ListName, ListView, Load, Release, ReleaseList, Screen, Source, Status, Target,
 };
 use super::theme::palette;
 
@@ -1102,9 +1102,36 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
             &[("Anywhere", !view.mine), ("On my services", view.mine)],
         );
     }
+    if name == ListName::Watchlist {
+        choices(
+            &mut bar,
+            "Release",
+            &[
+                ("All", view.release == Release::All),
+                ("Out now", view.release == Release::OutNow),
+                ("Coming soon", view.release == Release::ComingSoon),
+            ],
+        );
+    }
     page.line(Line::from(bar));
     if let Some(svc) = &l.services {
         services_notes(&mut page, svc, view.mine, width);
+    }
+    if let Some(unknown) = l.release_unknown.filter(|n| *n > 0) {
+        let (titles, they) = if unknown == 1 {
+            ("title", "it's")
+        } else {
+            ("titles", "they're")
+        };
+        let left_out = if view.release == Release::All {
+            String::new()
+        } else {
+            format!(", so {they} left out")
+        };
+        page.line(Line::styled(
+            format!("Couldn't check the release dates of {unknown} {titles} right now{left_out}."),
+            dim(),
+        ));
     }
     if let Some(r) = &l.sort_ratings {
         sort_ratings_notes(&mut page, r, Order::Added, width);
@@ -1117,10 +1144,22 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
             Some(Kind::Movie) => "movies",
             None => "titles",
         };
-        let text = if view.mine {
-            format!("None of the {what} on your list are on your services.")
-        } else {
+        let mut filters = Vec::new();
+        if view.mine {
+            filters.push("on your services");
+        }
+        match view.release {
+            Release::All => {}
+            Release::OutNow => filters.push("out now"),
+            Release::ComingSoon => filters.push("coming soon"),
+        }
+        let text = if filters.is_empty() {
             format!("No {what} on your list.")
+        } else {
+            format!(
+                "None of the {what} on your list are {}.",
+                filters.join(" and ")
+            )
         };
         page.line(Line::styled(format!("  {text}"), dim()));
         return page;
@@ -1141,6 +1180,17 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
         if e.in_theaters {
             spans.push(Span::styled(
                 format!("{IN_THEATERS}  "),
+                Style::new().fg(palette().accent),
+            ));
+        }
+        if let Some(next) = &e.next_release {
+            let today = crate::model::local_today();
+            spans.push(Span::styled(
+                format!(
+                    "{} {}  ",
+                    next.kind.label(next.upcoming),
+                    crate::model::release_day(&next.date, today)
+                ),
                 Style::new().fg(palette().accent),
             ));
         }

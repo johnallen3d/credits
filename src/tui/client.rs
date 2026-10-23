@@ -145,6 +145,9 @@ impl Client {
         if view.mine && list == ListName::Watchlist {
             query.push(("services", "mine"));
         }
+        if let (Some(release), ListName::Watchlist) = (view.release.query(), list) {
+            query.push(("release", release));
+        }
         self.get(path, &query).await
     }
 

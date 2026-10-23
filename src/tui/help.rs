@@ -154,6 +154,12 @@ fn bindings(app: &App) -> Vec<Binding> {
     );
     add(
         "Lists",
+        "e",
+        "Cycle release All / Out now / Coming soon (To watch)",
+        browsing && app.on_list(ListName::Watchlist),
+    );
+    add(
+        "Lists",
         "m",
         "Toggle On my services (To watch with chosen services)",
         browsing && app.can_filter_services(),
@@ -291,6 +297,7 @@ mod tests {
         app.open(Target::List(ListName::Watchlist, ListView::default()));
         assert!(active(&app, "t"));
         assert!(active(&app, "o"));
+        assert!(active(&app, "e"), "To watch filters by release");
         assert!(!active(&app, "m"));
         assert!(
             !active(&app, "a"),
@@ -316,6 +323,7 @@ mod tests {
         app.open(Target::Person(6384, ListView::default()));
         assert!(active(&app, "t"), "filmographies filter by kind");
         assert!(active(&app, "o"), "filmographies sort by rating");
+        assert!(!active(&app, "e"));
         assert!(!active(&app, "m"));
         assert!(!active(&app, "s"));
     }

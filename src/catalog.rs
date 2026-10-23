@@ -18,12 +18,13 @@ use crate::model::{
     Availability, Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup,
     FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
     MovieWatched, OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
-    RecentKind, RecentView, ReleaseDate, ReleaseEntry, ReleaseKind, ReleaseList, Releases,
-    ReleasesDetail, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup, ServiceOption,
-    ServicesDetail, ServicesState, ShowProgress, SortRatings, TitleCredits, TitleDetail, TitleHit,
-    TitleMarks, UnavailableReason, WatchProvider, WatchTarget, Watched, WatchedList, WatchedMarks,
-    WatchedSort, WatchedSource, WatchedTitle, WatchlistDetail, WatchlistSort, WhereToWatch,
-    WhereToWatchState, hide_cast_episode_counts, local_today, showtimes_url,
+    RecentKind, RecentView, ReleaseDate, ReleaseEntry, ReleaseKind, ReleaseList, ReleaseStatus,
+    Releases, ReleasesDetail, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup,
+    ServiceOption, ServicesDetail, ServicesState, ShowProgress, SortRatings, TitleCredits,
+    TitleDetail, TitleHit, TitleMarks, UnavailableReason, WatchProvider, WatchTarget, Watched,
+    WatchedList, WatchedMarks, WatchedSort, WatchedSource, WatchedTitle, WatchlistDetail,
+    WatchlistSort, WhereToWatch, WhereToWatchState, hide_cast_episode_counts, local_today,
+    showtimes_url,
 };
 use crate::omdb::OmdbClient;
 use crate::playback::{
@@ -582,6 +583,7 @@ impl Catalog {
     /// Each title also says which of the user's services include it.
     pub async fn watchlist(&self, sort: WatchlistSort) -> Result<WatchlistDetail, sqlx::Error> {
         let mut w = self.saved_list(&self.watchlist, sort).await?;
+        w.release_unknown = Some(self.mark_releases(&mut w.titles).await);
         let mine = self.service_ids().await;
         let state = ServicesState::of(mine.as_ref());
         let mut services = ListServices {
@@ -632,6 +634,7 @@ impl Catalog {
             sort,
             sort_ratings,
             services: None,
+            release_unknown: None,
         })
     }
 
@@ -752,6 +755,8 @@ impl Catalog {
             availability: None,
             marks: None,
             in_theaters: false,
+            next_release: None,
+            release_status: None,
         };
         Ok((entry, seasons))
     }
@@ -1246,6 +1251,8 @@ impl Catalog {
                     availability: None,
                     marks: None,
                     in_theaters: false,
+                    next_release: None,
+                    release_status: None,
                 };
                 Some((
                     (department.clone(), kind, c.id),
@@ -1627,9 +1634,9 @@ impl Catalog {
         }
     }
 
-    /// Whether movie `id` is in the region's theaters: within
-    /// `IN_THEATERS_DAYS` of its theatrical date, or on TMDB's now playing
-    /// list, and either way not yet out on digital.
+    /// Whether movie `id` is in the region's theaters: its theatrical date
+    /// has arrived, within `IN_THEATERS_DAYS` or it is on TMDB's now playing
+    /// list, and it is not yet out on digital.
     async fn in_theaters(&self, id: u64, releases: Option<&Releases>) -> bool {
         match showing_by_dates(releases, local_today()) {
             Some(showing) => showing,
@@ -1687,22 +1694,80 @@ impl Catalog {
     /// Marks the movies among `entries` that are in theaters, looking up
     /// only those dated within a year or so of today.
     async fn mark_in_theaters(&self, entries: &mut [FilmographyEntry]) {
-        let today = local_today();
-        let candidates = entries
-            .iter()
-            .filter(|e| {
-                e.kind == MediaKind::Movie
-                    && e.year
-                        .as_deref()
-                        .and_then(|y| y.parse::<i16>().ok())
-                        .is_some_and(|y| (today.year() - 1..=today.year() + 1).contains(&y))
-            })
-            .map(|e| e.id)
-            .collect();
-        let showing = self.movies_in_theaters(candidates).await;
+        let showing = self.movies_in_theaters(recent_movies(entries)).await;
         for e in entries.iter_mut().filter(|e| e.kind == MediaKind::Movie) {
             e.in_theaters = showing.contains(&e.id);
         }
+    }
+
+    /// Gives each of `entries` its release status and, for a movie, its next
+    /// release date still to come. Movies with a recent, future or no year
+    /// are looked up, and TV shows with a current, future or no year, through
+    /// their cached TMDB entries; older titles are out now. Returns how many
+    /// couldn't be looked up, which get no status (unless in theaters).
+    /// Expects `in_theaters` to be marked already.
+    async fn mark_releases(&self, entries: &mut [FilmographyEntry]) -> usize {
+        let today = local_today();
+        let permits = Arc::new(Semaphore::new(CONCURRENT_TITLE_LOOKUPS));
+        let mut lookups = JoinSet::new();
+        for e in entries.iter().filter(|e| may_be_pending(e, today)) {
+            let (catalog, permits, kind, id) = (self.clone(), permits.clone(), e.kind, e.id);
+            lookups.spawn(async move {
+                let _permit = permits.acquire_owned().await;
+                let found = match kind {
+                    MediaKind::Movie => catalog.movie_raw(id).await.map(|(mut m, _)| {
+                        let releases = releases(
+                            &catalog.watch_region,
+                            m.release_dates.take().unwrap_or_default(),
+                            m.release_date.as_deref(),
+                            today,
+                        );
+                        let unreleased = m.status.as_deref().is_some_and(|s| s != "Released");
+                        MovieRelease::of(releases.as_ref(), unreleased, today)
+                    }),
+                    MediaKind::Tv => catalog.tv_raw(id).await.map(|(t, _)| {
+                        let first = t.first_air_date.as_deref().and_then(|d| d.parse().ok());
+                        MovieRelease {
+                            next: None,
+                            out_on_digital: false,
+                            pending: first.is_none_or(|d: jiff::civil::Date| d > today),
+                        }
+                    }),
+                };
+                if let Err(e) = &found {
+                    tracing::warn!(error = %e, ?kind, id, "title lookup for release status failed");
+                }
+                ((kind, id), found.ok())
+            });
+        }
+        let mut found = HashMap::new();
+        while let Some(joined) = lookups.join_next().await {
+            match joined {
+                Ok((key, release)) => {
+                    found.insert(key, release);
+                }
+                Err(e) => tracing::warn!(error = %e, "release status lookup task failed"),
+            }
+        }
+        let mut unknown = 0;
+        for e in entries.iter_mut() {
+            let release = match found.remove(&(e.kind, e.id)) {
+                // Not looked up: an older title.
+                None if !may_be_pending(e, today) => Some(MovieRelease::default()),
+                None | Some(None) => None,
+                Some(Some(release)) => Some(release),
+            };
+            e.release_status = match &release {
+                Some(r) if r.out_on_digital => Some(ReleaseStatus::OutNow),
+                _ if e.in_theaters => Some(ReleaseStatus::ComingSoon),
+                Some(r) if r.pending => Some(ReleaseStatus::ComingSoon),
+                Some(_) => Some(ReleaseStatus::OutNow),
+                None => None,
+            };
+            unknown += usize::from(e.release_status.is_none());
+            e.next_release = release.and_then(|r| r.next);
+        }
+        unknown
     }
 
     async fn movie_raw(&self, id: u64) -> Result<(tmdb::Movie, Metadata), CatalogError> {
@@ -2440,9 +2505,9 @@ fn releases(
 }
 
 /// Whether a movie with `releases` is in theaters on `today` by its dates:
-/// not once its digital date has arrived, yes within `IN_THEATERS_DAYS` of
-/// its theatrical date, and otherwise `None`, for TMDB's now playing list
-/// to decide.
+/// not without a regional theatrical date that has arrived, nor once its
+/// digital date has; yes within `IN_THEATERS_DAYS` of its theatrical date,
+/// and otherwise `None`, for TMDB's now playing list to decide.
 fn showing_by_dates(releases: Option<&Releases>, today: jiff::civil::Date) -> Option<bool> {
     let date = |kind| {
         releases?
@@ -2456,9 +2521,80 @@ fn showing_by_dates(releases: Option<&Releases>, today: jiff::civil::Date) -> Op
     if date(ReleaseKind::Digital).is_some_and(|d| d <= today) {
         return Some(false);
     }
-    let theatrical = date(ReleaseKind::Theatrical)?;
+    // Not before it opens, even if TMDB lists it as now playing.
+    let Some(theatrical) = date(ReleaseKind::Theatrical).filter(|d| *d <= today) else {
+        return Some(false);
+    };
     let days = (today - theatrical).get_days();
     ((0..=IN_THEATERS_DAYS).contains(&i64::from(days))).then_some(true)
+}
+
+/// What a To watch title's dates say about watching it at home.
+#[derive(Default)]
+struct MovieRelease {
+    /// The soonest theatrical or digital date still to come.
+    next: Option<ReleaseDate>,
+    /// Its regional digital date has passed.
+    out_on_digital: bool,
+    /// Some release is still ahead (or, undated, not released yet).
+    pending: bool,
+}
+
+impl MovieRelease {
+    /// From a movie's regional `releases`; `unreleased` is TMDB's status
+    /// saying so, which only counts when there are no dates at all.
+    fn of(releases: Option<&Releases>, unreleased: bool, today: jiff::civil::Date) -> Self {
+        let dates = releases.map_or(&[][..], |r| &r.dates[..]);
+        let next = dates
+            .iter()
+            .filter(|d| {
+                matches!(d.kind, ReleaseKind::Theatrical | ReleaseKind::Digital) && d.upcoming
+            })
+            .min_by(|a, b| a.date.cmp(&b.date))
+            .cloned();
+        let out_on_digital = dates.iter().any(|d| {
+            d.kind == ReleaseKind::Digital
+                && d.date
+                    .parse::<jiff::civil::Date>()
+                    .is_ok_and(|d| d <= today)
+        });
+        let pending = dates.iter().any(|d| d.upcoming) || (dates.is_empty() && unreleased);
+        MovieRelease {
+            next,
+            out_on_digital,
+            pending,
+        }
+    }
+}
+
+/// Whether `e` is recent enough, or undated, that a release might still be
+/// ahead: a movie from last year on, or a show from this year on.
+fn may_be_pending(e: &FilmographyEntry, today: jiff::civil::Date) -> bool {
+    let from = match e.kind {
+        MediaKind::Movie => today.year() - 1,
+        MediaKind::Tv => today.year(),
+    };
+    e.year
+        .as_deref()
+        .and_then(|y| y.parse::<i16>().ok())
+        .is_none_or(|y| y >= from)
+}
+
+/// The movies among `entries` dated within a year or so of today, the only
+/// ones whose release dates are looked up.
+fn recent_movies(entries: &[FilmographyEntry]) -> HashSet<u64> {
+    let today = local_today();
+    entries
+        .iter()
+        .filter(|e| {
+            e.kind == MediaKind::Movie
+                && e.year
+                    .as_deref()
+                    .and_then(|y| y.parse::<i16>().ok())
+                    .is_some_and(|y| (today.year() - 1..=today.year() + 1).contains(&y))
+        })
+        .map(|e| e.id)
+        .collect()
 }
 
 /// Whether `date` is within `IN_THEATERS_CANDIDATE_DAYS` of `today`, so a
@@ -2686,7 +2822,11 @@ mod tests {
             None,
             "day 46: ask now playing"
         );
-        assert_eq!(showing(&[(Theatrical, "2026-10-24")]), None, "not open yet");
+        assert_eq!(
+            showing(&[(Theatrical, "2026-10-24")]),
+            Some(false),
+            "not open yet, whatever now playing says"
+        );
         assert_eq!(
             showing(&[(Theatrical, "2026-10-01"), (Digital, "2026-10-23")]),
             Some(false),
@@ -2704,10 +2844,10 @@ mod tests {
         );
         assert_eq!(
             showing(&[(Primary, "2026-10-20")]),
-            None,
-            "no regional dates"
+            Some(false),
+            "no regional theatrical date"
         );
-        assert_eq!(showing_by_dates(None, today), None);
+        assert_eq!(showing_by_dates(None, today), Some(false));
 
         assert!(near_today("2025-10-23".parse().ok(), today));
         assert!(near_today("2027-10-23".parse().ok(), today));

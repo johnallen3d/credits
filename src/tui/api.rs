@@ -580,6 +580,9 @@ pub struct List {
     pub sort_ratings: Option<SortRatings>,
     /// To watch only.
     pub services: Option<ListServices>,
+    /// To watch only: titles whose release dates couldn't be loaded.
+    #[serde(default)]
+    pub release_unknown: Option<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -595,6 +598,9 @@ pub struct ListEntry {
     pub marks: Option<Marks>,
     #[serde(default)]
     pub in_theaters: bool,
+    /// To watch only: a movie's soonest theatrical or digital date still to come.
+    #[serde(default)]
+    pub next_release: Option<ReleaseDate>,
 }
 
 /// Which of the user's services include a title.

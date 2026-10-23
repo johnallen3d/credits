@@ -111,6 +111,8 @@ impl Watchlist {
                     availability: None,
                     marks: None,
                     in_theaters: false,
+                    next_release: None,
+                    release_status: None,
                 })
             })
             .collect())
@@ -147,6 +149,8 @@ mod tests {
             availability: None,
             marks: None,
             in_theaters: false,
+            next_release: None,
+            release_status: None,
         }
     }
 

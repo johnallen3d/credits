@@ -152,14 +152,14 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                     return Json(json!({ "results": [], "total_pages": 1 }));
                 }
                 // 7002 is still listed long after opening; 7003 is listed
-                // but already out on digital.
+                // but already out on digital; 7100 is listed before it opens.
                 let ids: &[u64] = match q.get("page").map(String::as_str) {
-                    Some("1") => &[7003, 7001],
+                    Some("1") => &[7003, 7001, 7100],
                     _ => &[7002, 7001],
                 };
                 let results: Vec<Value> = ids
                     .iter()
-                    .filter_map(|&id| in_theaters_movie(id))
+                    .filter_map(|&id| in_theaters_movie(id).or_else(|| upcoming_movie(id)))
                     .map(|m| json!({ "id": m["id"], "title": m["title"],
                                      "release_date": m["release_date"] }))
                     .collect();
@@ -316,6 +316,17 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
             get(|Path(id): Path<u64>| async move {
                 if id == 500 {
                     return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})));
+                }
+                // Announced, not aired yet.
+                if id == 9100 {
+                    return (
+                        StatusCode::OK,
+                        Json(json!({
+                            "id": id, "name": "Unaired Show", "first_air_date": "",
+                            "status": "In Production", "seasons": [],
+                            "watch/providers": { "results": {} }
+                        })),
+                    );
                 }
                 let imdb_id = match id {
                     1396 => json!("tt0903747"),
@@ -594,13 +605,27 @@ fn in_theaters_movie(id: u64) -> Option<Value> {
 /// opened in the US three days ago.
 fn upcoming_movie(id: u64) -> Option<Value> {
     let today = jiff::Zoned::now().date();
-    let (title, region, days) = match id {
-        7100..=7124 => (format!("Premiere {:02}", id - 7099), "US", id as i64 - 7099),
-        7130 => ("Canada First".to_owned(), "CA", 5),
-        7132 => ("Already Out".to_owned(), "US", -3),
+    let on = |days: i64| today.checked_add(jiff::Span::new().days(days)).unwrap();
+    let (title, region, date) = match id {
+        7100..=7124 => (
+            format!("Premiere {:02}", id - 7099),
+            "US",
+            on(id as i64 - 7099),
+        ),
+        7130 => ("Canada First".to_owned(), "CA", on(5)),
+        7132 => ("Already Out".to_owned(), "US", on(-3)),
+        // Opened 20 days ago; out on digital in 12 days.
+        7133 => ("Digital Next".to_owned(), "US", on(-20)),
         _ => return None,
     };
-    let date = today.checked_add(jiff::Span::new().days(days)).unwrap();
+    let mut dates = vec![json!({
+        "type": 3, "release_date": format!("{date}T00:00:00.000Z"), "certification": ""
+    })];
+    if id == 7133 {
+        dates.push(json!({
+            "type": 4, "release_date": format!("{}T00:00:00.000Z", on(12)), "certification": ""
+        }));
+    }
     let imdb_id = match id {
         7100 => json!("tt0133093"),
         7121 => json!("tt6060000"),
@@ -609,9 +634,7 @@ fn upcoming_movie(id: u64) -> Option<Value> {
     Some(json!({
         "id": id, "title": title, "release_date": date.to_string(), "runtime": 100,
         "external_ids": { "imdb_id": imdb_id }, "watch/providers": { "results": {} },
-        "release_dates": { "results": [{ "iso_3166_1": region, "release_dates": [
-            { "type": 3, "release_date": format!("{date}T00:00:00.000Z"), "certification": "" }
-        ] }] }
+        "release_dates": { "results": [{ "iso_3166_1": region, "release_dates": dates }] }
     }))
 }
 
@@ -3506,6 +3529,202 @@ async fn to_watch_filters_by_my_services_with_badges() {
 }
 
 #[tokio::test]
+async fn to_watch_rows_show_the_next_release_still_to_come() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    for title in [
+        "/movie/7100",
+        "/movie/7133",
+        "/movie/7132",
+        "/movie/603",
+        "/tv/1396",
+    ] {
+        post_form(t.app(), &format!("{title}/watchlist"), "listed=true").await;
+    }
+    let today = jiff::Zoned::now().date();
+    let on = |days: i64| today.checked_add(jiff::Span::new().days(days)).unwrap();
+    let row = |body: &str, title: &str| -> String {
+        let start = body.find(&format!(">{title}</a>")).expect(title);
+        let end = start + body[start..].find("</li>").unwrap();
+        body[start..end].to_owned()
+    };
+
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    let theatrical = format!(
+        r#"<span class="next-release">In theaters {}</span>"#,
+        credits::model::release_day(&on(1).to_string(), today)
+    );
+    assert!(row(&body, "Premiere 01").contains(&theatrical), "{body}");
+    let digital = format!(
+        r#"<span class="next-release">Digital {}</span>"#,
+        credits::model::release_day(&on(12).to_string(), today)
+    );
+    assert!(row(&body, "Digital Next").contains(&digital), "{body}");
+    for title in ["Already Out", "The Matrix", "Breaking Bad"] {
+        assert!(
+            !row(&body, title).contains("next-release"),
+            "{title}: nothing still to come"
+        );
+    }
+
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    let entries = json["titles"].as_array().unwrap();
+    let next = |id: u64| {
+        let entry = entries.iter().find(|e| e["id"] == id).expect("listed");
+        entry.get("next_release").cloned()
+    };
+    assert_eq!(
+        next(7100),
+        Some(json!({ "kind": "theatrical", "date": on(1).to_string(), "upcoming": true }))
+    );
+    assert_eq!(
+        next(7133),
+        Some(json!({ "kind": "digital", "date": on(12).to_string(), "upcoming": true }))
+    );
+    assert_eq!(next(7132), None);
+    assert_eq!(next(603), None);
+    assert_eq!(next(1396), None, "TV has no theatrical or digital dates");
+
+    let (_, _, body) = get_page(t.app(), "/favorites", false).await;
+    assert!(!body.contains("next-release"), "To watch only");
+}
+
+#[tokio::test]
+async fn movies_are_not_in_theaters_before_they_open() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (_, json) = get_json(t.app(), "/api/movie/7100").await;
+    assert_eq!(
+        json["in_theaters"], false,
+        "now playing, but opens tomorrow"
+    );
+    let (_, _, body) = get_page(t.app(), "/movie/7100", false).await;
+    assert!(!body.contains("badge in-theaters"), "{body}");
+    assert!(t.tmdb.now_playing_calls() == 0, "its dates decide");
+    let (_, json) = get_json(t.app(), "/api/movie/7001").await;
+    assert_eq!(json["in_theaters"], true, "opened 10 days ago");
+    let (_, json) = get_json(t.app(), "/api/movie/7002").await;
+    assert_eq!(json["in_theaters"], true, "long run, still now playing");
+}
+
+#[tokio::test]
+async fn to_watch_filters_by_out_now_and_coming_soon() {
+    let database = temp_database("release-filter");
+    let ttl = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), ttl, ttl, &database).await;
+    // Coming soon: opens tomorrow; in theaters until digital in 12 days;
+    // opened 3 days ago with no digital date; a show not aired yet.
+    // Out now: on digital; gone from theaters; an old movie; an old show.
+    for title in [
+        "/movie/7100",
+        "/movie/7133",
+        "/movie/7132",
+        "/tv/9100",
+        "/movie/7003",
+        "/movie/7004",
+        "/movie/603",
+        "/tv/1396",
+    ] {
+        post_form(t.app(), &format!("{title}/watchlist"), "listed=true").await;
+    }
+    let titles = |json: &Value| -> Vec<u64> {
+        let mut ids: Vec<u64> = json["titles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_u64().unwrap())
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert!(body.contains(r#"<nav class="sort" aria-label="Filter by release">"#));
+    assert!(body.contains(
+        r#"<a href="/watchlist" aria-current="true">All <span class="count">8</span></a>"#
+    ));
+    assert!(body.contains(
+        r#"<a href="/watchlist?release=out_now">Out now <span class="count">4</span></a>"#
+    ));
+    assert!(body.contains(
+        r#"<a href="/watchlist?release=coming_soon">Coming soon <span class="count">4</span></a>"#
+    ));
+    assert!(!body.contains("Couldn't check the release dates"));
+
+    let (_, _, body) = get_page(t.app(), "/watchlist?release=coming_soon&kind=movie", false).await;
+    assert!(body.contains(">Premiere 01</a>") && body.contains(">Digital Next</a>"));
+    assert!(
+        body.contains(">Already Out</a>"),
+        "in theaters, not on digital"
+    );
+    assert!(!body.contains(">The Matrix</a>") && !body.contains(">Gone Digital</a>"));
+    assert!(body.contains(
+        r#"<a href="/watchlist?kind=movie&#38;release=coming_soon" aria-current="true">Movies <span class="count">3</span></a>"#
+    ));
+    assert!(body.contains(
+        r#"<a href="/watchlist?sort=rating&#38;kind=movie&#38;release=coming_soon">Rating</a>"#
+    ));
+    assert!(body.contains(
+        r#"<input type="hidden" name="back" value="/watchlist?kind=movie&#38;release=coming_soon">"#
+    ));
+
+    let (_, json) = get_json(t.app(), "/api/watchlist?release=coming_soon").await;
+    assert_eq!(titles(&json), [7100, 7132, 7133, 9100]);
+    assert_eq!(json["release_unknown"], 0);
+    let (_, json) = get_json(t.app(), "/api/watchlist?release=out_now").await;
+    assert_eq!(titles(&json), [603, 1396, 7003, 7004]);
+    assert!(
+        json["titles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["release_status"] == "out_now")
+    );
+
+    // Favorites have no release filter.
+    post_form(t.app(), "/movie/7100/favorite", "listed=true").await;
+    let (_, _, body) = get_page(t.app(), "/favorites?release=out_now", false).await;
+    assert!(!body.contains("Filter by release") && body.contains(">Premiere 01</a>"));
+    let (_, json) = get_json(t.app(), "/api/favorites?release=out_now").await;
+    assert_eq!(titles(&json), [7100]);
+
+    // A movie whose dates can't be loaded is unknown, and left out of either filter.
+    let pool = credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .pool();
+    sqlx::query("DELETE FROM provider_cache WHERE key = 'movie/7004'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    t.tmdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Couldn't check the release dates of 1 title right now."));
+    assert!(body.contains(">Closed Early</a>"));
+    let (_, _, body) = get_page(t.app(), "/watchlist?release=out_now", false).await;
+    assert!(
+        body.contains("Couldn't check the release dates of 1 title right now, so it's left out.")
+    );
+    assert!(!body.contains(">Closed Early</a>"));
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(json["release_unknown"], 1);
+    let closed = json["titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == 7004)
+        .unwrap();
+    assert!(closed.get("release_status").is_none());
+
+    // Nothing matching says which filter left it all out.
+    post_form(t.app(), "/tv/9100/watchlist", "listed=false").await;
+    let (_, _, body) = get_page(t.app(), "/watchlist?kind=tv&release=coming_soon", false).await;
+    assert!(
+        body.contains("None of the TV shows on your list are coming soon."),
+        "{body}"
+    );
+}
+
+#[tokio::test]
 async fn my_services_degrade_when_tmdb_or_storage_fail() {
     let database = temp_database("my-services");
     let t = build_with_database(
@@ -5420,6 +5639,83 @@ async fn terminal_client_lists_say_when_ratings_are_stale_or_missing() {
         list.contains(
             "Ratings aren't configured on the server, so titles stay in the order they were added."
         ),
+        "{list}"
+    );
+}
+
+#[tokio::test]
+async fn terminal_client_shows_the_next_release_on_to_watch_rows() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    post_form(t.app(), "/movie/7100/watchlist", "listed=true").await;
+    post_form(t.app(), "/movie/7133/watchlist", "listed=true").await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+
+    press(&mut app, KeyCode::Esc);
+    let open = press(&mut app, KeyCode::Char('w'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    let today = jiff::Zoned::now().date();
+    let day = |days: i64| {
+        let date = today + jiff::Span::new().days(days);
+        credits::model::release_day(&date.to_string(), today)
+    };
+    assert!(
+        list.contains("Premiere 01 ") && list.contains(&format!("In theaters {}", day(1))),
+        "{list}"
+    );
+    assert!(
+        list.contains("Digital Next ") && list.contains(&format!("Digital {}", day(12))),
+        "{list}"
+    );
+}
+
+#[tokio::test]
+async fn terminal_client_filters_to_watch_by_release() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    post_form(t.app(), "/movie/7100/watchlist", "listed=true").await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+
+    press(&mut app, KeyCode::Esc);
+    let open = press(&mut app, KeyCode::Char('w'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(
+        list.contains("Release All · Out now · Coming soon"),
+        "{list}"
+    );
+    assert!(
+        list.contains("Premiere 01") && list.contains("The Matrix"),
+        "{list}"
+    );
+
+    let out = press(&mut app, KeyCode::Char('e'));
+    fulfil(&client, &mut app, out.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(
+        list.contains("The Matrix") && !list.contains("Premiere 01"),
+        "{list}"
+    );
+
+    let coming = press(&mut app, KeyCode::Char('e'));
+    fulfil(&client, &mut app, coming.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(
+        !list.contains("The Matrix") && list.contains("Premiere 01"),
+        "{list}"
+    );
+
+    let tv = press(&mut app, KeyCode::Char('t'));
+    fulfil(&client, &mut app, tv.into_iter().next().unwrap()).await;
+    let tv = press(&mut app, KeyCode::Char('t'));
+    fulfil(&client, &mut app, tv.into_iter().next().unwrap()).await;
+    let list = screen(&mut app);
+    assert!(
+        list.contains("None of the TV shows on your list are coming soon."),
         "{list}"
     );
 }

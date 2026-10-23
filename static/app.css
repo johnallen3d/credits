@@ -88,6 +88,7 @@ footer.site .site-nav { flex-wrap: wrap; align-items: center; }
 .badge-person { color: var(--person); }
 .badge.in-theaters { padding: 0 .35rem; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); }
 .in-theaters-note .badge { margin-right: .35rem; }
+.next-release { color: var(--accent); }
 
 .backdrop { display: block; width: 100%; max-height: 360px; object-fit: cover; border-radius: 8px; margin-bottom: 1.5rem; }
 .detail-body { display: flex; gap: 2rem; align-items: flex-start; }
@@ -186,6 +187,10 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .tabs a[aria-current] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
 .controls:has(+ .sort-note) { margin-bottom: .5rem; }
 .sort-note { margin: 0 0 .4rem; font-size: .9rem; }
+/* To watch can show four filter rows: each keeps its labels whole, wrapping rather than truncating. */
+.watchlist .controls { display: flex; flex-wrap: wrap; }
+.watchlist .controls > .sort { flex: 1 1 auto; }
+.watchlist .segments { grid-auto-columns: minmax(max-content, 1fr); }
 .sort-note:has(+ :not(.sort-note)) { margin-bottom: 1rem; }
 .credit-rating { white-space: nowrap; margin-left: .25rem; }
 .filmography { list-style: none; padding: 0; margin: 0 0 1.5rem; }
@@ -263,6 +268,8 @@ body:has(.detail #movie-watched [aria-pressed="true"], .detail #seasons > .watch
 
 @media (max-width: 640px) {
   .controls { grid-auto-flow: row; gap: .6rem; }
+  .watchlist .controls { flex-direction: column; }
+  .watchlist .segments { grid-auto-columns: minmax(0, 1fr); }
   header.site, main, footer.site { padding-left: 1rem; padding-right: 1rem; }
   header.site { padding-top: .9rem; padding-bottom: .9rem; }
   .detail h1 { font-size: 1.6rem; line-height: 1.2; }
