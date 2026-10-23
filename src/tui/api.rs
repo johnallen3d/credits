@@ -549,6 +549,29 @@ pub struct PersonCredit {
     pub rating: Option<Rating>,
 }
 
+/// A page of Now playing or Coming soon, already rated by the server.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ReleasesPage {
+    pub region: String,
+    pub page: u32,
+    pub total_pages: u32,
+    pub total: usize,
+    pub titles: Vec<ReleaseTitle>,
+    pub ratings: SortRatings,
+    #[serde(default)]
+    pub unchecked: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ReleaseTitle {
+    pub id: u64,
+    pub title: String,
+    /// "2026-11-06": the region's theatrical date.
+    pub release_date: Option<String>,
+    /// Rotten Tomatoes, else IMDb.
+    pub rating: Option<Rating>,
+}
+
 /// The To watch list or Favorites, already filtered by the server.
 #[derive(Clone, Debug, Deserialize)]
 pub struct List {

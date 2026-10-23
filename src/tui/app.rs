@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::api::{
-    Episode, Kind, List, Marks, MarksUpdate, Person, RecentView, SearchHit, Season, ServicesState,
-    Title, TitleCredits, Watched, WatchedList,
+    Episode, Kind, List, Marks, MarksUpdate, Person, RecentView, ReleasesPage, SearchHit, Season,
+    ServicesState, Title, TitleCredits, Watched, WatchedList,
 };
 use super::client::ClientError;
 
@@ -28,6 +28,23 @@ pub enum Target {
     /// A TV show's episode by season and number.
     Episode(u64, u32, u32),
     List(ListName, ListView),
+    /// A page, from 1, of the movies now playing in theaters or coming soon.
+    Releases(ReleaseList, u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReleaseList {
+    NowPlaying,
+    ComingSoon,
+}
+
+impl ReleaseList {
+    pub fn label(self) -> &'static str {
+        match self {
+            ReleaseList::NowPlaying => "Now playing",
+            ReleaseList::ComingSoon => "Coming soon",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,6 +161,7 @@ pub enum Content {
     Season(Box<Season>),
     Episode(Box<Episode>),
     List(Box<List>),
+    Releases(Box<ReleasesPage>),
     Watched(Box<WatchedList>),
 }
 
@@ -493,12 +511,36 @@ impl App {
             }
             KeyCode::Char('r') => return self.reload().into_iter().collect(),
             KeyCode::Char('s') => self.peek(),
-            KeyCode::Char('[') => return self.neighbour(false).into_iter().collect(),
-            KeyCode::Char(']') => return self.neighbour(true).into_iter().collect(),
+            KeyCode::Char('[') => {
+                return self
+                    .neighbour(false)
+                    .or_else(|| self.turn_page(false))
+                    .into_iter()
+                    .collect();
+            }
+            KeyCode::Char(']') => {
+                return self
+                    .neighbour(true)
+                    .or_else(|| self.turn_page(true))
+                    .into_iter()
+                    .collect();
+            }
             KeyCode::Char('c') => return self.open_credits().into_iter().collect(),
             KeyCode::Char('w') => return self.open_list(ListName::Watchlist).into_iter().collect(),
             KeyCode::Char('f') => return self.open_list(ListName::Favorites).into_iter().collect(),
             KeyCode::Char('v') => return self.open_list(ListName::Watched).into_iter().collect(),
+            KeyCode::Char('n') => {
+                return self
+                    .open_releases(ReleaseList::NowPlaying)
+                    .into_iter()
+                    .collect();
+            }
+            KeyCode::Char('u') => {
+                return self
+                    .open_releases(ReleaseList::ComingSoon)
+                    .into_iter()
+                    .collect();
+            }
             KeyCode::Char('t') => {
                 return self
                     .change_view(|v| {
@@ -885,6 +927,57 @@ impl App {
             self.stack.pop();
         }
         Some(self.open(Target::List(name, ListView::default())))
+    }
+
+    /// Opens Now playing or Coming soon over the current page; from the
+    /// other one, swaps it.
+    fn open_releases(&mut self, list: ReleaseList) -> Option<Request> {
+        if let Some(Screen {
+            target: Target::Releases(open, _),
+            ..
+        }) = self.stack.last()
+        {
+            if *open == list {
+                return None;
+            }
+            self.stack.pop();
+        }
+        Some(self.open(Target::Releases(list, 1)))
+    }
+
+    /// Loads the previous or next page of Now playing or Coming soon in place.
+    fn turn_page(&mut self, next: bool) -> Option<Request> {
+        let seq = self.seq();
+        let screen = self.stack.last_mut()?;
+        let (Target::Releases(_, page), Load::Ready(Content::Releases(r))) =
+            (&mut screen.target, &screen.load)
+        else {
+            return None;
+        };
+        let to = if next {
+            (r.page < r.total_pages).then_some(r.page + 1)
+        } else {
+            (r.page > 1).then(|| r.page - 1)
+        }?;
+        *page = to;
+        screen.cursor = Cursor::default();
+        screen.seq = seq;
+        screen.load = Load::Loading;
+        Some(Request::Page {
+            seq,
+            target: screen.target,
+        })
+    }
+
+    /// Whether [ and ] page through the list on screen.
+    pub(super) fn can_turn_page(&self) -> bool {
+        matches!(
+            self.stack.last(),
+            Some(Screen {
+                load: Load::Ready(Content::Releases(r)),
+                ..
+            }) if r.total_pages > 1
+        )
     }
 
     /// Refetches the list or person on screen with a changed filter or order.

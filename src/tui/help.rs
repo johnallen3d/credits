@@ -130,6 +130,12 @@ fn bindings(app: &App) -> Vec<Binding> {
     );
     add(
         "Lists",
+        "n / u",
+        "Open Now playing / Coming soon movies",
+        browsing,
+    );
+    add(
+        "Lists",
         "t",
         "Cycle All / Movies / TV (lists and filmographies)",
         browsing && app.has_view(),
@@ -185,8 +191,8 @@ fn bindings(app: &App) -> Vec<Binding> {
     add(
         "Episodes",
         "[ / ]",
-        "Previous / next episode (when available)",
-        browsing && (previous || next),
+        "Previous / next episode, or page of Now playing / Coming soon (when available)",
+        browsing && (previous || next || app.can_turn_page()),
     );
     // The labels describe selection-sensitive watched behavior without implying
     // that a TV cast link can be marked instead of the show itself.

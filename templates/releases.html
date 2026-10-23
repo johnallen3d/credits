@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ detail.list.label() }}{% if detail.page > 1 %} · page {{ detail.page }}{% endif %} · credits{% endblock %}
+{% block content %}
+<section class="releases" aria-labelledby="releases-heading">
+  <h1 id="releases-heading">{{ detail.list.label() }}</h1>
+  {% include "_stale.html" %}
+  {% if detail.unchecked > 0 %}<p class="muted sort-note">Couldn't check the release dates of {{ detail.unchecked }} {% if detail.unchecked == 1 %}movie{% else %}movies{% endif %} right now, so {% if detail.unchecked == 1 %}it's{% else %}they're{% endif %} left out.</p>{% endif %}
+  {% if detail.ratings.not_configured() %}<p class="muted sort-note">Ratings aren't configured on this server.</p>
+  {% else if let Some(message) = detail.ratings.unavailable_message() %}<p class="muted sort-note">{{ message }}</p>{% endif %}
+  {% if let Some(day) = detail.ratings.stale_on() %}<p class="rating-stale sort-note">Couldn't refresh some ratings; using scores from as early as {{ day }}.</p>{% endif %}
+  {% if detail.titles.is_empty() %}
+  <p class="hint">{% match detail.list %}{% when ReleaseList::NowPlaying %}No movies are in {{ detail.region }} theaters by TMDB's dates right now.{% when ReleaseList::ComingSoon %}TMDB lists no movies coming to {{ detail.region }} theaters.{% endmatch %}</p>
+  {% else %}
+  <ul class="results releases-list">
+    {% for t in detail.titles %}
+    <li class="result">
+      <a href="{{ t.path() }}">
+        {% if let Some(url) = t.poster_url %}
+        <img class="poster" src="{{ url }}" alt="" loading="lazy" width="92" height="138">
+        {% else %}
+        <div class="poster missing" aria-hidden="true">No artwork</div>
+        {% endif %}
+        <div class="meta">
+          <span class="badge badge-movie">Movie</span>
+          <h2>{{ t.title }}</h2>
+          {% if let Some(label) = t.release_label() %}<p class="release-date">{{ label }}</p>{% endif %}
+          {% if let Some(r) = t.rating %}<span class="credit-rating">{% include "_rating.html" %}</span>{% endif %}
+        </div>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if detail.total_pages > 1 %}
+  <nav class="controls pager" aria-label="Pages" hx-boost="true" hx-target="main" hx-select="main" hx-swap="outerHTML show:window:top" hx-sync="closest .controls:replace">
+    <span class="segments">{% if detail.has_previous() %}<a href="{{ detail.page_href(detail.previous()) }}" rel="prev">← Previous</a>{% endif %}{% if detail.has_next() %}<a href="{{ detail.page_href(detail.next()) }}" rel="next">Next →</a>{% endif %}</span>
+    <span class="muted">Page {{ detail.page }} of {{ detail.total_pages }} · {{ detail.total }} movies</span>
+  </nav>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

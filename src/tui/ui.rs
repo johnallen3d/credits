@@ -11,11 +11,13 @@ use unicode_width::UnicodeWidthStr;
 
 use super::api::{
     Availability, Credit, Episode, EpisodeRatings, KeyCrew, Kind, List, ListServices, Marks,
-    Metadata, Person, PersonCredit, Rating, RatingSource, Ratings, RecentKind, Releases, SearchHit,
-    Season, ServicesState, SortRatings, State, Title, TitleCredits, UnavailableReason, Watched,
-    WatchedList, WatchedSource, WhereToWatch,
+    Metadata, Person, PersonCredit, Rating, RatingSource, Ratings, RecentKind, Releases,
+    ReleasesPage, SearchHit, Season, ServicesState, SortRatings, State, Title, TitleCredits,
+    UnavailableReason, Watched, WatchedList, WatchedSource, WhereToWatch,
 };
-use super::app::{App, Content, ListName, ListView, Load, Screen, Source, Status, Target};
+use super::app::{
+    App, Content, ListName, ListView, Load, ReleaseList, Screen, Source, Status, Target,
+};
 use super::theme::palette;
 
 /// Width the link list is built at when only the links matter.
@@ -243,6 +245,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Some(Target::List(ListName::Watched, _)) => {
             "j/k move · Enter open · t kind · a marked · o sort · w/f/v lists · Esc back · r reload · q quit"
         }
+        Some(Target::Releases(..)) => {
+            "j/k move · Enter open · [/] page · n/u switch list · Esc back · r reload · q quit"
+        }
         Some(Target::Title(Kind::Tv, _)) => {
             "j/k move · Enter open · b/F toggle · x season · X show · c credits · w/f/v lists · Esc back · q quit"
         }
@@ -318,6 +323,7 @@ fn screen_name(screen: &Screen) -> String {
         (_, Target::Season(_, n)) => season_label(n),
         (_, Target::Episode(_, _, n)) => format!("Episode {n}"),
         (_, Target::List(name, _)) => name.label().to_owned(),
+        (_, Target::Releases(list, _)) => list.label().to_owned(),
     }
 }
 
@@ -336,6 +342,10 @@ fn page(app: &App, width: u16) -> Page {
         Load::Ready(Content::Episode(e)) => episode_page(e, screen, width),
         Load::Ready(Content::List(l)) => match screen.target {
             Target::List(name, view) => list_page(l, name, view, width),
+            _ => Page::default(),
+        },
+        Load::Ready(Content::Releases(r)) => match screen.target {
+            Target::Releases(list, _) => releases_page(r, list, width),
             _ => Page::default(),
         },
         Load::Ready(Content::Watched(w)) => match screen.target {
@@ -1145,6 +1155,85 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
             spans.extend(availability(a));
         }
         page.link(Line::from(spans), Target::Title(e.kind, e.id));
+    }
+    page
+}
+
+/// A page of movies now playing or coming soon, soonest first for coming
+/// soon, each with its theatrical date and score. Rows open the movie.
+fn releases_page(r: &ReleasesPage, list: ReleaseList, width: u16) -> Page {
+    let mut page = Page::new(list.label());
+    page.line(Line::styled(
+        format!(
+            "Page {} of {} · {} {} · [/] page",
+            r.page,
+            r.total_pages,
+            r.total,
+            if r.total == 1 { "movie" } else { "movies" }
+        ),
+        dim(),
+    ));
+    if r.unchecked > 0 {
+        let (movies, they) = if r.unchecked == 1 {
+            ("movie", "it's")
+        } else {
+            ("movies", "they're")
+        };
+        page.line(Line::styled(
+            format!(
+                "Couldn't check the release dates of {} {movies} right now, so {they} left out.",
+                r.unchecked
+            ),
+            dim(),
+        ));
+    }
+    match r.ratings.unavailable_reason {
+        Some(UnavailableReason::NotConfigured) => page.line(Line::styled(
+            "Ratings aren't configured on the server.",
+            dim(),
+        )),
+        Some(_) => page.line(Line::styled(
+            "Some ratings couldn't be loaded right now.",
+            dim(),
+        )),
+        None => {}
+    }
+    if let Some(day) = fetched_day(&r.ratings.stale_since) {
+        page.warn(
+            format!("Couldn't refresh some ratings; using scores from as early as {day}."),
+            width,
+        );
+    }
+    page.blank();
+    if r.titles.is_empty() {
+        let text = match list {
+            ReleaseList::NowPlaying => format!(
+                "  No movies are in {} theaters by TMDB's dates right now.",
+                r.region
+            ),
+            ReleaseList::ComingSoon => {
+                format!("  TMDB lists no movies coming to {} theaters.", r.region)
+            }
+        };
+        page.line(Line::styled(text, dim()));
+        return page;
+    }
+    let today = crate::model::local_today();
+    let column = column_width(r.titles.iter().map(|t| t.title.as_str()), TITLE_COLUMN);
+    for t in &r.titles {
+        let date = t
+            .release_date
+            .as_deref()
+            .map(|d| crate::model::release_day(d, today))
+            .unwrap_or_default();
+        let mut spans = vec![
+            Span::styled(format!("  {}  ", pad(&date, 18)), dim()),
+            Span::raw(format!("{}  ", pad(&t.title, column))),
+        ];
+        if let Some(r) = &t.rating {
+            spans.extend(short_score(r));
+        }
+        page.link(Line::from(spans), Target::Title(Kind::Movie, t.id));
     }
     page
 }

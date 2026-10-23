@@ -18,6 +18,7 @@ watch, and keep track of what you've watched, without spoilers.
 - **Ratings** from Rotten Tomatoes and IMDb (via OMDb)
 - **Where to watch** in your region, highlighting your services
 - **To watch, Favorites and Watched** lists with filter and sort
+- **Now playing and Coming soon** movies in your region, with dates and ratings
 - **Spoiler guard:** unwatched episode summaries, scores and actors'
   episode counts stay hidden
 - **Seen on Apple TV:** optional, marks what you watch via Home Assistant

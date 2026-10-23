@@ -18,11 +18,11 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::catalog::{Catalog, CatalogError, RecentError, ServicesError, WatchlistError};
 use crate::model::{
     EpisodeDetail, EpisodeWithWatched, FilmographyEntry, FilmographyGroup, FilmographySort,
-    KindFilter, MediaKind, MovieWatched, MovieWithMarks, PersonDetail, RecentKind, RecentView,
-    RecentViews, SearchHit, SeasonDetail, SeasonWithWatched, ServicesDetail, ServicesFilter,
-    SourceFilter, TitleCredits, TitleDetail, TitleMarksUpdate, TvWithWatched, WatchTarget, Watched,
-    WatchedList, WatchedMarks, WatchedSort, WatchedSource, WatchedTitle, WatchlistDetail,
-    WatchlistSort, encode_query_value, title_path,
+    KindFilter, MediaKind, Metadata, MovieWatched, MovieWithMarks, PersonDetail, RecentKind,
+    RecentView, RecentViews, ReleaseList, ReleasesDetail, SearchHit, SeasonDetail,
+    SeasonWithWatched, ServicesDetail, ServicesFilter, SourceFilter, TitleCredits, TitleDetail,
+    TitleMarksUpdate, TvWithWatched, WatchTarget, Watched, WatchedList, WatchedMarks, WatchedSort,
+    WatchedSource, WatchedTitle, WatchlistDetail, WatchlistSort, encode_query_value, title_path,
 };
 use crate::playback::{App, Kind, LiveStatus, PlaybackDetail};
 
@@ -87,6 +87,14 @@ pub fn app(catalog: Catalog) -> Router {
         .route("/watchlist", get(|s, q| watchlist_page(s, q, false)))
         .route("/favorites", get(|s, q| watchlist_page(s, q, true)))
         .route("/watched", get(watched_page))
+        .route(
+            "/now-playing",
+            get(|s, q| releases_page(s, q, ReleaseList::NowPlaying)),
+        )
+        .route(
+            "/coming-soon",
+            get(|s, q| releases_page(s, q, ReleaseList::ComingSoon)),
+        )
         .route("/services", get(services_page).post(save_services))
         .route("/playback", get(playback_page))
         .route("/playback/decide", post(decide_playback_show))
@@ -149,6 +157,8 @@ fn api() -> OpenApiRouter<Catalog> {
         .routes(routes!(api_watched))
         .routes(routes!(api_services))
         .routes(routes!(api_playback))
+        .routes(routes!(api_now_playing))
+        .routes(routes!(api_coming_soon))
         .routes(routes!(api_movie_watchlist))
         .routes(routes!(api_tv_watchlist))
         .routes(routes!(api_movie_favorite))
@@ -1208,6 +1218,86 @@ async fn api_list(
             )
         }
     }
+}
+
+#[derive(Template)]
+#[template(path = "releases.html")]
+struct ReleasesPage {
+    detail: ReleasesDetail,
+    metadata: Metadata,
+}
+
+#[derive(Deserialize)]
+struct PageParams {
+    page: Option<String>,
+}
+
+impl PageParams {
+    /// The requested page; the first when missing or not a number.
+    fn page(&self) -> u32 {
+        self.page
+            .as_deref()
+            .and_then(|p| p.trim().parse().ok())
+            .unwrap_or(1)
+    }
+}
+
+async fn releases_page(
+    State(catalog): State<Catalog>,
+    Query(params): Query<PageParams>,
+    list: ReleaseList,
+) -> Response {
+    match catalog.releases(list, params.page()).await {
+        Ok((detail, metadata)) => html(StatusCode::OK, ReleasesPage { detail, metadata }.render()),
+        Err(e) => {
+            tracing::warn!(error = %e, ?list, "reading releases failed");
+            error_page(
+                status_for(&e),
+                match list {
+                    ReleaseList::NowPlaying => "Couldn't load Now playing",
+                    ReleaseList::ComingSoon => "Couldn't load Coming soon",
+                },
+                user_message(&e),
+            )
+        }
+    }
+}
+
+/// Movies now playing in the region's theaters, most popular first, with
+/// their ratings.
+#[utoipa::path(
+    get,
+    path = "/api/now-playing",
+    params(("page" = Option<u32>, Query, description = "From 1, 20 movies each; defaults to 1, and a page past the end gives the last")),
+    responses((status = OK, body = ReleasesDetail), ReadError)
+)]
+async fn api_now_playing(
+    State(catalog): State<Catalog>,
+    Query(params): Query<PageParams>,
+) -> Response {
+    api_releases(&catalog, ReleaseList::NowPlaying, params.page()).await
+}
+
+/// Movies coming to the region's theaters soon, soonest first, with their
+/// ratings.
+#[utoipa::path(
+    get,
+    path = "/api/coming-soon",
+    params(("page" = Option<u32>, Query, description = "From 1, 20 movies each; defaults to 1, and a page past the end gives the last")),
+    responses((status = OK, body = ReleasesDetail), ReadError)
+)]
+async fn api_coming_soon(
+    State(catalog): State<Catalog>,
+    Query(params): Query<PageParams>,
+) -> Response {
+    api_releases(&catalog, ReleaseList::ComingSoon, params.page()).await
+}
+
+async fn api_releases(catalog: &Catalog, list: ReleaseList, page: u32) -> Response {
+    api_result(
+        catalog.releases(list, page).await.map(|(detail, _)| detail),
+        "releases",
+    )
 }
 
 async fn watched_page(

@@ -1435,6 +1435,109 @@ impl SortRatings {
     }
 }
 
+/// The movies TMDB lists as playing in the region's theaters, or coming
+/// soon to them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseList {
+    NowPlaying,
+    ComingSoon,
+}
+
+impl ReleaseList {
+    pub fn label(self) -> &'static str {
+        match self {
+            ReleaseList::NowPlaying => "Now playing",
+            ReleaseList::ComingSoon => "Coming soon",
+        }
+    }
+
+    /// "now-playing" or "coming-soon".
+    pub fn slug(self) -> &'static str {
+        &self.path()[1..]
+    }
+
+    /// The page's path; the JSON API's is under `/api`.
+    pub fn path(self) -> &'static str {
+        match self {
+            ReleaseList::NowPlaying => "/now-playing",
+            ReleaseList::ComingSoon => "/coming-soon",
+        }
+    }
+}
+
+/// A movie on the Now playing or Coming soon list.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ReleaseEntry {
+    pub id: u64,
+    pub title: String,
+    /// "2010-07-16"; the region's theatrical date from TMDB.
+    pub release_date: Option<String>,
+    pub poster_url: Option<String>,
+    /// Rotten Tomatoes if there is one, else IMDb.
+    pub rating: Option<Rating>,
+}
+
+impl ReleaseEntry {
+    pub fn path(&self) -> String {
+        title_path(MediaKind::Movie, self.id)
+    }
+
+    /// "Jul 16, 2010", or "Coming Oct 16" for a date still to come.
+    pub fn release_label(&self) -> Option<String> {
+        self.release_date
+            .as_deref()
+            .map(|d| release_day(d, local_today()))
+    }
+}
+
+/// A page of Now playing or Coming soon: movies with a theatrical date in
+/// the region, with each one's rating.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ReleasesDetail {
+    pub list: ReleaseList,
+    /// The ISO 3166-1 region whose theaters these are.
+    pub region: String,
+    /// From 1; a page past the end gives the last one.
+    pub page: u32,
+    /// At least 1, even with no movies.
+    pub total_pages: u32,
+    /// Movies on the whole list.
+    pub total: usize,
+    /// Now playing in TMDB's popularity order; coming soon soonest first.
+    pub titles: Vec<ReleaseEntry>,
+    /// How complete this page's ratings are.
+    pub ratings: SortRatings,
+    /// Listed movies whose dates couldn't be loaded, so left out.
+    pub unchecked: usize,
+}
+
+impl ReleasesDetail {
+    /// The page's URL: the list's path, with `?page=` after the first.
+    pub fn page_href(&self, page: u32) -> String {
+        match page {
+            1 => self.list.path().to_owned(),
+            n => format!("{}?page={n}", self.list.path()),
+        }
+    }
+
+    pub fn has_previous(&self) -> bool {
+        self.page > 1
+    }
+
+    pub fn has_next(&self) -> bool {
+        self.page < self.total_pages
+    }
+
+    pub fn previous(&self) -> u32 {
+        self.page.saturating_sub(1).max(1)
+    }
+
+    pub fn next(&self) -> u32 {
+        (self.page + 1).min(self.total_pages)
+    }
+}
+
 /// Every movie and TV show with a watched mark, however it was made: by
 /// hand, by favoriting a show, or from what played on an Apple TV.
 #[derive(Clone, Debug, Serialize, ToSchema)]

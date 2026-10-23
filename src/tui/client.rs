@@ -6,9 +6,9 @@ use serde::de::DeserializeOwned;
 
 use super::api::{
     ApiError, Episode, Kind, List, MarksUpdate, Person, RecentKind, RecentView, RecentViews,
-    SearchHit, SearchResults, Season, Title, TitleCredits, Watched, WatchedList,
+    ReleasesPage, SearchHit, SearchResults, Season, Title, TitleCredits, Watched, WatchedList,
 };
-use super::app::{ListName, ListView};
+use super::app::{ListName, ListView, ReleaseList};
 
 #[derive(Clone)]
 pub struct Client {
@@ -111,6 +111,19 @@ impl Client {
             &[],
         )
         .await
+    }
+
+    /// A page of Now playing or Coming soon movies, as the web page lists them.
+    pub async fn releases(
+        &self,
+        list: ReleaseList,
+        page: u32,
+    ) -> Result<ReleasesPage, ClientError> {
+        let path = match list {
+            ReleaseList::NowPlaying => "/api/now-playing",
+            ReleaseList::ComingSoon => "/api/coming-soon",
+        };
+        self.get(path, &[("page", &page.to_string())]).await
     }
 
     /// The To watch list or Favorites, with the same filters as the web page.

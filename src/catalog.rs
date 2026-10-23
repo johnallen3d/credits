@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use jiff::Timestamp;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -18,12 +18,12 @@ use crate::model::{
     Availability, Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup,
     FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
     MovieWatched, OfferGroup, OfferKind, PersonCredit, PersonDetail, PersonHit, Rating, Ratings,
-    RecentKind, RecentView, ReleaseDate, ReleaseKind, Releases, SearchHit, SeasonDetail,
-    SeasonSummary, Service, ServiceGroup, ServiceOption, ServicesDetail, ServicesState,
-    ShowProgress, SortRatings, TitleCredits, TitleDetail, TitleHit, TitleMarks, UnavailableReason,
-    WatchProvider, WatchTarget, Watched, WatchedList, WatchedMarks, WatchedSort, WatchedSource,
-    WatchedTitle, WatchlistDetail, WatchlistSort, WhereToWatch, WhereToWatchState,
-    hide_cast_episode_counts, local_today, showtimes_url,
+    RecentKind, RecentView, ReleaseDate, ReleaseEntry, ReleaseKind, ReleaseList, Releases,
+    ReleasesDetail, SearchHit, SeasonDetail, SeasonSummary, Service, ServiceGroup, ServiceOption,
+    ServicesDetail, ServicesState, ShowProgress, SortRatings, TitleCredits, TitleDetail, TitleHit,
+    TitleMarks, UnavailableReason, WatchProvider, WatchTarget, Watched, WatchedList, WatchedMarks,
+    WatchedSort, WatchedSource, WatchedTitle, WatchlistDetail, WatchlistSort, WhereToWatch,
+    WhereToWatchState, hide_cast_episode_counts, local_today, showtimes_url,
 };
 use crate::omdb::OmdbClient;
 use crate::playback::{
@@ -55,7 +55,9 @@ const MAX_CHARACTERS: usize = 3;
 /// TMDB still lists it as now playing.
 const IN_THEATERS_DAYS: i64 = 45;
 /// Pages of TMDB's now playing list read at most, 20 movies each.
-const NOW_PLAYING_PAGES: u32 = 40;
+const MOVIE_LIST_PAGES: u32 = 40;
+/// Movies on each page of Now playing and Coming soon.
+pub const RELEASES_PAGE_SIZE: usize = 20;
 /// How far from today a row's release date (or year) can be for the row to
 /// be checked for being in theaters; others aren't looked up.
 const IN_THEATERS_CANDIDATE_DAYS: i64 = 365;
@@ -1325,16 +1327,35 @@ impl Catalog {
     /// Gives each entry its Rotten Tomatoes or else IMDb score, if any.
     async fn rate(&self, lists: &mut [&mut Vec<FilmographyEntry>]) -> SortRatings {
         let entries = || lists.iter().flat_map(|l| l.iter());
-        if !self.ratings.is_configured() {
-            return SortRatings {
-                unrated: entries().count(),
-                stale_since: None,
-                unavailable_reason: Some(UnavailableReason::NotConfigured),
-            };
-        }
-        let ratings = self
-            .title_ratings(entries().map(|e| (e.kind, e.id)).collect())
+        let (scores, mut summary) = self
+            .scores(entries().map(|e| (e.kind, e.id)).collect())
             .await;
+        for list in lists {
+            for e in list.iter_mut() {
+                e.rating = scores.get(&(e.kind, e.id)).cloned();
+                summary.unrated += usize::from(e.rating.is_none());
+            }
+        }
+        summary
+    }
+
+    /// Each title's Rotten Tomatoes or else IMDb score, where it has one,
+    /// and how complete the scores are. Titles without a score are left
+    /// out; `unrated` is not counted here.
+    async fn scores(
+        &self,
+        titles: HashSet<(MediaKind, u64)>,
+    ) -> (HashMap<(MediaKind, u64), Rating>, SortRatings) {
+        if !self.ratings.is_configured() {
+            return (
+                HashMap::new(),
+                SortRatings {
+                    unavailable_reason: Some(UnavailableReason::NotConfigured),
+                    ..SortRatings::default()
+                },
+            );
+        }
+        let ratings = self.title_ratings(titles).await;
 
         let mut summary = SortRatings::default();
         for r in ratings.values() {
@@ -1345,13 +1366,11 @@ impl Catalog {
                 summary.unavailable_reason = Some(UnavailableReason::ProviderError);
             }
         }
-        for list in lists {
-            for e in list.iter_mut() {
-                e.rating = ratings.get(&(e.kind, e.id)).and_then(Rating::for_sorting);
-                summary.unrated += usize::from(e.rating.is_none());
-            }
-        }
-        summary
+        let scores = ratings
+            .iter()
+            .filter_map(|(title, r)| Some((*title, Rating::for_sorting(r)?)))
+            .collect();
+        (scores, summary)
     }
 
     /// Each title's ratings, looked up by the IMDb ID on its cached TMDB
@@ -1402,20 +1421,34 @@ impl Catalog {
     /// The movies TMDB lists as playing in the region's theaters, most
     /// popular first, through the provider cache (so refreshed daily).
     pub async fn now_playing(&self) -> Result<(Vec<tmdb::MovieSummary>, Metadata), CatalogError> {
+        self.region_movies(ReleaseList::NowPlaying).await
+    }
+
+    /// The movies TMDB lists as playing in the region's theaters or coming
+    /// to them soon, every page up to `MOVIE_LIST_PAGES`, through the provider
+    /// cache. Duplicates across pages are dropped, keeping the first.
+    async fn region_movies(
+        &self,
+        list: ReleaseList,
+    ) -> Result<(Vec<tmdb::MovieSummary>, Metadata), CatalogError> {
         let region = self.watch_region.clone();
         let tmdb = self.tmdb.clone();
-        self.cached(format!("movie/now_playing/{region}"), async move {
-            let first = tmdb.now_playing(&region, 1).await?;
+        let key = match list {
+            ReleaseList::NowPlaying => "now_playing",
+            ReleaseList::ComingSoon => "upcoming",
+        };
+        self.cached(format!("movie/{key}/{region}"), async move {
+            let first = movie_page(&tmdb, list, &region, 1).await?;
             let mut movies = first.results;
             let mut pages = JoinSet::new();
-            for page in 2..=first.total_pages.min(NOW_PLAYING_PAGES) {
+            for page in 2..=first.total_pages.min(MOVIE_LIST_PAGES) {
                 let (tmdb, region) = (tmdb.clone(), region.clone());
-                pages.spawn(async move { (page, tmdb.now_playing(&region, page).await) });
+                pages.spawn(async move { (page, movie_page(&tmdb, list, &region, page).await) });
             }
             let mut rest = Vec::new();
             while let Some(joined) = pages.join_next().await {
                 let (page, result) = joined
-                    .map_err(|e| CatalogError::Provider(format!("now playing task failed: {e}")))?;
+                    .map_err(|e| CatalogError::Provider(format!("movie list task failed: {e}")))?;
                 rest.push((page, result?.results));
             }
             rest.sort_by_key(|(page, _)| *page);
@@ -1426,6 +1459,160 @@ impl Catalog {
             Ok(movies)
         })
         .await
+    }
+
+    /// One page of Now playing or Coming soon, `RELEASES_PAGE_SIZE` movies
+    /// with their ratings. Only movies with a theatrical date in the region
+    /// count: Now playing holds those in theaters by #898's dates rule (TMDB
+    /// listing alone isn't enough), in TMDB's popularity order; Coming soon
+    /// those opening after today, soonest first. A page past the end shows
+    /// the last one.
+    pub async fn releases(
+        &self,
+        list: ReleaseList,
+        page: u32,
+    ) -> Result<(ReleasesDetail, Metadata), CatalogError> {
+        let (regional, metadata) = self.regional_movies(list).await?;
+        let today = local_today();
+        let mut movies: Vec<RegionalMovie> = regional
+            .movies
+            .into_iter()
+            .filter(|m| match list {
+                ReleaseList::NowPlaying => {
+                    let releases = m.releases(&self.watch_region, today);
+                    showing_by_dates(Some(&releases), today) == Some(true)
+                }
+                ReleaseList::ComingSoon => m.theatrical_date().is_some_and(|d| d > today),
+            })
+            .collect();
+        if list == ReleaseList::ComingSoon {
+            // Stable, so a day's openings keep TMDB's popularity order.
+            movies.sort_by_key(RegionalMovie::theatrical_date);
+        }
+        let total = movies.len();
+        let total_pages = total.div_ceil(RELEASES_PAGE_SIZE).max(1);
+        let page = usize::try_from(page).unwrap_or(1).clamp(1, total_pages);
+        let mut titles: Vec<ReleaseEntry> = movies
+            .into_iter()
+            .skip((page - 1) * RELEASES_PAGE_SIZE)
+            .take(RELEASES_PAGE_SIZE)
+            .map(|m| ReleaseEntry {
+                id: m.id,
+                title: m.title,
+                release_date: m.theatrical,
+                poster_url: self.image(POSTER_SIZE, m.poster_path),
+                rating: None,
+            })
+            .collect();
+        let (scores, mut ratings) = self
+            .scores(titles.iter().map(|t| (MediaKind::Movie, t.id)).collect())
+            .await;
+        for t in &mut titles {
+            t.rating = scores.get(&(MediaKind::Movie, t.id)).cloned();
+            ratings.unrated += usize::from(t.rating.is_none());
+        }
+        Ok((
+            ReleasesDetail {
+                list,
+                region: self.watch_region.clone(),
+                page: page as u32,
+                total_pages: total_pages as u32,
+                total,
+                titles,
+                ratings,
+                unchecked: regional.unchecked,
+            },
+            metadata,
+        ))
+    }
+
+    /// The movies on TMDB's now playing or upcoming list that have a
+    /// theatrical date in the region, with that and their digital date, in
+    /// TMDB's order. Each listed movie dated within
+    /// `IN_THEATERS_CANDIDATE_DAYS` of today is looked up (its details are
+    /// cached anyway); the result is cached too, and refetched while any
+    /// lookup failed.
+    async fn regional_movies(
+        &self,
+        list: ReleaseList,
+    ) -> Result<(RegionalMovies, Metadata), CatalogError> {
+        let key = format!("releases/{}/{}", list.slug(), self.watch_region);
+        let catalog = self.clone();
+        let fetch = async move {
+            let (listed, _) = catalog.region_movies(list).await?;
+            let today = local_today();
+            let permits = Arc::new(Semaphore::new(CONCURRENT_TITLE_LOOKUPS));
+            let mut lookups = JoinSet::new();
+            for (index, m) in listed
+                .into_iter()
+                .filter(|m| {
+                    near_today(
+                        m.release_date.as_deref().and_then(|d| d.parse().ok()),
+                        today,
+                    )
+                })
+                .enumerate()
+            {
+                let catalog = catalog.clone();
+                let permits = permits.clone();
+                lookups.spawn(async move {
+                    let _permit = permits.acquire_owned().await;
+                    let detail = catalog.movie_raw(m.id).await;
+                    (index, m, detail)
+                });
+            }
+            let mut found = Vec::new();
+            let mut unchecked = 0;
+            while let Some(joined) = lookups.join_next().await {
+                match joined {
+                    Ok((index, m, Ok((mut detail, _)))) => {
+                        let releases = releases(
+                            &catalog.watch_region,
+                            detail.release_dates.take().unwrap_or_default(),
+                            None,
+                            today,
+                        );
+                        let date = |kind| {
+                            releases
+                                .as_ref()?
+                                .dates
+                                .iter()
+                                .find(|d| d.kind == kind)
+                                .map(|d| d.date.clone())
+                        };
+                        let theatrical = date(ReleaseKind::Theatrical);
+                        if theatrical.is_some() {
+                            found.push((
+                                index,
+                                RegionalMovie {
+                                    id: m.id,
+                                    title: m.title,
+                                    poster_path: m.poster_path,
+                                    theatrical,
+                                    digital: date(ReleaseKind::Digital),
+                                },
+                            ));
+                        }
+                    }
+                    Ok((_, _, Err(CatalogError::NotFound))) => {}
+                    Ok((_, m, Err(e))) => {
+                        tracing::warn!(error = %e, id = m.id, "movie lookup for release list failed");
+                        unchecked += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "release list lookup task failed");
+                        unchecked += 1;
+                    }
+                }
+            }
+            found.sort_by_key(|(index, _)| *index);
+            Ok(RegionalMovies {
+                movies: found.into_iter().map(|(_, m)| m).collect(),
+                unchecked,
+            })
+        };
+        self.cached_if(key, fetch, |r: &RegionalMovies| r.unchecked == 0)
+            .await
     }
 
     /// IDs on the now playing list; none, logged, when it can't be loaded,
@@ -2281,6 +2468,69 @@ fn near_today(date: Option<jiff::civil::Date>, today: jiff::civil::Date) -> bool
         let days = i64::from((today - d).get_days());
         days.abs() <= IN_THEATERS_CANDIDATE_DAYS
     })
+}
+
+/// A movie from TMDB's now playing or upcoming list with its theatrical
+/// and digital dates in the region, as cached for the release lists.
+#[derive(Serialize, Deserialize)]
+struct RegionalMovie {
+    id: u64,
+    title: String,
+    poster_path: Option<String>,
+    /// "2026-11-06".
+    theatrical: Option<String>,
+    digital: Option<String>,
+}
+
+impl RegionalMovie {
+    fn theatrical_date(&self) -> Option<jiff::civil::Date> {
+        self.theatrical.as_deref()?.parse().ok()
+    }
+
+    /// Its dates as `Releases`, for `showing_by_dates`.
+    fn releases(&self, region: &str, today: jiff::civil::Date) -> Releases {
+        let dates = [
+            (ReleaseKind::Theatrical, &self.theatrical),
+            (ReleaseKind::Digital, &self.digital),
+        ]
+        .into_iter()
+        .filter_map(|(kind, date)| {
+            let date = date.clone()?;
+            let upcoming = date.parse::<jiff::civil::Date>().is_ok_and(|d| d > today);
+            Some(ReleaseDate {
+                kind,
+                date,
+                upcoming,
+            })
+        })
+        .collect();
+        Releases {
+            region: region.to_owned(),
+            certification: None,
+            dates,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct RegionalMovies {
+    movies: Vec<RegionalMovie>,
+    /// Listed movies whose details couldn't be loaded, so whose dates are
+    /// unknown.
+    unchecked: usize,
+}
+
+/// One page of a region's movie list from TMDB.
+async fn movie_page(
+    tmdb: &TmdbClient,
+    list: ReleaseList,
+    region: &str,
+    page: u32,
+) -> Result<tmdb::Paged<tmdb::MovieSummary>, CatalogError> {
+    match list {
+        ReleaseList::NowPlaying => tmdb.now_playing(region, page).await,
+        ReleaseList::ComingSoon => tmdb.upcoming(region, page).await,
+    }
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {

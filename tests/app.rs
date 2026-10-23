@@ -30,7 +30,10 @@ fn authorized(headers: &HeaderMap) -> bool {
 struct FakeTmdb {
     calls: Arc<AtomicUsize>,
     now_playing_calls: Arc<AtomicUsize>,
+    upcoming_calls: Arc<AtomicUsize>,
     down: Arc<AtomicBool>,
+    /// Fails every movie details request, but not the lists.
+    details_down: Arc<AtomicBool>,
 }
 
 impl FakeTmdb {
@@ -42,8 +45,16 @@ impl FakeTmdb {
         self.now_playing_calls.load(Ordering::SeqCst)
     }
 
+    fn upcoming_calls(&self) -> usize {
+        self.upcoming_calls.load(Ordering::SeqCst)
+    }
+
     fn set_down(&self, down: bool) {
         self.down.store(down, Ordering::SeqCst);
+    }
+
+    fn set_details_down(&self, down: bool) {
+        self.details_down.store(down, Ordering::SeqCst);
     }
 }
 
@@ -156,9 +167,32 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
             }),
         )
         .route(
+            "/3/movie/upcoming",
+            get(|Query(q): Query<HashMap<String, String>>| async move {
+                if q.get("region").map(String::as_str) != Some("US") {
+                    return Json(json!({ "results": [], "total_pages": 1 }));
+                }
+                // Most popular first, which is latest opening first here;
+                // 7131 has no date at all.
+                let ids: Vec<u64> = match q.get("page").map(String::as_str) {
+                    Some("2") => (7100..=7109).rev().collect(),
+                    _ => (7110..=7124).rev().chain([7130, 7131, 7132]).collect(),
+                };
+                let results: Vec<Value> = ids
+                    .into_iter()
+                    .map(|id| match upcoming_movie(id) {
+                        Some(m) => json!({ "id": id, "title": m["title"],
+                                           "release_date": m["release_date"] }),
+                        None => json!({ "id": id, "title": "Undated Film" }),
+                    })
+                    .collect();
+                Json(json!({ "results": results, "total_pages": 2 }))
+            }),
+        )
+        .route(
             "/3/movie/{id}",
             get(|Path(id): Path<u64>| async move {
-                if let Some(movie) = in_theaters_movie(id) {
+                if let Some(movie) = in_theaters_movie(id).or_else(|| upcoming_movie(id)) {
                     return (StatusCode::OK, Json(movie));
                 }
                 // Movies played on the Apple TV: only what matching needs.
@@ -498,7 +532,18 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                     if request.uri().path().ends_with("/now_playing") {
                         state.now_playing_calls.fetch_add(1, Ordering::SeqCst);
                     }
+                    if request.uri().path().ends_with("/upcoming") {
+                        state.upcoming_calls.fetch_add(1, Ordering::SeqCst);
+                    }
                     if state.down.load(Ordering::SeqCst) {
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                    let details = request
+                        .uri()
+                        .path()
+                        .strip_prefix("/3/movie/")
+                        .is_some_and(|id| id.bytes().all(|b| b.is_ascii_digit()));
+                    if details && state.details_down.load(Ordering::SeqCst) {
                         return StatusCode::SERVICE_UNAVAILABLE.into_response();
                     }
                     next.run(request).await
@@ -540,6 +585,33 @@ fn in_theaters_movie(id: u64) -> Option<Value> {
         "id": id, "title": title, "release_date": &ago(theatrical)[..10], "runtime": 100,
         "external_ids": {}, "watch/providers": { "results": {} },
         "release_dates": { "results": [{ "iso_3166_1": "US", "release_dates": dates }] }
+    }))
+}
+
+/// Movies TMDB lists as upcoming: 7100–7124 ("Premiere 01"–"Premiere 25")
+/// open in US theaters 1–25 days from now, 7100 with Rotten Tomatoes and
+/// IMDb scores and 7121 with IMDb only; 7130 opens only in Canada; 7132
+/// opened in the US three days ago.
+fn upcoming_movie(id: u64) -> Option<Value> {
+    let today = jiff::Zoned::now().date();
+    let (title, region, days) = match id {
+        7100..=7124 => (format!("Premiere {:02}", id - 7099), "US", id as i64 - 7099),
+        7130 => ("Canada First".to_owned(), "CA", 5),
+        7132 => ("Already Out".to_owned(), "US", -3),
+        _ => return None,
+    };
+    let date = today.checked_add(jiff::Span::new().days(days)).unwrap();
+    let imdb_id = match id {
+        7100 => json!("tt0133093"),
+        7121 => json!("tt6060000"),
+        _ => Value::Null,
+    };
+    Some(json!({
+        "id": id, "title": title, "release_date": date.to_string(), "runtime": 100,
+        "external_ids": { "imdb_id": imdb_id }, "watch/providers": { "results": {} },
+        "release_dates": { "results": [{ "iso_3166_1": region, "release_dates": [
+            { "type": 3, "release_date": format!("{date}T00:00:00.000Z"), "certification": "" }
+        ] }] }
     }))
 }
 
@@ -4314,6 +4386,147 @@ async fn season_and_episode_pages_label_episodes_marked_from_the_apple_tv() {
 }
 
 #[tokio::test]
+async fn now_playing_lists_only_movies_in_the_regions_theaters_by_date() {
+    let (status, _, body) = get_page(test_app().await, "/now-playing", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"<h1 id="releases-heading">Now playing</h1>"#));
+    assert!(
+        body.contains(r#"<a href="/now-playing">Now playing</a>"#),
+        "header link"
+    );
+    assert!(
+        body.contains(r#"<a href="/coming-soon">Coming soon</a>"#),
+        "header link"
+    );
+    assert!(body.contains("Opening Night"), "opened 10 days ago");
+    for (title, why) in [
+        ("Long Run", "TMDB lists it, but it opened 100 days ago"),
+        ("Gone Digital", "out on digital"),
+    ] {
+        assert!(!body.contains(title), "{title}: {why}");
+    }
+    assert_eq!(body.matches(r#"<li class="result">"#).count(), 1);
+    assert!(
+        !body.contains(r#"class="controls pager""#),
+        "one page, no pager"
+    );
+}
+
+#[tokio::test]
+async fn coming_soon_lists_twenty_regional_openings_a_page_soonest_first() {
+    let app = test_app().await;
+    let (status, _, body) = get_page(app.clone(), "/coming-soon", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"<h1 id="releases-heading">Coming soon</h1>"#));
+    assert_eq!(body.matches(r#"<li class="result">"#).count(), 20);
+    let first = body.find("Premiere 01").expect("opens tomorrow");
+    assert!(first < body.find("Premiere 02").unwrap(), "soonest first");
+    assert!(body.contains("Premiere 20") && !body.contains("Premiere 21"));
+    assert_eq!(
+        body.matches(r#"<p class="release-date">Coming "#).count(),
+        20
+    );
+    for (title, why) in [
+        ("Canada First", "opens only outside the region"),
+        ("Undated Film", "no date"),
+        ("Already Out", "opened three days ago"),
+    ] {
+        assert!(!body.contains(title), "{title}: {why}");
+    }
+    assert!(body.contains(r#"<a href="/coming-soon?page=2" rel="next">Next →</a>"#));
+    assert!(!body.contains(r#"rel="prev""#));
+    assert!(body.contains("Page 1 of 2 · 25 movies"));
+    assert!(
+        body.contains(r#"hx-boost="true""#),
+        "pages swap in over htmx"
+    );
+
+    let (_, _, body) = get_page(app.clone(), "/coming-soon?page=2", false).await;
+    assert_eq!(body.matches(r#"<li class="result">"#).count(), 5);
+    assert!(body.contains("Premiere 21") && body.contains("Premiere 25"));
+    assert!(body.contains(r#"<a href="/coming-soon" rel="prev">← Previous</a>"#));
+    assert!(!body.contains(r#"rel="next""#));
+
+    let (_, _, body) = get_page(app.clone(), "/coming-soon?page=9", false).await;
+    assert!(body.contains("Page 2 of 2"), "past the end: the last page");
+    let (_, _, body) = get_page(app, "/coming-soon?page=x", false).await;
+    assert!(body.contains("Page 1 of 2"), "not a number: the first page");
+}
+
+#[tokio::test]
+async fn release_lists_page_as_json_and_rate_only_the_page_shown() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (_, json) = get_json(t.app(), "/api/coming-soon").await;
+    assert_eq!(json["list"], "coming_soon");
+    assert_eq!(json["region"], "US");
+    assert_eq!(
+        (&json["page"], &json["total_pages"], &json["total"]),
+        (&json!(1), &json!(2), &json!(25))
+    );
+    let titles = json["titles"].as_array().unwrap();
+    let ids: Vec<u64> = titles.iter().map(|t| t["id"].as_u64().unwrap()).collect();
+    assert_eq!(ids, (7100..=7119).collect::<Vec<_>>());
+    assert_eq!(titles[0]["rating"]["source"], "rotten_tomatoes");
+    assert_eq!(titles[0]["rating"]["score"], 83.0);
+    assert_eq!(json["ratings"]["unrated"], 19);
+    assert_eq!(json["unchecked"], 0);
+    assert_eq!(t.omdb.calls(), 1, "only this page's movies are rated");
+
+    let (_, json) = get_json(t.app(), "/api/coming-soon?page=2").await;
+    assert_eq!(json["page"], 2);
+    assert_eq!(json["titles"].as_array().unwrap().len(), 5);
+    assert_eq!(json["titles"][1]["id"], 7121);
+    assert_eq!(json["titles"][1]["rating"]["source"], "imdb");
+    assert_eq!(t.omdb.calls(), 2);
+
+    let (_, json) = get_json(t.app(), "/api/now-playing").await;
+    assert_eq!(json["list"], "now_playing");
+    let ids: Vec<u64> = json["titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(ids, [7001]);
+    assert_eq!(json["total_pages"], 1);
+}
+
+#[tokio::test]
+async fn release_lists_are_cached_and_degrade_when_tmdb_fails() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    get_page(t.app(), "/coming-soon", false).await;
+    assert_eq!(t.tmdb.upcoming_calls(), 2, "both pages are read");
+    let calls = t.tmdb.calls();
+    get_page(t.app(), "/coming-soon?page=2", false).await;
+    assert_eq!(t.tmdb.upcoming_calls(), 2, "the list is cached for the day");
+    assert_eq!(t.tmdb.calls(), calls, "and so are the dates");
+
+    // Details failing: the movies are left out and the page says so, and
+    // the list is checked again next time.
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    t.tmdb.set_details_down(true);
+    let (status, _, body) = get_page(t.app(), "/coming-soon", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(
+            "Couldn't check the release dates of 27 movies right now, so they're left out."
+        ),
+        "{body}"
+    );
+    assert!(body.contains("TMDB lists no movies coming to US theaters."));
+    t.tmdb.set_details_down(false);
+    let (_, _, body) = get_page(t.app(), "/coming-soon", false).await;
+    assert_eq!(body.matches(r#"<li class="result">"#).count(), 20);
+    assert!(!body.contains("Couldn't check"));
+
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    t.tmdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/coming-soon", false).await;
+    assert_ne!(status, StatusCode::OK);
+    assert!(body.contains("Couldn&#39;t load Coming soon"), "{body}");
+}
+
+#[tokio::test]
 async fn api_serves_its_openapi_spec() {
     let (status, json) = get_json(test_app().await, "/api/openapi.json").await;
     assert_eq!(status, StatusCode::OK);
@@ -4459,6 +4672,45 @@ async fn terminal_client_marks_movies_in_theaters() {
         "{movie}"
     );
     assert!(!movie.contains("No streaming, rental"), "{movie}");
+}
+
+#[tokio::test]
+async fn terminal_client_opens_and_pages_now_playing_and_coming_soon() {
+    let base = serve(test_app().await).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    press(&mut app, KeyCode::Esc);
+
+    let open = press(&mut app, KeyCode::Char('u'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let coming = screen(&mut app);
+    assert!(coming.contains("Page 1 of 2 · 25 movies"), "{coming}");
+    assert!(
+        coming.find("Premiere 01") < coming.find("Premiere 02"),
+        "{coming}"
+    );
+    assert!(coming.contains("Coming "), "{coming}");
+    assert!(!coming.contains("Canada First"), "{coming}");
+
+    let next = press(&mut app, KeyCode::Char(']'));
+    fulfil(&client, &mut app, next.into_iter().next().unwrap()).await;
+    let page2 = screen(&mut app);
+    assert!(page2.contains("Page 2 of 2"), "{page2}");
+    assert!(page2.contains("Premiere 25"), "{page2}");
+    assert!(
+        press(&mut app, KeyCode::Char(']')).is_empty(),
+        "no page after the last"
+    );
+    let back = press(&mut app, KeyCode::Char('['));
+    fulfil(&client, &mut app, back.into_iter().next().unwrap()).await;
+    assert!(screen(&mut app).contains("Page 1 of 2"));
+
+    let open = press(&mut app, KeyCode::Char('n'));
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let now = screen(&mut app);
+    assert!(now.contains("Now playing"), "{now}");
+    assert!(now.contains("Opening Night"), "{now}");
+    assert!(!now.contains("Long Run"), "{now}");
 }
 
 #[test]

@@ -62,11 +62,27 @@ impl TmdbClient {
         region: &str,
         page: u32,
     ) -> Result<Paged<MovieSummary>, CatalogError> {
-        self.get(
-            "/movie/now_playing",
-            &[("region", region), ("page", &page.to_string())],
-        )
-        .await
+        self.movie_list("/movie/now_playing", region, page).await
+    }
+
+    /// One page of the movies TMDB lists as coming to `region`'s theaters
+    /// soon, most popular first.
+    pub async fn upcoming(
+        &self,
+        region: &str,
+        page: u32,
+    ) -> Result<Paged<MovieSummary>, CatalogError> {
+        self.movie_list("/movie/upcoming", region, page).await
+    }
+
+    async fn movie_list(
+        &self,
+        path: &str,
+        region: &str,
+        page: u32,
+    ) -> Result<Paged<MovieSummary>, CatalogError> {
+        self.get(path, &[("region", region), ("page", &page.to_string())])
+            .await
     }
 
     pub async fn movie(&self, id: u64) -> Result<Movie, CatalogError> {
