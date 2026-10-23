@@ -110,6 +110,7 @@ impl Watchlist {
                     rating: None,
                     availability: None,
                     marks: None,
+                    in_theaters: false,
                 })
             })
             .collect())
@@ -145,6 +146,7 @@ mod tests {
             rating: None,
             availability: None,
             marks: None,
+            in_theaters: false,
         }
     }
 

@@ -2290,6 +2290,10 @@
                 "type": "null"
               }
             ]
+          },
+          "in_theaters": {
+            "type": "boolean",
+            "description": "To watch and Favorites only: a movie playing in the region's\ntheaters now. Omitted when not."
           }
         }
       },
@@ -3614,6 +3618,7 @@
           "id",
           "title",
           "genres",
+          "in_theaters",
           "tmdb_url",
           "ratings",
           "where_to_watch",
@@ -3692,6 +3697,10 @@
               }
             ]
           },
+          "in_theaters": {
+            "type": "boolean",
+            "description": "Movies only: playing in the region's theaters now (see\n`Catalog::in_theaters`)."
+          },
           "seasons": {
             "type": [
               "integer",
@@ -3769,7 +3778,8 @@
         "type": "object",
         "required": [
           "id",
-          "title"
+          "title",
+          "in_theaters"
         ],
         "properties": {
           "id": {
@@ -3797,6 +3807,10 @@
               "string",
               "null"
             ]
+          },
+          "in_theaters": {
+            "type": "boolean",
+            "description": "Movies only: playing in the region's theaters now."
           }
         }
       },

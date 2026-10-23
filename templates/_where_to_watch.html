@@ -2,8 +2,12 @@
 <section class="section where-to-watch" id="where-to-watch" aria-labelledby="where-to-watch-heading">
   {% if w.offers.is_empty() %}
   <h2 id="where-to-watch-heading">Where to watch <span class="muted region">in {{ w.region }}</span></h2>
+  {% if d.in_theaters %}
+  <p class="in-theaters-note"><span class="badge in-theaters">In theaters</span> Not streaming or for rent or sale in {{ w.region }} yet.</p>
+  {% endif %}
   {% if w.is_unavailable() %}
   <p class="muted">Where to watch couldn't be loaded right now.</p>
+  {% else if d.in_theaters %}
   {% else %}
   <p class="muted">No streaming, rental or purchase options are listed for {{ w.region }}.</p>
   {% endif %}

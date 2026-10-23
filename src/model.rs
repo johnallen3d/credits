@@ -54,6 +54,8 @@ pub struct TitleHit {
     pub year: Option<String>,
     pub overview: Option<String>,
     pub poster_url: Option<String>,
+    /// Movies only: playing in the region's theaters now.
+    pub in_theaters: bool,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -528,6 +530,9 @@ pub struct TitleDetail {
     pub runtime_minutes: Option<u32>,
     /// Movies only; `None` when TMDB has no dates at all.
     pub releases: Option<Releases>,
+    /// Movies only: playing in the region's theaters now (see
+    /// `Catalog::in_theaters`).
+    pub in_theaters: bool,
     /// TV only.
     pub seasons: Option<u32>,
     /// TV only.
@@ -1647,6 +1652,10 @@ pub struct FilmographyEntry {
     /// Lists only: whether it's saved and watched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub marks: Option<TitleMarks>,
+    /// To watch and Favorites only: a movie playing in the region's
+    /// theaters now. Omitted when not.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub in_theaters: bool,
 }
 
 impl FilmographyEntry {

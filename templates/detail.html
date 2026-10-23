@@ -16,7 +16,7 @@
     <div class="poster large missing" role="img" aria-label="No artwork available">No artwork</div>
     {% endif %}
     <div class="meta">
-      <span class="badge badge-{{ d.kind.slug() }}">{{ d.kind.label() }}</span>
+      <span class="badge badge-{{ d.kind.slug() }}">{{ d.kind.label() }}</span>{% if d.in_theaters %} <span class="badge in-theaters">In theaters</span>{% endif %}
       <h1>{{ d.title }}{% if let Some(year) = d.year %} <span class="year">({{ year }})</span>{% endif %}</h1>
       {% if let Some(original) = d.original_title %}<p class="original">{{ original }}</p>{% endif %}
       {% if let Some(tagline) = d.tagline %}<p class="tagline">{{ tagline }}</p>{% endif %}

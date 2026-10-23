@@ -29,12 +29,17 @@ fn authorized(headers: &HeaderMap) -> bool {
 #[derive(Clone, Default)]
 struct FakeTmdb {
     calls: Arc<AtomicUsize>,
+    now_playing_calls: Arc<AtomicUsize>,
     down: Arc<AtomicBool>,
 }
 
 impl FakeTmdb {
     fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
+    }
+
+    fn now_playing_calls(&self) -> usize {
+        self.now_playing_calls.load(Ordering::SeqCst)
     }
 
     fn set_down(&self, down: bool) {
@@ -55,6 +60,10 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                     match q.get("query").map(String::as_str) {
                         Some("boom") => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({}))),
                         Some("nothing") => (StatusCode::OK, Json(json!({ "results": [] }))),
+                        Some("theaters") => (
+                            StatusCode::OK,
+                            Json(json!({ "results": theaters_hits() })),
+                        ),
                         _ => (
                             StatusCode::OK,
                             Json(json!({ "results": [
@@ -126,8 +135,32 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
             }),
         )
         .route(
+            "/3/movie/now_playing",
+            get(|Query(q): Query<HashMap<String, String>>| async move {
+                if q.get("region").map(String::as_str) != Some("US") {
+                    return Json(json!({ "results": [], "total_pages": 1 }));
+                }
+                // 7002 is still listed long after opening; 7003 is listed
+                // but already out on digital.
+                let ids: &[u64] = match q.get("page").map(String::as_str) {
+                    Some("1") => &[7003, 7001],
+                    _ => &[7002, 7001],
+                };
+                let results: Vec<Value> = ids
+                    .iter()
+                    .filter_map(|&id| in_theaters_movie(id))
+                    .map(|m| json!({ "id": m["id"], "title": m["title"],
+                                     "release_date": m["release_date"] }))
+                    .collect();
+                Json(json!({ "results": results, "total_pages": 2 }))
+            }),
+        )
+        .route(
             "/3/movie/{id}",
             get(|Path(id): Path<u64>| async move {
+                if let Some(movie) = in_theaters_movie(id) {
+                    return (StatusCode::OK, Json(movie));
+                }
                 // Movies played on the Apple TV: only what matching needs.
                 let played = match id {
                     105 => Some(("Back to the Future", "1985-07-03", 116)),
@@ -462,6 +495,9 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                 let state = counted.clone();
                 async move {
                     state.calls.fetch_add(1, Ordering::SeqCst);
+                    if request.uri().path().ends_with("/now_playing") {
+                        state.now_playing_calls.fetch_add(1, Ordering::SeqCst);
+                    }
                     if state.down.load(Ordering::SeqCst) {
                         return StatusCode::SERVICE_UNAVAILABLE.into_response();
                     }
@@ -474,6 +510,53 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
     format!("http://{addr}/3")
+}
+
+/// Movies dated relative to today, for telling what's in theaters: 7001
+/// opened 10 days ago, 7002 opened 100 days ago but is still now playing,
+/// 7003 is now playing but out on digital since yesterday, and 7004 opened 60
+/// days ago and is gone.
+fn in_theaters_movie(id: u64) -> Option<Value> {
+    let today = jiff::Zoned::now().date();
+    let ago = |days: i64| {
+        format!(
+            "{}T00:00:00.000Z",
+            today.checked_sub(jiff::Span::new().days(days)).unwrap()
+        )
+    };
+    let (title, theatrical, digital) = match id {
+        7001 => ("Opening Night", 10, None),
+        7002 => ("Long Run", 100, None),
+        7003 => ("Gone Digital", 10, Some(1)),
+        7004 => ("Closed Early", 60, None),
+        _ => return None,
+    };
+    let mut dates =
+        vec![json!({ "type": 3, "release_date": ago(theatrical), "certification": "PG" })];
+    if let Some(days) = digital {
+        dates.push(json!({ "type": 4, "release_date": ago(days), "certification": "" }));
+    }
+    Some(json!({
+        "id": id, "title": title, "release_date": &ago(theatrical)[..10], "runtime": 100,
+        "external_ids": {}, "watch/providers": { "results": {} },
+        "release_dates": { "results": [{ "iso_3166_1": "US", "release_dates": dates }] }
+    }))
+}
+
+/// Search hits for "theaters": the dated movies, then The Matrix.
+fn theaters_hits() -> Vec<Value> {
+    [7001, 7002, 7003, 7004]
+        .into_iter()
+        .filter_map(in_theaters_movie)
+        .map(|m| {
+            json!({ "media_type": "movie", "id": m["id"], "title": m["title"],
+                         "release_date": m["release_date"] })
+        })
+        .chain([
+            json!({ "media_type": "movie", "id": 603, "title": "The Matrix",
+                        "release_date": "1999-03-31" }),
+        ])
+        .collect()
 }
 
 #[derive(Clone, Default)]
@@ -3014,6 +3097,129 @@ async fn movies_cached_before_release_dates_are_refetched_once() {
     }
 }
 
+#[tokio::test]
+async fn movie_pages_mark_movies_in_theaters() {
+    let badge = r#"<span class="badge in-theaters">In theaters</span>"#;
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+
+    let (_, _, body) = get_page(t.app(), "/movie/7001", false).await;
+    assert!(body.contains(&format!(
+        r#"<span class="badge badge-movie">Movie</span> {badge}"#
+    )));
+    assert!(
+        body.contains(&format!(
+            r#"<p class="in-theaters-note">{badge} Not streaming or for rent or sale in US yet.</p>"#
+        )),
+        "where to watch says so rather than looking empty"
+    );
+    assert!(!body.contains("No streaming, rental or purchase options"));
+    assert_eq!(
+        t.tmdb.now_playing_calls(),
+        0,
+        "opened 10 days ago: the dates decide"
+    );
+
+    let (_, _, body) = get_page(t.app(), "/movie/7002", false).await;
+    assert!(
+        body.contains(badge),
+        "still on now playing, on its second page"
+    );
+    assert_eq!(t.tmdb.now_playing_calls(), 2, "every page is read");
+
+    for (id, why) in [
+        (7003, "out on digital, though now playing"),
+        (7004, "opened 60 days ago and no longer playing"),
+        (603, "long since out"),
+    ] {
+        let (_, _, body) = get_page(t.app(), &format!("/movie/{id}"), false).await;
+        assert!(!body.contains(badge), "{id}: {why}");
+    }
+    let (_, _, body) = get_page(t.app(), "/movie/7004", false).await;
+    assert!(body.contains("No streaming, rental or purchase options are listed for US."));
+    assert_eq!(t.tmdb.now_playing_calls(), 2, "the list is cached");
+
+    let (_, json) = get_json(t.app(), "/api/movie/7001").await;
+    assert_eq!(json["in_theaters"], true);
+    let (_, json) = get_json(t.app(), "/api/movie/7003").await;
+    assert_eq!(json["in_theaters"], false);
+    let (_, json) = get_json(t.app(), "/api/tv/1396").await;
+    assert_eq!(json["in_theaters"], false);
+}
+
+#[tokio::test]
+async fn movies_are_judged_by_their_dates_when_now_playing_fails() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    // Cache both movies without loading now playing.
+    get_page(t.app(), "/movie/7001/credits", false).await;
+    get_page(t.app(), "/movie/7002/credits", false).await;
+    t.tmdb.set_down(true);
+    let (status, _, body) = get_page(t.app(), "/movie/7002", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!body.contains("in-theaters"), "now playing is unknown");
+    let (_, _, body) = get_page(t.app(), "/movie/7001", false).await;
+    assert!(body.contains("in-theaters"), "the dates still say so");
+}
+
+#[tokio::test]
+async fn search_and_saved_list_rows_mark_movies_in_theaters() {
+    let badge = r#"<span class="badge in-theaters">In theaters</span>"#;
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (_, _, body) = get_page(t.app(), "/?q=theaters", false).await;
+    let rows: Vec<&str> = body.split(r#"<li class="result"#).skip(1).collect();
+    let marked: Vec<bool> = rows.iter().map(|r| r.contains(badge)).collect();
+    assert_eq!(marked, [true, true, false, false, false], "{body}");
+
+    let (_, json) = get_json(t.app(), "/api/search?q=theaters").await;
+    let marked: Vec<(u64, bool)> = json["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| {
+            (
+                h["id"].as_u64().unwrap(),
+                h["in_theaters"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        marked,
+        [
+            (7001, true),
+            (7002, true),
+            (7003, false),
+            (7004, false),
+            (603, false)
+        ]
+    );
+
+    for id in [7001, 7004, 603] {
+        post_form(t.app(), &format!("/movie/{id}/watchlist"), "listed=true").await;
+        post_form(t.app(), &format!("/movie/{id}/favorite"), "listed=true").await;
+    }
+    for list in ["watchlist", "favorites"] {
+        let (_, _, body) = get_page(t.app(), &format!("/{list}"), false).await;
+        assert_eq!(body.matches(badge).count(), 1, "{list}: {body}");
+        assert!(
+            body.contains(&format!(
+                r#">Opening Night</a> <span class="badge badge-movie">Movie</span> {badge}"#
+            )),
+            "{list}"
+        );
+        let (_, json) = get_json(t.app(), &format!("/api/{list}")).await;
+        let marked: Vec<(u64, bool)> = json["titles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["id"].as_u64().unwrap(), e.get("in_theaters").is_some()))
+            .collect();
+        assert_eq!(
+            marked,
+            [(603, false), (7004, false), (7001, true)],
+            "{list}: only movies in theaters carry it"
+        );
+    }
+}
+
 fn chosen_names(json: &Value) -> Vec<&str> {
     json["chosen"]
         .as_array()
@@ -4196,6 +4402,41 @@ async fn terminal_client_searches_and_opens_titles_and_people_over_http() {
     ));
 }
 
+#[tokio::test]
+async fn terminal_client_marks_movies_in_theaters() {
+    let base = serve(test_app().await).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    for c in "theaters".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    let search = app
+        .tick(std::time::Instant::now() + tui::app::SEARCH_DEBOUNCE)
+        .expect("search goes out after the pause");
+    fulfil(&client, &mut app, search).await;
+    let results = screen(&mut app);
+    let year = jiff::Zoned::now().date() - jiff::Span::new().days(10);
+    assert!(
+        results.contains(&format!(
+            "Movie  Opening Night ({})  In theaters",
+            year.year()
+        )),
+        "{results}"
+    );
+    assert_eq!(results.matches("In theaters").count(), 2, "{results}");
+
+    let open = press(&mut app, KeyCode::Enter);
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let movie = screen(&mut app);
+    assert!(movie.contains("Movie · "), "{movie}");
+    assert!(movie.contains("1h 40m · In theaters"), "{movie}");
+    assert!(
+        movie.contains("In theaters. Not streaming or for rent or sale in US yet."),
+        "{movie}"
+    );
+    assert!(!movie.contains("No streaming, rental"), "{movie}");
+}
+
 #[test]
 fn terminal_client_help_is_modal_and_restores_search_focus_and_selection() {
     for editing in [true, false] {
@@ -4209,6 +4450,7 @@ fn terminal_client_help_is_modal_and_restores_search_focus_and_selection() {
                         id,
                         title: format!("Result {id}"),
                         year: None,
+                        in_theaters: false,
                     })
                 })
                 .collect();
@@ -4431,6 +4673,7 @@ fn terminal_client_tabs_between_search_box_and_results_without_resetting_cursor(
                         id,
                         title: format!("Result {id}"),
                         year: Some("1999".to_owned()),
+                        in_theaters: false,
                     })
                 })
                 .collect();

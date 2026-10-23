@@ -51,6 +51,14 @@ const TOP_CAST: usize = 12;
 const TV_KEY_DIRECTORS: usize = 3;
 /// A TV cast member's characters listed before the rest are elided.
 const MAX_CHARACTERS: usize = 3;
+/// How long after its theatrical date a movie counts as in theaters, unless
+/// TMDB still lists it as now playing.
+const IN_THEATERS_DAYS: i64 = 45;
+/// Pages of TMDB's now playing list read at most, 20 movies each.
+const NOW_PLAYING_PAGES: u32 = 40;
+/// How far from today a row's release date (or year) can be for the row to
+/// be checked for being in theaters; others aren't looked up.
+const IN_THEATERS_CANDIDATE_DAYS: i64 = 365;
 /// Titles in a person page's "Known for" row.
 const KNOWN_FOR_TITLES: usize = 8;
 /// Services listed as popular in regions without a curated list: the most
@@ -612,6 +620,7 @@ impl Catalog {
         sort: WatchlistSort,
     ) -> Result<WatchlistDetail, sqlx::Error> {
         let mut titles = list.list().await?;
+        self.mark_in_theaters(&mut titles).await;
         let sort_ratings = match sort {
             WatchlistSort::Added => None,
             WatchlistSort::Rating => Some(self.sort_by_rating(&mut [&mut titles]).await),
@@ -740,6 +749,7 @@ impl Catalog {
             rating: None,
             availability: None,
             marks: None,
+            in_theaters: false,
         };
         Ok((entry, seasons))
     }
@@ -925,11 +935,29 @@ impl Catalog {
     /// result types are dropped.
     pub async fn search(&self, query: &str) -> Result<Vec<SearchHit>, CatalogError> {
         let page = self.tmdb.search_multi(query).await?;
+        let today = local_today();
+        let candidates = page
+            .results
+            .iter()
+            .filter_map(|r| match r {
+                MultiResult::Movie(m)
+                    if near_today(
+                        m.release_date.as_deref().and_then(|d| d.parse().ok()),
+                        today,
+                    ) =>
+                {
+                    Some(m.id)
+                }
+                _ => None,
+            })
+            .collect();
+        let showing = self.movies_in_theaters(candidates).await;
         Ok(page
             .results
             .into_iter()
             .filter_map(|result| match result {
                 MultiResult::Movie(m) => Some(SearchHit::Movie(TitleHit {
+                    in_theaters: showing.contains(&m.id),
                     id: m.id,
                     title: m.title,
                     year: year(m.release_date.as_deref()),
@@ -942,6 +970,7 @@ impl Catalog {
                     year: year(t.first_air_date.as_deref()),
                     overview: non_empty(t.overview),
                     poster_url: self.image(POSTER_SIZE, t.poster_path),
+                    in_theaters: false,
                 })),
                 MultiResult::Person(p) => Some(SearchHit::Person(PersonHit {
                     id: p.id,
@@ -958,6 +987,9 @@ impl Catalog {
     /// The title with the user's services marked among its offers.
     pub async fn title(&self, kind: MediaKind, id: u64) -> Result<TitleDetail, CatalogError> {
         let mut d = self.title_detail(kind, id).await?;
+        if kind == MediaKind::Movie {
+            d.in_theaters = self.in_theaters(d.id, d.releases.as_ref()).await;
+        }
         let mine = self.service_ids().await;
         d.where_to_watch.mark_services(mine.as_ref());
         if !self.show_watched(kind, id).await {
@@ -1208,6 +1240,7 @@ impl Catalog {
                     rating: None,
                     availability: None,
                     marks: None,
+                    in_theaters: false,
                 };
                 Some((
                     (department.clone(), kind, c.id),
@@ -1363,6 +1396,125 @@ impl Catalog {
         ratings
     }
 
+    /// The movies TMDB lists as playing in the region's theaters, most
+    /// popular first, through the provider cache (so refreshed daily).
+    pub async fn now_playing(&self) -> Result<(Vec<tmdb::MovieSummary>, Metadata), CatalogError> {
+        let region = self.watch_region.clone();
+        let tmdb = self.tmdb.clone();
+        self.cached(format!("movie/now_playing/{region}"), async move {
+            let first = tmdb.now_playing(&region, 1).await?;
+            let mut movies = first.results;
+            let mut pages = JoinSet::new();
+            for page in 2..=first.total_pages.min(NOW_PLAYING_PAGES) {
+                let (tmdb, region) = (tmdb.clone(), region.clone());
+                pages.spawn(async move { (page, tmdb.now_playing(&region, page).await) });
+            }
+            let mut rest = Vec::new();
+            while let Some(joined) = pages.join_next().await {
+                let (page, result) = joined
+                    .map_err(|e| CatalogError::Provider(format!("now playing task failed: {e}")))?;
+                rest.push((page, result?.results));
+            }
+            rest.sort_by_key(|(page, _)| *page);
+            let mut seen: HashSet<u64> = movies.iter().map(|m| m.id).collect();
+            for (_, page) in rest {
+                movies.extend(page.into_iter().filter(|m| seen.insert(m.id)));
+            }
+            Ok(movies)
+        })
+        .await
+    }
+
+    /// IDs on the now playing list; none, logged, when it can't be loaded,
+    /// so movies are then judged by their dates alone.
+    async fn now_playing_ids(&self) -> HashSet<u64> {
+        match self.now_playing().await {
+            Ok((movies, _)) => movies.into_iter().map(|m| m.id).collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "loading now playing failed");
+                HashSet::new()
+            }
+        }
+    }
+
+    /// Whether movie `id` is in the region's theaters: within
+    /// `IN_THEATERS_DAYS` of its theatrical date, or on TMDB's now playing
+    /// list, and either way not yet out on digital.
+    async fn in_theaters(&self, id: u64, releases: Option<&Releases>) -> bool {
+        match showing_by_dates(releases, local_today()) {
+            Some(showing) => showing,
+            None => self.now_playing_ids().await.contains(&id),
+        }
+    }
+
+    /// Which of the movies `ids` are in theaters, from their cached TMDB
+    /// entries, a few at a time. A movie TMDB can't return isn't marked.
+    async fn movies_in_theaters(&self, ids: HashSet<u64>) -> HashSet<u64> {
+        let permits = Arc::new(Semaphore::new(CONCURRENT_TITLE_LOOKUPS));
+        let mut lookups = JoinSet::new();
+        for id in ids {
+            let catalog = self.clone();
+            let permits = permits.clone();
+            lookups.spawn(async move {
+                let _permit = permits.acquire_owned().await;
+                let showing = match catalog.movie_raw(id).await {
+                    Ok((mut m, _)) => {
+                        let releases = releases(
+                            &catalog.watch_region,
+                            m.release_dates.take().unwrap_or_default(),
+                            m.release_date.as_deref(),
+                            local_today(),
+                        );
+                        showing_by_dates(releases.as_ref(), local_today())
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, id, "movie lookup for in theaters failed");
+                        Some(false)
+                    }
+                };
+                (id, showing)
+            });
+        }
+        let mut showing = HashSet::new();
+        let mut undecided = Vec::new();
+        while let Some(joined) = lookups.join_next().await {
+            match joined {
+                Ok((id, Some(true))) => {
+                    showing.insert(id);
+                }
+                Ok((_, Some(false))) => {}
+                Ok((id, None)) => undecided.push(id),
+                Err(e) => tracing::warn!(error = %e, "in theaters lookup task failed"),
+            }
+        }
+        if !undecided.is_empty() {
+            let playing = self.now_playing_ids().await;
+            showing.extend(undecided.into_iter().filter(|id| playing.contains(id)));
+        }
+        showing
+    }
+
+    /// Marks the movies among `entries` that are in theaters, looking up
+    /// only those dated within a year or so of today.
+    async fn mark_in_theaters(&self, entries: &mut [FilmographyEntry]) {
+        let today = local_today();
+        let candidates = entries
+            .iter()
+            .filter(|e| {
+                e.kind == MediaKind::Movie
+                    && e.year
+                        .as_deref()
+                        .and_then(|y| y.parse::<i16>().ok())
+                        .is_some_and(|y| (today.year() - 1..=today.year() + 1).contains(&y))
+            })
+            .map(|e| e.id)
+            .collect();
+        let showing = self.movies_in_theaters(candidates).await;
+        for e in entries.iter_mut().filter(|e| e.kind == MediaKind::Movie) {
+            e.in_theaters = showing.contains(&e.id);
+        }
+    }
+
     async fn movie_raw(&self, id: u64) -> Result<(tmdb::Movie, Metadata), CatalogError> {
         self.cached_if(format!("movie/{id}"), self.tmdb.movie(id), |m| {
             m.watch_providers.is_some() && m.release_dates.is_some()
@@ -1448,6 +1600,7 @@ impl Catalog {
             genres: m.genres.into_iter().map(|g| g.name).collect(),
             runtime_minutes: m.runtime.filter(|r| *r > 0),
             releases,
+            in_theaters: false,
             seasons: None,
             episodes: None,
             poster_url: self.image(POSTER_SIZE, m.poster_path),
@@ -1479,6 +1632,7 @@ impl Catalog {
             genres: t.genres.into_iter().map(|g| g.name).collect(),
             runtime_minutes: None,
             releases: None,
+            in_theaters: false,
             seasons: t.number_of_seasons,
             episodes: t.number_of_episodes,
             poster_url: self.image(POSTER_SIZE, t.poster_path),
@@ -2093,6 +2247,37 @@ fn releases(
     })
 }
 
+/// Whether a movie with `releases` is in theaters on `today` by its dates:
+/// not once its digital date has arrived, yes within `IN_THEATERS_DAYS` of
+/// its theatrical date, and otherwise `None`, for TMDB's now playing list
+/// to decide.
+fn showing_by_dates(releases: Option<&Releases>, today: jiff::civil::Date) -> Option<bool> {
+    let date = |kind| {
+        releases?
+            .dates
+            .iter()
+            .find(|d| d.kind == kind)?
+            .date
+            .parse::<jiff::civil::Date>()
+            .ok()
+    };
+    if date(ReleaseKind::Digital).is_some_and(|d| d <= today) {
+        return Some(false);
+    }
+    let theatrical = date(ReleaseKind::Theatrical)?;
+    let days = (today - theatrical).get_days();
+    ((0..=IN_THEATERS_DAYS).contains(&i64::from(days))).then_some(true)
+}
+
+/// Whether `date` is within `IN_THEATERS_CANDIDATE_DAYS` of `today`, so a
+/// movie released then might be in theaters.
+fn near_today(date: Option<jiff::civil::Date>, today: jiff::civil::Date) -> bool {
+    date.is_some_and(|d| {
+        let days = i64::from((today - d).get_days());
+        days.abs() <= IN_THEATERS_CANDIDATE_DAYS
+    })
+}
+
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.trim().is_empty())
 }
@@ -2216,6 +2401,63 @@ mod tests {
 
         assert!(releases("US", Default::default(), None, today).is_none());
         assert!(releases("US", Default::default(), Some(""), today).is_none());
+    }
+
+    #[test]
+    fn movies_are_in_theaters_for_45_days_until_they_go_digital() {
+        let today: jiff::civil::Date = "2026-10-23".parse().unwrap();
+        let with = |dates: &[(ReleaseKind, &str)]| Releases {
+            region: "US".to_owned(),
+            certification: None,
+            dates: dates
+                .iter()
+                .map(|&(kind, date)| ReleaseDate {
+                    kind,
+                    date: date.to_owned(),
+                    upcoming: false,
+                })
+                .collect(),
+        };
+        let showing = |dates: &[(ReleaseKind, &str)]| showing_by_dates(Some(&with(dates)), today);
+        use ReleaseKind::{Digital, Primary, Theatrical};
+        assert_eq!(
+            showing(&[(Theatrical, "2026-10-23")]),
+            Some(true),
+            "opening day"
+        );
+        assert_eq!(showing(&[(Theatrical, "2026-09-08")]), Some(true), "day 45");
+        assert_eq!(
+            showing(&[(Theatrical, "2026-09-07")]),
+            None,
+            "day 46: ask now playing"
+        );
+        assert_eq!(showing(&[(Theatrical, "2026-10-24")]), None, "not open yet");
+        assert_eq!(
+            showing(&[(Theatrical, "2026-10-01"), (Digital, "2026-10-23")]),
+            Some(false),
+            "digital today ends it"
+        );
+        assert_eq!(
+            showing(&[(Theatrical, "2026-10-01"), (Digital, "2026-11-01")]),
+            Some(true),
+            "digital still to come"
+        );
+        assert_eq!(
+            showing(&[(Theatrical, "2026-05-01"), (Digital, "2026-06-01")]),
+            Some(false),
+            "now playing can't bring back a digital release"
+        );
+        assert_eq!(
+            showing(&[(Primary, "2026-10-20")]),
+            None,
+            "no regional dates"
+        );
+        assert_eq!(showing_by_dates(None, today), None);
+
+        assert!(near_today("2025-10-23".parse().ok(), today));
+        assert!(near_today("2027-10-23".parse().ok(), today));
+        assert!(!near_today("2025-10-22".parse().ok(), today));
+        assert!(!near_today(None, today));
     }
 
     #[test]

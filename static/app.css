@@ -86,6 +86,8 @@ footer.site .site-nav { flex-wrap: wrap; align-items: center; }
 .badge-movie { color: var(--movie); }
 .badge-tv { color: var(--tv); }
 .badge-person { color: var(--person); }
+.badge.in-theaters { padding: 0 .35rem; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); }
+.in-theaters-note .badge { margin-right: .35rem; }
 
 .backdrop { display: block; width: 100%; max-height: 360px; object-fit: cover; border-radius: 8px; margin-bottom: 1.5rem; }
 .detail-body { display: flex; gap: 2rem; align-items: flex-start; }

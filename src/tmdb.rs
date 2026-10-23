@@ -55,6 +55,20 @@ impl TmdbClient {
         .await
     }
 
+    /// One page of the movies TMDB lists as playing in `region`'s theaters,
+    /// most popular first.
+    pub async fn now_playing(
+        &self,
+        region: &str,
+        page: u32,
+    ) -> Result<Paged<MovieSummary>, CatalogError> {
+        self.get(
+            "/movie/now_playing",
+            &[("region", region), ("page", &page.to_string())],
+        )
+        .await
+    }
+
     pub async fn movie(&self, id: u64) -> Result<Movie, CatalogError> {
         self.get(
             &format!("/movie/{id}"),
@@ -145,6 +159,13 @@ impl TmdbClient {
 #[derive(Deserialize)]
 pub struct Paged<T> {
     pub results: Vec<T>,
+    /// Absent from fakes and lists that are never paged through.
+    #[serde(default = "one")]
+    pub total_pages: u32,
+}
+
+fn one() -> u32 {
+    1
 }
 
 #[derive(Deserialize)]
@@ -157,7 +178,7 @@ pub enum MultiResult {
     Other,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MovieSummary {
     pub id: u64,
     pub title: String,

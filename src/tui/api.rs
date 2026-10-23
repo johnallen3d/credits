@@ -45,6 +45,8 @@ pub struct TitleHit {
     pub id: u64,
     pub title: String,
     pub year: Option<String>,
+    #[serde(default)]
+    pub in_theaters: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -120,6 +122,9 @@ pub struct Title {
     pub runtime_minutes: Option<u32>,
     /// Movies only; a server too old to send them has none.
     pub releases: Option<Releases>,
+    /// Movies only.
+    #[serde(default)]
+    pub in_theaters: bool,
     pub seasons: Option<u32>,
     pub episodes: Option<u32>,
     pub ratings: Ratings,
@@ -565,6 +570,8 @@ pub struct ListEntry {
     /// To watch only, once services are chosen.
     pub availability: Option<Availability>,
     pub marks: Option<Marks>,
+    #[serde(default)]
+    pub in_theaters: bool,
 }
 
 /// Which of the user's services include a title.

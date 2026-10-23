@@ -394,7 +394,12 @@ fn search_page(app: &App, width: u16) -> Page {
                     Some(year) => format!("{} ({year})", t.title),
                     None => t.title.clone(),
                 };
-                (kind.label(), Target::Title(kind, t.id), name, String::new())
+                let detail = if t.in_theaters {
+                    IN_THEATERS.to_owned()
+                } else {
+                    String::new()
+                };
+                (kind.label(), Target::Title(kind, t.id), name, detail)
             }
             SearchHit::Person(p) => {
                 let titles: Vec<&str> = p.known_for.iter().map(|k| k.title.as_str()).collect();
@@ -500,7 +505,12 @@ fn title_page(t: &Title, width: u16) -> Page {
     if let Some(status) = t.status.as_ref().filter(|s| *s != "Released") {
         facts.push(status.clone());
     }
-    page.line(Line::styled(facts.join(" · "), dim()));
+    let mut line = Line::styled(facts.join(" · "), dim());
+    if t.in_theaters {
+        line.push_span(Span::styled(" · ", dim()));
+        line.push_span(Span::styled(IN_THEATERS, Style::new().fg(palette().accent)));
+    }
+    page.line(line);
     if let Some(releases) = &t.releases {
         release_line(&mut page, releases);
     }
@@ -517,7 +527,7 @@ fn title_page(t: &Title, width: u16) -> Page {
         page.blank();
         page.para(overview, width, None);
     }
-    where_to_watch(&mut page, &t.where_to_watch, width);
+    where_to_watch(&mut page, &t.where_to_watch, t.in_theaters, width);
     if t.kind == Kind::Tv {
         season_rows(&mut page, t, width);
     }
@@ -540,6 +550,9 @@ fn title_page(t: &Title, width: u16) -> Page {
     }
     page
 }
+
+/// The badge for a movie playing in the region's theaters now.
+const IN_THEATERS: &str = "In theaters";
 
 /// "In theaters Coming Oct 16 · Digital Sep 30, 2026 · Rated PG-13", with
 /// dates still to come in the accent colour.
@@ -1115,6 +1128,12 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
             ),
             Span::raw(format!("{}  ", pad(&e.title, column))),
         ];
+        if e.in_theaters {
+            spans.push(Span::styled(
+                format!("{IN_THEATERS}  "),
+                Style::new().fg(palette().accent),
+            ));
+        }
         if let Some(marks) = &e.marks {
             spans.extend(mark_spans(marks, false));
             spans.push(Span::raw("  "));
@@ -1607,15 +1626,25 @@ fn ratings(page: &mut Page, r: &Ratings, width: u16) {
     }
 }
 
-fn where_to_watch(page: &mut Page, w: &WhereToWatch, width: u16) {
+fn where_to_watch(page: &mut Page, w: &WhereToWatch, in_theaters: bool, width: u16) {
     page.heading(format!("Where to watch in {}", w.region));
     if w.offers.is_empty() {
+        if in_theaters {
+            page.line(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(IN_THEATERS, Style::new().fg(palette().accent)),
+                Span::styled(
+                    format!(". Not streaming or for rent or sale in {} yet.", w.region),
+                    dim(),
+                ),
+            ]));
+        }
         if w.state == State::Unavailable {
             page.warn(
                 "  Availability unknown: where to watch couldn't be loaded right now.",
                 width,
             );
-        } else {
+        } else if !in_theaters {
             page.line(Line::styled(
                 format!(
                     "  No streaming, rental or purchase options are listed for {}.",

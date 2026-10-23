@@ -38,7 +38,7 @@
       <div class="poster missing" aria-hidden="true">{{ hit.missing_image_label() }}</div>
       {% endif %}
       <div class="meta">
-        <span class="badge badge-{{ hit.slug() }}">{{ hit.label() }}</span>
+        <span class="badge badge-{{ hit.slug() }}">{{ hit.label() }}</span>{% if let Some((_, t)) = title_hit %}{% if t.in_theaters %} <span class="badge in-theaters">In theaters</span>{% endif %}{% endif %}
         <h2>{{ hit.heading() }}{% if let Some(year) = hit.year() %} <span class="year">({{ year }})</span>{% endif %}</h2>
         {% if let Some(summary) = hit.summary() %}<p class="overview">{{ summary }}</p>{% endif %}
       </div>

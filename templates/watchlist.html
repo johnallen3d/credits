@@ -51,7 +51,7 @@
     <li>
       <span class="year">{% if let Some(year) = e.year %}{{ year }}{% else %}TBA{% endif %}</span>
       <a href="{{ e.path() }}" tabindex="-1" aria-hidden="true">{% if let Some(url) = e.poster_url %}<img class="poster thumb" src="{{ url }}" alt="" loading="lazy" width="46" height="69">{% else %}<span class="poster thumb missing">No artwork</span>{% endif %}</a>
-      <span><a href="{{ e.path() }}">{{ e.title }}</a> <span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if let Some(r) = e.rating %} <span class="credit-rating">{% include "_rating.html" %}</span>{% endif %}
+      <span><a href="{{ e.path() }}">{{ e.title }}</a> <span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if e.in_theaters %} <span class="badge in-theaters">In theaters</span>{% endif %}{% if let Some(r) = e.rating %} <span class="credit-rating">{% include "_rating.html" %}</span>{% endif %}
       {%- if let Some(a) = e.availability %}
       {%- if a.is_unavailable() %} <span class="service-badges muted">Availability unknown</span>
       {%- else if !a.services.is_empty() %} <span class="service-badges{% if a.is_stale() %} stale{% endif %}"{% if a.is_stale() %}{% if let Some(day) = a.fetched_on() %} title="Listed on {{ day }}"{% endif %}{% endif %}><span class="visually-hidden">On your services:</span>{% for svc in a.services %}{% if let Some(logo) = svc.logo_url %}<img class="service-badge" src="{{ logo }}" alt="{{ svc.name }}" title="{{ svc.name }}" width="22" height="22" loading="lazy">{% else %}<span class="service-badge text">{{ svc.name }}</span>{% endif %}{% endfor %}</span>
