@@ -508,6 +508,35 @@ pub fn episodes_label(count: u32) -> String {
     }
 }
 
+/// Percent-encodes `value` for use in a URL query string.
+pub fn encode_query_value(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// Where to look up a movie's showtimes: Fandango's search in the US, where
+/// it sells tickets, and a Google search for "<title> showtimes" elsewhere.
+pub fn showtimes_url(region: &str, title: &str) -> String {
+    if region == "US" {
+        format!(
+            "https://www.fandango.com/search?q={}&mode=all",
+            encode_query_value(title)
+        )
+    } else {
+        format!(
+            "https://www.google.com/search?q={}",
+            encode_query_value(&format!("{title} showtimes"))
+        )
+    }
+}
+
 /// "2008-01-20" as "Jan 20, 2008"; anything unparseable is passed through.
 pub fn display_date(date: &str) -> String {
     date.parse::<jiff::civil::Date>()
@@ -533,6 +562,9 @@ pub struct TitleDetail {
     /// Movies only: playing in the region's theaters now (see
     /// `Catalog::in_theaters`).
     pub in_theaters: bool,
+    /// Movies in theaters only: where to look up showtimes (see
+    /// `showtimes_url`).
+    pub showtimes_url: Option<String>,
     /// TV only.
     pub seasons: Option<u32>,
     /// TV only.
@@ -1959,6 +1991,22 @@ impl EpisodeRatings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn showtimes_link_to_fandango_in_the_us_and_google_elsewhere() {
+        assert_eq!(
+            showtimes_url("US", "Opening Night"),
+            "https://www.fandango.com/search?q=Opening%20Night&mode=all"
+        );
+        assert_eq!(
+            showtimes_url("GB", "Opening Night"),
+            "https://www.google.com/search?q=Opening%20Night%20showtimes"
+        );
+        assert_eq!(
+            showtimes_url("US", "Mission: Impossible & Co?"),
+            "https://www.fandango.com/search?q=Mission%3A%20Impossible%20%26%20Co%3F&mode=all"
+        );
+    }
 
     #[test]
     fn release_days_read_as_coming_until_they_pass() {

@@ -23,7 +23,7 @@ use crate::model::{
     ShowProgress, SortRatings, TitleCredits, TitleDetail, TitleHit, TitleMarks, UnavailableReason,
     WatchProvider, WatchTarget, Watched, WatchedList, WatchedMarks, WatchedSort, WatchedSource,
     WatchedTitle, WatchlistDetail, WatchlistSort, WhereToWatch, WhereToWatchState,
-    hide_cast_episode_counts, local_today,
+    hide_cast_episode_counts, local_today, showtimes_url,
 };
 use crate::omdb::OmdbClient;
 use crate::playback::{
@@ -989,6 +989,9 @@ impl Catalog {
         let mut d = self.title_detail(kind, id).await?;
         if kind == MediaKind::Movie {
             d.in_theaters = self.in_theaters(d.id, d.releases.as_ref()).await;
+            d.showtimes_url = d
+                .in_theaters
+                .then(|| showtimes_url(&self.watch_region, &d.title));
         }
         let mine = self.service_ids().await;
         d.where_to_watch.mark_services(mine.as_ref());
@@ -1601,6 +1604,7 @@ impl Catalog {
             runtime_minutes: m.runtime.filter(|r| *r > 0),
             releases,
             in_theaters: false,
+            showtimes_url: None,
             seasons: None,
             episodes: None,
             poster_url: self.image(POSTER_SIZE, m.poster_path),
@@ -1633,6 +1637,7 @@ impl Catalog {
             runtime_minutes: None,
             releases: None,
             in_theaters: false,
+            showtimes_url: None,
             seasons: t.number_of_seasons,
             episodes: t.number_of_episodes,
             poster_url: self.image(POSTER_SIZE, t.poster_path),

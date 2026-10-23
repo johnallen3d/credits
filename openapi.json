@@ -3701,6 +3701,13 @@
             "type": "boolean",
             "description": "Movies only: playing in the region's theaters now (see\n`Catalog::in_theaters`)."
           },
+          "showtimes_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Movies in theaters only: where to look up showtimes (see\n`showtimes_url`)."
+          },
           "seasons": {
             "type": [
               "integer",

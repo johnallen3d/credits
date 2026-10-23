@@ -22,7 +22,7 @@ use crate::model::{
     RecentViews, SearchHit, SeasonDetail, SeasonWithWatched, ServicesDetail, ServicesFilter,
     SourceFilter, TitleCredits, TitleDetail, TitleMarksUpdate, TvWithWatched, WatchTarget, Watched,
     WatchedList, WatchedMarks, WatchedSort, WatchedSource, WatchedTitle, WatchlistDetail,
-    WatchlistSort, title_path,
+    WatchlistSort, encode_query_value, title_path,
 };
 use crate::playback::{App, Kind, LiveStatus, PlaybackDetail};
 
@@ -685,19 +685,6 @@ fn favorite_toggle_id(e: &FilmographyEntry) -> String {
 /// The element id of a title's toggle for `list` ("watchlist" or "favorite").
 fn title_toggle_id(list: &str, kind: &MediaKind, id: &u64) -> String {
     format!("{list}-{}-{id}", kind.slug())
-}
-
-/// Percent-encodes `value` for use in a URL query string.
-fn encode_query_value(value: &str) -> String {
-    value
-        .bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
 }
 
 /// Unknown state disables hearts instead of offering a misleading toggle.

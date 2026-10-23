@@ -24,6 +24,7 @@
       <div class="title-actions">
       {% call watchlist::toggle(d.kind.slug(), d.id, d.title, listed, "watchlist-toggle", page, "To watch", true) %}{% endcall %}
       {% call favorite::toggle(d.kind.slug(), d.id, d.title, favorited, "favorite-toggle", page, "Favorite", true) %}{% endcall %}
+      {% if let Some(url) = d.showtimes_url %}<a class="showtimes-link" href="{{ url }}" rel="noopener">Showtimes</a>{% endif %}
       {% if d.kind.slug() == "movie" %}
       <form class="watch-toggle" id="movie-watched" method="post" action="{{ page }}/watched">
         <input type="hidden" name="watched" value="{{ !movie_watched.watched }}">

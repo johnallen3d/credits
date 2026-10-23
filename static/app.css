@@ -219,6 +219,8 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .watchlist-toggle button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .watchlist-toggle button[aria-pressed="true"] .bookmark { fill: currentColor; }
 .title-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+.showtimes-link { font-size: .9rem; padding: .35rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); text-decoration: none; }
+.showtimes-link:hover, .showtimes-link:focus-visible { border-color: var(--accent); color: var(--accent); }
 .detail .meta > .title-actions { margin: .5rem 0; }
 .favorite-toggle button[aria-pressed="true"] { color: var(--favorite); border-color: var(--favorite); }
 .favorite-toggle button[aria-pressed="true"] .heart { fill: currentColor; }

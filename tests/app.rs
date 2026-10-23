@@ -3147,6 +3147,30 @@ async fn movie_pages_mark_movies_in_theaters() {
 }
 
 #[tokio::test]
+async fn movies_in_theaters_link_to_showtimes() {
+    let link = "https://www.fandango.com/search?q=Opening%20Night&mode=all";
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+
+    let (_, _, body) = get_page(t.app(), "/movie/7001", false).await;
+    assert!(
+        body.contains(
+            r#"<a class="showtimes-link" href="https://www.fandango.com/search?q=Opening%20Night&#38;mode=all" rel="noopener">Showtimes</a>"#
+        ),
+        "{body}"
+    );
+
+    for id in [7003, 7004, 603] {
+        let (_, _, body) = get_page(t.app(), &format!("/movie/{id}"), false).await;
+        assert!(!body.contains("showtimes-link"), "{id}: not in theaters");
+    }
+
+    let (_, json) = get_json(t.app(), "/api/movie/7001").await;
+    assert_eq!(json["showtimes_url"], link);
+    let (_, json) = get_json(t.app(), "/api/movie/7003").await;
+    assert_eq!(json["showtimes_url"], Value::Null);
+}
+
+#[tokio::test]
 async fn movies_are_judged_by_their_dates_when_now_playing_fails() {
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
     // Cache both movies without loading now playing.
