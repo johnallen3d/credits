@@ -1263,6 +1263,17 @@ impl Catalog {
             join_role(&mut into.2.role, other.role, separator);
             into.2.episode_count = into.2.episode_count.max(other.episode_count);
         });
+        let merged: Vec<_> = merged
+            .into_iter()
+            .map(|(department, date, mut entry, separator)| {
+                if let Separator::Characters = separator {
+                    entry.role = entry
+                        .role
+                        .map(|r| Characters::parse(&r).render(MAX_CHARACTERS));
+                }
+                (department, date, entry, separator)
+            })
+            .collect();
         let known_for_titles = known_for_titles(&merged, known_for.as_deref(), &notability);
 
         let mut groups: Vec<(String, Vec<DatedEntry>)> = Vec::new();
@@ -2238,6 +2249,12 @@ fn merge_credits<G: Clone + Eq + Hash>(
 
 fn join_role(into: &mut Option<String>, other: Option<String>, separator: Separator) {
     let Some(other) = other else { return };
+    if let Separator::Characters = separator {
+        let mut characters = Characters::parse(into.as_deref().unwrap_or(""));
+        characters.extend(Characters::parse(&other));
+        *into = Some(characters.render(usize::MAX));
+        return;
+    }
     match into {
         Some(existing) if !existing.split(separator.as_str()).any(|r| r == other) => {
             existing.push_str(separator.as_str());
@@ -2245,6 +2262,67 @@ fn join_role(into: &mut Option<String>, other: Option<String>, separator: Separa
         }
         Some(_) => {}
         None => *into = Some(other),
+    }
+}
+
+const VOICE: &str = "(voice)";
+
+/// Character names in TMDB's form, "Donald / Isotope (voice)", where one
+/// trailing "(voice)" covers every name. TV credits arrive as one such string
+/// per combination of characters played, so they repeat names.
+#[derive(Default)]
+struct Characters {
+    names: Vec<String>,
+    voice: bool,
+}
+
+impl Characters {
+    fn parse(role: &str) -> Self {
+        let mut characters = Characters::default();
+        for name in role.split(Separator::Characters.as_str()) {
+            let name = name.trim();
+            let name = match name.strip_suffix(VOICE) {
+                Some(rest) => {
+                    characters.voice = true;
+                    rest.trim_end()
+                }
+                None => name,
+            };
+            if !name.is_empty() && !characters.names.iter().any(|n| n == name) {
+                characters.names.push(name.to_owned());
+            }
+        }
+        characters
+    }
+
+    fn extend(&mut self, other: Characters) {
+        self.voice |= other.voice;
+        for name in other.names {
+            if !self.names.contains(&name) {
+                self.names.push(name);
+            }
+        }
+    }
+
+    /// The first `max` names, with "…" when some are left out.
+    fn render(&self, max: usize) -> String {
+        let mut role = self
+            .names
+            .iter()
+            .take(max)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(Separator::Characters.as_str());
+        if self.names.len() > max {
+            role.push_str(" …");
+        }
+        if self.voice {
+            if !role.is_empty() {
+                role.push(' ');
+            }
+            role.push_str(VOICE);
+        }
+        role
     }
 }
 
@@ -2935,6 +3013,26 @@ mod tests {
         join_role(&mut role, Some("Director".to_owned()), Separator::Jobs);
         join_role(&mut role, None, Separator::Jobs);
         assert_eq!(role.as_deref(), Some("Director, Writer"));
+    }
+
+    #[test]
+    fn repeated_tv_characters_collapse() {
+        let mut role = None;
+        for r in [
+            "Donald (voice)",
+            "Donald / Doc Seismic (voice)",
+            "Pete / Donald / Todd (voice)",
+            "(voice)",
+        ] {
+            join_role(&mut role, Some(r.to_owned()), Separator::Characters);
+        }
+        let role = role.unwrap();
+        assert_eq!(role, "Donald / Doc Seismic / Pete / Todd (voice)");
+        assert_eq!(
+            Characters::parse(&role).render(MAX_CHARACTERS),
+            "Donald / Doc Seismic / Pete … (voice)"
+        );
+        assert_eq!(Characters::parse("Brian").render(MAX_CHARACTERS), "Brian");
     }
 
     #[test]
