@@ -64,30 +64,19 @@
       <span class="segments">{% for k in KindFilter::ALL %}<a href="{{ self.kind_href(k) }}"{% if k == kind %} aria-current="true"{% endif %}>{{ k.label() }} <span class="count">{{ self.kind_count(k) }}</span></a>{% endfor %}</span>
     </nav>
     </div>
-    {% if let Some(r) = p.sort_ratings %}
-    {% if let Some(message) = r.unavailable_message() %}<p class="muted sort-note">{{ message }}</p>{% endif %}
-    {% if let Some(day) = r.stale_on() %}<p class="rating-stale sort-note">Couldn't refresh some ratings; using scores from as early as {{ day }}.</p>{% endif %}
-    {% if p.sort.is_rating() && r.unrated > 0 && r.unavailable_reason.is_none() %}<p class="muted sort-note">Credits without a Rotten Tomatoes or IMDb score are listed last, newest first.</p>{% endif %}
+    {% if p.sort_ratings.is_some() %}<div class="rating-notes" id="rating-notes">{% include "_person_rating_notes.html" %}</div>
+    {% else %}
+    <div class="rating-notes" id="rating-notes" hx-get="{{ self.ratings_href() }}" hx-trigger="load" hx-swap="none" hx-on::before-on-load="if (event.detail.xhr.status >= 400) this.classList.add('failed')" hx-on::send-error="this.classList.add('failed')" hx-on::timeout="this.classList.add('failed')">
+      <p class="muted sort-note loading" role="status">{% if p.sort.is_rating() %}Loading ratings to sort by…{% else %}Loading ratings…{% endif %}</p>
+      <p class="muted sort-note ratings-failed" role="alert">Ratings couldn't be loaded{% if p.sort.is_rating() %}, so credits stay in date order{% endif %}. Please reload to try again.</p>
+    </div>
     {% endif %}
     {% if let Some(g) = self.shown() %}
     <nav class="tabs" aria-label="Departments">
       {% for t in groups %}<a href="{{ self.tab_href(loop.index0) }}"{% if loop.index0 == tab %} aria-current="page"{% endif %}>{{ t.department }} <span class="count">{{ t.entries.len() }}</span></a>{% endfor %}
     </nav>
     <section id="{{ g.anchor() }}" aria-label="{{ g.department }}">
-      <ul class="filmography with-toggle columns">
-        {% for e in g.entries %}
-        <li>
-          <span class="year">{% if let Some(year) = e.year %}{{ year }}{% else %}TBA{% endif %}</span>
-          <a href="{{ e.path() }}" tabindex="-1" aria-hidden="true">{% if let Some(url) = e.poster_url %}<img class="poster thumb" src="{{ url }}" alt="" loading="lazy" width="46" height="69">{% else %}<span class="poster thumb missing">No artwork</span>{% endif %}</a>
-          <span class="credit-title"><a href="{{ e.path() }}">{{ e.title }}</a><span class="credit-role muted"><span class="badge badge-{{ e.kind.slug() }}">{{ e.kind.label() }}</span>{% if let Some(role) = e.role %} {% if g.is_acting() %}as {% endif %}{{ role }}{% endif %}{% if let Some(eps) = e.episodes_label() %} · {{ eps }}{% endif %}</span></span>
-          <span class="credit-rating">{% if let Some(r) = e.rating %}{% include "_rating.html" %}{% endif %}</span>
-          <div class="title-actions">
-          {% call watchlist::toggle(e.kind.slug(), e.id, e.title, self.is_listed(e), crate::web::watchlist_toggle_id(e), self.back_to(e), "", true) %}{% endcall %}
-          {% call favorite::toggle(e.kind.slug(), e.id, e.title, self.is_favorite(e), crate::web::favorite_toggle_id(e), self.favorite_back_to(e), "", true) %}{% endcall %}
-          </div>
-        </li>
-        {% endfor %}
-      </ul>
+      {% let oob = false %}{% include "_person_filmography.html" %}
     </section>
     {% else %}
     <p class="muted">No {% if kind == KindFilter::Tv %}TV{% else %}movie{% endif %} credits listed for this person.</p>

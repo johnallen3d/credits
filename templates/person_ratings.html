@@ -1,0 +1,12 @@
+{# A person page's ratings, swapped out of band into the page that asked for them: the notes, then each rated row's ring, or the whole list when sorted by rating. -#}
+{% import "_watchlist.html" as watchlist %}
+{% import "_favorite.html" as favorite %}
+<div class="rating-notes" id="rating-notes" hx-swap-oob="true">{% include "_person_rating_notes.html" %}</div>
+{% if let Some(g) = self.shown() %}
+{% if p.sort.is_rating() %}
+{% let oob = true %}{% include "_person_filmography.html" %}
+{% else %}
+{% for e in g.entries %}{% if let Some(r) = e.rating %}<span class="credit-rating" id="{{ crate::web::rating_slot_id(e) }}" hx-swap-oob="true">{% include "_rating.html" %}</span>
+{% endif %}{% endfor %}
+{% endif %}
+{% endif %}

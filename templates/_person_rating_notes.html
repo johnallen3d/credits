@@ -1,0 +1,6 @@
+{# How complete the filmography's ratings are, once they have loaded. -#}
+{% if let Some(r) = p.sort_ratings %}
+{% if let Some(message) = r.unavailable_message() %}<p class="muted sort-note">{{ message }}</p>{% endif %}
+{% if let Some(day) = r.stale_on() %}<p class="rating-stale sort-note">Couldn't refresh some ratings; using scores from as early as {{ day }}.</p>{% endif %}
+{% if p.sort.is_rating() && r.unrated > 0 && r.unavailable_reason.is_none() %}<p class="muted sort-note">Credits without a Rotten Tomatoes or IMDb score are listed last, newest first.</p>{% endif %}
+{% endif %}

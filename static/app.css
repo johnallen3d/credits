@@ -192,6 +192,15 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .watchlist .controls > .sort { flex: 1 1 auto; }
 .watchlist .segments { grid-auto-columns: minmax(max-content, 1fr); }
 .sort-note:has(+ :not(.sort-note)) { margin-bottom: 1rem; }
+/* Person pages load their ratings after the page: a note beside the heading says so, without moving the list when it goes; a failure note takes a line. A rating sort's list dims until its order arrives. */
+.section:has(> .rating-notes) { position: relative; }
+.rating-notes > .loading { position: absolute; top: 0; right: 0; margin: 0; line-height: 1.875rem; }
+.controls:has(+ .rating-notes > .sort-note:not(.loading, .ratings-failed)), .controls:has(+ .rating-notes.failed) { margin-bottom: .5rem; }
+.rating-notes > .sort-note:not(.loading):last-child, .rating-notes > .ratings-failed { margin-bottom: 1rem; }
+.rating-notes.failed > .loading, .rating-notes:not(.failed) > .ratings-failed { display: none; }
+.rating-notes > .loading::before { content: ""; display: inline-block; width: .75em; height: .75em; margin-right: .4em; vertical-align: -.05em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+.rating-notes:not(.failed) ~ section > .filmography.pending { opacity: .5; }
+@media (prefers-reduced-motion: reduce) { .rating-notes > .loading::before { animation-duration: 2s; } }
 .credit-rating { white-space: nowrap; margin-left: .25rem; }
 .filmography { list-style: none; padding: 0; margin: 0 0 1.5rem; }
 .filmography li { display: grid; grid-template-columns: 3.5rem 46px 1fr; align-items: center; gap: .5rem .75rem; padding: .35rem 0; border-bottom: 1px solid var(--line); }

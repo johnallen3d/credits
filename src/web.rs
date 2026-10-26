@@ -99,6 +99,7 @@ pub fn app(catalog: Catalog) -> Router {
         .route("/playback", get(playback_page))
         .route("/playback/decide", post(decide_playback_show))
         .route("/person/{id}", get(person_page))
+        .route("/person/{id}/ratings", get(person_ratings))
         .merge(api)
         .route(
             "/api/openapi.json",
@@ -351,6 +352,19 @@ struct PersonPage {
     favorited: Option<HashSet<(MediaKind, u64)>>,
 }
 
+/// A person page's ratings, swapped into the page once they've loaded.
+#[derive(Template)]
+#[template(path = "person_ratings.html")]
+struct PersonRatings(PersonPage);
+
+impl std::ops::Deref for PersonRatings {
+    type Target = PersonPage;
+
+    fn deref(&self) -> &PersonPage {
+        &self.0
+    }
+}
+
 impl PersonPage {
     /// Shows the department whose slug is `dept`, or the first one left.
     fn new(
@@ -430,6 +444,16 @@ impl PersonPage {
     /// Keeps the current tab; a kind without that department shows the first.
     fn kind_href(&self, kind: &KindFilter) -> String {
         self.href(self.p.sort, *kind, self.current_dept())
+    }
+
+    /// Where this page, as it is, loads its ratings from.
+    fn ratings_href(&self) -> String {
+        let page = self.href(self.p.sort, self.kind, self.current_dept());
+        let page = page.split_once('#').map_or(page.as_str(), |(page, _)| page);
+        match page.split_once('?') {
+            Some((path, query)) => format!("{path}/ratings?{query}"),
+            None => format!("{page}/ratings"),
+        }
     }
 
     fn sort_href(&self, sort: FilmographySort) -> String {
@@ -755,6 +779,11 @@ fn watchlist_toggle_id(e: &FilmographyEntry) -> String {
 
 fn favorite_toggle_id(e: &FilmographyEntry) -> String {
     title_toggle_id("favorite", &e.kind, &e.id)
+}
+
+/// The element id of a filmography row's rating, filled in once it loads.
+fn rating_slot_id(e: &FilmographyEntry) -> String {
+    title_toggle_id("rating", &e.kind, &e.id)
 }
 
 /// The element id of a title's toggle for `list` ("watchlist" or "favorite").
@@ -1102,19 +1131,55 @@ async fn person_page(
         return not_found_person();
     };
     let sort = FilmographySort::from_query(params.sort.as_deref());
-    let result = catalog.person(id, sort).await;
-    let listed = match &result {
-        Ok(p) => {
-            catalog.record_view(RecentView::of_person(p)).await;
-            catalog.watchlist_titles().await
+    // Rating every credit can take seconds, so the page loads its ratings
+    // after it shows, unless there is no key and so nothing to wait for.
+    let mut result = catalog.person_unrated(id, sort).await;
+    if let Ok(p) = &mut result {
+        if !catalog.ratings_configured() {
+            catalog.rate_filmography(p).await;
         }
+        catalog.record_view(RecentView::of_person(p)).await;
+    }
+    person_template(&catalog, result, &params, |page| page).await
+}
+
+/// The ratings a person page loads after it shows: its rating notes, and
+/// the rated rows of the department shown, or the whole list when sorted
+/// by rating, all swapped in out of band.
+async fn person_ratings(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    Query(params): Query<PersonParams>,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return not_found_person();
+    };
+    let sort = FilmographySort::from_query(params.sort.as_deref());
+    let result = catalog.person(id, sort).await;
+    person_template(&catalog, result, &params, PersonRatings).await
+}
+
+async fn person_template<T: Template>(
+    catalog: &Catalog,
+    result: Result<PersonDetail, CatalogError>,
+    params: &PersonParams,
+    template: impl FnOnce(PersonPage) -> T,
+) -> Response {
+    let listed = match &result {
+        Ok(_) => catalog.watchlist_titles().await,
         Err(_) => HashSet::new(),
     };
-    let favorited = favorite_titles(&catalog).await;
+    let favorited = favorite_titles(catalog).await;
     page(
         result.map(|p| {
             let kind = KindFilter::from_query(params.kind.as_deref());
-            PersonPage::new(p, kind, params.dept.as_deref(), listed, favorited)
+            template(PersonPage::new(
+                p,
+                kind,
+                params.dept.as_deref(),
+                listed,
+                favorited,
+            ))
         }),
         not_found_person,
         "Couldn't load this person",

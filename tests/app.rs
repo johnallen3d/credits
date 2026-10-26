@@ -2127,26 +2127,51 @@ async fn filmography_sorts_by_rotten_tomatoes_then_imdb() {
         .unwrap();
     assert_eq!(matrix["rating"]["score"], 83.0);
 
-    let (_, _, body) = get_page(test_app().await, "/person/6384?sort=rating", false).await;
+    let app = test_app().await;
+    let (_, _, body) = get_page(app.clone(), "/person/6384?sort=rating", false).await;
     assert!(body.contains(
         r##"<a href="/person/6384?sort=rating#filmography-heading" aria-current="true">Rating</a>"##
     ));
     assert!(body.contains(r##"<a href="/person/6384#filmography-heading">Date</a>"##));
+    assert!(body.contains(r#"hx-get="/person/6384/ratings?sort=rating" hx-trigger="load""#));
+    assert!(body.contains("Loading ratings to sort by…"));
+    assert!(
+        body.contains(
+            r#"<ul class="filmography with-toggle columns pending" id="filmography-list">"#
+        )
+    );
+    assert!(
+        !body.contains(r#"class="ring "#),
+        "ratings load after the page"
+    );
+    // The ratings swap in the whole list, now in rating order.
+    let (status, _, body) = get_page(app, "/person/6384/ratings?sort=rating", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"<div class="rating-notes" id="rating-notes" hx-swap-oob="true">"#));
+    assert!(body.contains(
+        r#"<ul class="filmography with-toggle columns" id="filmography-list" hx-swap-oob="true">"#
+    ));
     assert!(body.contains(r#"<span class="ring rt-fresh" style="--p:83" role="img" aria-label="Rotten Tomatoes: Fresh, 83%" title="Rotten Tomatoes: Fresh, 83%"><span class="ring-score" aria-hidden="true">83</span><img class="ring-mark" src="/static/rt-fresh.svg" alt=""></span>"#));
     assert!(body.contains(r#"aria-label="IMDb, 9.5/10""#));
     assert!(body.contains("Credits without a Rotten Tomatoes or IMDb score are listed last"));
-    let filmography = &body[body.find(r#"id="filmography-heading""#).unwrap()..];
-    let bb = filmography.find(r#"<a href="/tv/1396">"#).unwrap();
-    let matrix = filmography.find(r#"<a href="/movie/603">"#).unwrap();
+    let bb = body.find(r#"<a href="/tv/1396">"#).unwrap();
+    let matrix = body.find(r#"<a href="/movie/603">"#).unwrap();
     assert!(bb < matrix);
 
-    let (_, _, body) = get_page(test_app().await, "/person/6384", false).await;
+    let app = test_app().await;
+    let (_, _, body) = get_page(app.clone(), "/person/6384", false).await;
     assert!(
         body.contains(
             r##"<a href="/person/6384#filmography-heading" aria-current="true">Date</a>"##
         )
     );
-    assert!(body.contains(r#"aria-label="Rotten Tomatoes: Fresh, 83%""#));
+    assert!(body.contains(r#"hx-get="/person/6384/ratings" hx-trigger="load""#));
+    assert!(body.contains(r#"<span class="credit-rating" id="rating-movie-603"></span>"#));
+    assert!(!body.contains(r#"filmography-list" hx-swap-oob"#));
+    // In date order each rated row's ring swaps into its slot.
+    let (_, _, body) = get_page(app, "/person/6384/ratings", true).await;
+    assert!(body.contains(r#"<span class="credit-rating" id="rating-movie-603" hx-swap-oob="true"><span class="ring rt-fresh""#));
+    assert!(!body.contains("filmography-list"), "the list stays put");
     assert!(!body.contains("are listed last"));
 }
 
@@ -2163,7 +2188,7 @@ async fn rating_sort_is_cached_and_survives_provider_problems() {
 
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
     t.omdb.set_down(true);
-    let (status, _, body) = get_page(t.app(), "/person/6384?sort=rating", false).await;
+    let (status, _, body) = get_page(t.app(), "/person/6384/ratings?sort=rating", true).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Some ratings couldn&#39;t be loaded right now."));
     let (_, json) = get_json(t.app(), "/api/person/6384?sort=rating").await;
@@ -2180,9 +2205,9 @@ async fn rating_sort_is_cached_and_survives_provider_problems() {
     );
 
     let t = build(TOKEN, Some(OMDB_KEY), Duration::ZERO).await;
-    get_page(t.app(), "/person/6384?sort=rating", false).await;
+    get_page(t.app(), "/person/6384/ratings?sort=rating", true).await;
     t.omdb.set_down(true);
-    let (_, _, body) = get_page(t.app(), "/person/6384?sort=rating", false).await;
+    let (_, _, body) = get_page(t.app(), "/person/6384/ratings?sort=rating", true).await;
     assert!(body.contains("Couldn't refresh some ratings; using scores from as early as "));
     assert!(body.contains(r#"aria-label="Rotten Tomatoes: Fresh, 83%""#));
 
@@ -2193,6 +2218,10 @@ async fn rating_sort_is_cached_and_survives_provider_problems() {
         body.contains(
             "Ratings aren&#39;t configured on this server, so credits stay in date order."
         )
+    );
+    assert!(
+        !body.contains("/person/6384/ratings"),
+        "nothing to load later"
     );
     assert_eq!(t.omdb.calls(), 0);
     assert_eq!(t.tmdb.calls(), 1, "no title lookups without a ratings key");
@@ -2226,7 +2255,11 @@ async fn tmdb_responses_are_cached_and_shared_by_html_and_json() {
         "title and credits share one cached response"
     );
 
+    let omdb = t.omdb.calls();
     get_page(t.app(), "/person/6384", false).await;
+    assert_eq!(t.tmdb.calls(), 2, "the page looks up only the person");
+    assert_eq!(t.omdb.calls(), omdb, "ratings load after the page");
+    get_page(t.app(), "/person/6384/ratings", true).await;
     let calls = t.tmdb.calls();
     get_json(t.app(), "/api/person/6384").await;
     // Only the two credited titles TMDB doesn't know are asked for again.

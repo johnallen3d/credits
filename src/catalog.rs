@@ -1196,6 +1196,23 @@ impl Catalog {
         id: u64,
         sort: FilmographySort,
     ) -> Result<PersonDetail, CatalogError> {
+        let mut person = self.person_unrated(id, sort).await?;
+        self.rate_filmography(&mut person).await;
+        Ok(person)
+    }
+
+    /// Whether ratings can be looked up; without a key rating is instant.
+    pub fn ratings_configured(&self) -> bool {
+        self.ratings.is_configured()
+    }
+
+    /// A person with their filmography in date order and no ratings yet,
+    /// which needs no title or ratings lookups; `sort` is only recorded.
+    pub async fn person_unrated(
+        &self,
+        id: u64,
+        sort: FilmographySort,
+    ) -> Result<PersonDetail, CatalogError> {
         let (p, metadata): (tmdb::Person, _) = self
             // v2: entries cached before vote counts were kept can't rank "Known for".
             .cached(format!("person/{id}/v2"), self.tmdb.person(id))
@@ -1289,7 +1306,7 @@ impl Catalog {
                 Reverse(entries.len()),
             )
         });
-        let mut filmography: Vec<FilmographyGroup> = groups
+        let filmography: Vec<FilmographyGroup> = groups
             .into_iter()
             .map(|(department, mut entries)| {
                 // Undated entries are usually announced but unreleased, so they lead.
@@ -1300,11 +1317,6 @@ impl Catalog {
                 }
             })
             .collect();
-        let mut lists: Vec<_> = filmography.iter_mut().map(|g| &mut g.entries).collect();
-        let sort_ratings = Some(match sort {
-            FilmographySort::Date => self.rate(&mut lists).await,
-            FilmographySort::Rating => self.sort_by_rating(&mut lists).await,
-        });
 
         let mut person = PersonDetail {
             id: p.id,
@@ -1319,11 +1331,25 @@ impl Catalog {
             profile_url: self.image(PROFILE_SIZE, p.profile_path),
             filmography,
             sort,
-            sort_ratings,
+            sort_ratings: None,
             metadata,
         };
         person.hide_acting_episode_counts(self.watched_shows().await.as_ref());
         Ok(person)
+    }
+
+    /// Gives `person`'s credits their ratings, best rated first when sorted
+    /// by rating.
+    pub async fn rate_filmography(&self, person: &mut PersonDetail) {
+        let mut lists: Vec<_> = person
+            .filmography
+            .iter_mut()
+            .map(|g| &mut g.entries)
+            .collect();
+        person.sort_ratings = Some(match person.sort {
+            FilmographySort::Date => self.rate(&mut lists).await,
+            FilmographySort::Rating => self.sort_by_rating(&mut lists).await,
+        });
     }
 
     /// Reorders each list (e.g. a filmography department) best rated first,
