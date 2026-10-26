@@ -2116,7 +2116,8 @@ impl Ratings {
 pub struct EpisodeRatings {
     pub state: RatingsState,
     pub unavailable_reason: Option<UnavailableReason>,
-    /// Always `omdb` today.
+    /// Always `omdb` today; episodes OMDb has no score for are filled in from
+    /// IMDb's daily ratings dataset.
     pub provider: &'static str,
     /// The show's IMDb identifier, which the season was looked up by.
     pub imdb_id: Option<String>,

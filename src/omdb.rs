@@ -34,8 +34,13 @@ pub struct OmdbSeason {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OmdbEpisode {
     pub number: u32,
-    /// None when IMDb has no score yet, e.g. for an unaired episode.
+    /// None when OMDb has no score, e.g. for an unaired episode, or one it
+    /// hasn't caught up with.
     pub rating: Option<Rating>,
+    /// The episode's own IMDb identifier; missing from payloads cached
+    /// before it was kept.
+    #[serde(default)]
+    pub imdb_id: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,6 +121,7 @@ impl OmdbClient {
                     Some(OmdbEpisode {
                         number: e.episode.trim().parse().ok()?,
                         rating: imdb_rating(e.imdb_rating.as_deref(), None),
+                        imdb_id: e.imdb_id.filter(|id| id.starts_with("tt")),
                     })
                 })
                 .collect(),
@@ -217,6 +223,8 @@ struct SeasonEpisode {
     episode: String,
     #[serde(rename = "imdbRating")]
     imdb_rating: Option<String>,
+    #[serde(rename = "imdbID")]
+    imdb_id: Option<String>,
 }
 
 #[derive(Deserialize)]

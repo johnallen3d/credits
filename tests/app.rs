@@ -654,6 +654,17 @@ fn theaters_hits() -> Vec<Value> {
         .collect()
 }
 
+/// IMDb's ratings dataset, gzipped: Breaking Bad's first two episodes.
+fn imdb_ratings_dataset() -> Vec<u8> {
+    use std::io::Write;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    gz.write_all(
+        b"tconst\taverageRating\tnumVotes\ntt0959621\t9.1\t60000\ntt1054724\t8.6\t41000\n",
+    )
+    .unwrap();
+    gz.finish().unwrap()
+}
+
 #[derive(Clone, Default)]
 struct FakeOmdb {
     calls: Arc<AtomicUsize>,
@@ -671,7 +682,9 @@ impl FakeOmdb {
 
     async fn start(&self) -> String {
         let state = self.clone();
-        let fake = Router::new().route(
+        let fake = Router::new()
+            .route("/title.ratings.tsv.gz", get(|| async { imdb_ratings_dataset() }))
+            .route(
             "/",
             get(move |Query(q): Query<HashMap<String, String>>| {
                 let state = state.clone();
@@ -789,6 +802,7 @@ async fn build_from(mut config: Config, ratings_ttl: Duration, metadata_ttl: Dur
     config.tmdb_api_base = fake_tmdb(tmdb.clone()).await;
     config.tmdb_image_base = "https://img.test/t/p".to_owned();
     config.omdb_api_base = omdb.start().await;
+    config.imdb_ratings_url = format!("{}/title.ratings.tsv.gz", config.omdb_api_base);
     config.ratings_ttl = ratings_ttl;
     config.metadata_ttl = metadata_ttl;
     let catalog = Catalog::new(&config).await.unwrap();
@@ -1730,6 +1744,61 @@ async fn season_page_shows_imdb_episode_ratings() {
     let (_, json) = get_json(t.app(), "/api/tv/1396/season/2").await;
     assert_eq!(json["episode_ratings"]["state"], "fresh");
     assert_eq!(json["episodes"][0]["rating"], Value::Null);
+}
+
+#[tokio::test]
+async fn imdb_dataset_fills_in_episodes_omdb_has_no_score_for() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (_, json) = get_json(t.app(), "/api/tv/1396/season/1").await;
+    assert_eq!(json["episodes"][1]["rating"], Value::Null);
+
+    assert!(t.catalog.refresh_imdb_ratings().await.unwrap());
+    assert!(
+        !t.catalog.refresh_imdb_ratings().await.unwrap(),
+        "fresh for a day"
+    );
+    let (_, json) = get_json(t.app(), "/api/tv/1396/season/1").await;
+    assert_eq!(
+        json["episodes"][0]["rating"]["score"], 9.0,
+        "OMDb's score first"
+    );
+    assert_eq!(json["episodes"][1]["rating"]["source"], "imdb");
+    assert_eq!(json["episodes"][1]["rating"]["score"], 8.6);
+    assert_eq!(json["episodes"][1]["rating"]["votes"], 41000);
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert!(body.contains(r#"aria-label="IMDb, 8.6/10""#));
+    assert_eq!(
+        t.omdb.calls(),
+        1,
+        "the season is still one cached OMDb request"
+    );
+}
+
+#[tokio::test]
+async fn seasons_cached_without_episode_ids_are_fetched_again() {
+    let database = temp_database("season-ids");
+    let hour = Duration::from_secs(3600);
+    let t = build_with_database(TOKEN, Some(OMDB_KEY), hour, hour, &database).await;
+    credits::cache::ProviderCache::open(&database)
+        .await
+        .unwrap()
+        .put(
+            "omdb",
+            "tt0903747/season/1",
+            &json!({ "listed": true, "episodes": [
+                { "number": 1, "rating": null }, { "number": 2, "rating": null }
+            ] }),
+            jiff::Timestamp::now(),
+            hour,
+        )
+        .await
+        .unwrap();
+    t.catalog.refresh_imdb_ratings().await.unwrap();
+
+    let (_, json) = get_json(t.app(), "/api/tv/1396/season/1").await;
+    assert_eq!(json["episodes"][1]["rating"]["score"], 8.6);
+    get_json(t.app(), "/api/tv/1396/season/1").await;
+    assert_eq!(t.omdb.calls(), 1, "fetched again once, then cached");
 }
 
 #[tokio::test]

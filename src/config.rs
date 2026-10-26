@@ -27,6 +27,8 @@ pub struct Config {
     /// Ratings are optional: without a key every title reports them as unavailable.
     pub omdb_api_key: Option<String>,
     pub omdb_api_base: String,
+    /// IMDb's daily ratings dataset, gzipped TSV.
+    pub imdb_ratings_url: String,
     pub ratings_ttl: Duration,
     pub metadata_ttl: Duration,
     /// SQLite file for the provider cache, or `cache::IN_MEMORY`.
@@ -131,6 +133,7 @@ impl Config {
             tmdb_image_base: "https://image.tmdb.org/t/p".to_owned(),
             omdb_api_key,
             omdb_api_base: "https://www.omdbapi.com".to_owned(),
+            imdb_ratings_url: "https://datasets.imdbws.com/title.ratings.tsv.gz".to_owned(),
             ratings_ttl: RATINGS_TTL,
             metadata_ttl: METADATA_TTL,
             database_path,

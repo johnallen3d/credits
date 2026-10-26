@@ -2280,7 +2280,7 @@
           },
           "provider": {
             "type": "string",
-            "description": "Always `omdb` today."
+            "description": "Always `omdb` today; episodes OMDb has no score for are filled in from\nIMDb's daily ratings dataset."
           },
           "imdb_id": {
             "type": [

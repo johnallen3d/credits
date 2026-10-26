@@ -14,6 +14,7 @@ use tokio::task::JoinSet;
 
 use crate::cache::ProviderCache;
 use crate::config::Config;
+use crate::imdb::{ImdbError, ImdbRatings};
 use crate::model::{
     Availability, Department, Episode, EpisodeDetail, FilmographyEntry, FilmographyGroup,
     FilmographySort, KeyCrew, KeyRole, KnownFor, ListServices, MediaKind, Metadata, MetadataState,
@@ -178,7 +179,12 @@ impl Catalog {
         Ok(Self {
             tmdb: TmdbClient::new(&config.tmdb_api_base, &config.tmdb_token),
             image_base: config.tmdb_image_base.trim_end_matches('/').to_owned(),
-            ratings: RatingsService::new(omdb, cache.clone(), config.ratings_ttl),
+            ratings: RatingsService::new(
+                omdb,
+                ImdbRatings::new(&config.imdb_ratings_url, cache.clone()),
+                cache.clone(),
+                config.ratings_ttl,
+            ),
             recent: RecentlyViewed::new(cache.pool()),
             watched: WatchedShows::new(cache.pool()),
             watchlist: Watchlist::new(cache.pool()),
@@ -194,6 +200,18 @@ impl Catalog {
             metadata_ttl: config.metadata_ttl,
             watch_region: config.watch_region.clone(),
         })
+    }
+
+    /// Keeps IMDb's ratings dataset at most a day old, forever; for the
+    /// server to run in the background.
+    pub async fn keep_imdb_ratings_fresh(self) {
+        self.ratings.imdb().clone().keep_fresh().await
+    }
+
+    /// Downloads IMDb's ratings dataset if it's a day old or missing; true
+    /// if it did.
+    pub async fn refresh_imdb_ratings(&self) -> Result<bool, ImdbError> {
+        self.ratings.imdb().refresh(Timestamp::now()).await
     }
 
     /// Remembers that a title or person page was opened. Failures are logged,

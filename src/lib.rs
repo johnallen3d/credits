@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod catalog;
 pub mod config;
+pub mod imdb;
 pub mod model;
 mod omdb;
 pub mod playback;

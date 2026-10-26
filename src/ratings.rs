@@ -1,5 +1,6 @@
 //! Preferred ratings for a title, and IMDb ratings for a season's episodes: OMDb looked up by IMDb identifier, behind
-//! the persistent provider cache. Never fails; problems become `Ratings` states.
+//! the persistent provider cache, with episodes OMDb has no score for filled in from IMDb's dataset. Never fails;
+//! problems become `Ratings` states.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -8,21 +9,38 @@ use jiff::Timestamp;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::ProviderCache;
+use crate::imdb::ImdbRatings;
 use crate::model::{EpisodeRatings, MediaKind, Rating, Ratings, RatingsState, UnavailableReason};
-use crate::omdb::{OmdbClient, OmdbError};
+use crate::omdb::{OmdbClient, OmdbError, OmdbSeason};
 
 const PROVIDER: &str = "omdb";
 
 #[derive(Clone)]
 pub struct RatingsService {
     omdb: Option<OmdbClient>,
+    imdb: ImdbRatings,
     cache: ProviderCache,
     ttl: Duration,
 }
 
 impl RatingsService {
-    pub fn new(omdb: Option<OmdbClient>, cache: ProviderCache, ttl: Duration) -> Self {
-        Self { omdb, cache, ttl }
+    pub fn new(
+        omdb: Option<OmdbClient>,
+        imdb: ImdbRatings,
+        cache: ProviderCache,
+        ttl: Duration,
+    ) -> Self {
+        Self {
+            omdb,
+            imdb,
+            cache,
+            ttl,
+        }
+    }
+
+    /// IMDb's dataset, which fills in episodes OMDb has no score for.
+    pub fn imdb(&self) -> &ImdbRatings {
+        &self.imdb
     }
 
     /// Whether an OMDb key is set; without one nothing new can be fetched.
@@ -35,10 +53,14 @@ impl RatingsService {
             return Ratings::unavailable(kind, UnavailableReason::NoImdbId, None);
         };
         let lookup = self
-            .lookup(&imdb_id, |omdb| {
-                let imdb_id = imdb_id.clone();
-                async move { omdb.title(&imdb_id).await }
-            })
+            .lookup(
+                &imdb_id,
+                |_| true,
+                |omdb| {
+                    let imdb_id = imdb_id.clone();
+                    async move { omdb.title(&imdb_id).await }
+                },
+            )
             .await;
         match lookup {
             Lookup::Found(state, title, fetched_at) => {
@@ -62,20 +84,42 @@ impl RatingsService {
             );
         };
         let lookup = self
-            .lookup(&format!("{imdb_id}/season/{number}"), |omdb| {
-                let imdb_id = imdb_id.clone();
-                async move { omdb.season(&imdb_id, number).await }
-            })
+            .lookup(
+                &format!("{imdb_id}/season/{number}"),
+                // Not when cached before episode identifiers were kept, so
+                // nothing could be filled in from IMDb's dataset.
+                |season: &OmdbSeason| {
+                    season.episodes.is_empty()
+                        || season.episodes.iter().any(|e| e.imdb_id.is_some())
+                },
+                |omdb| {
+                    let imdb_id = imdb_id.clone();
+                    async move { omdb.season(&imdb_id, number).await }
+                },
+            )
             .await;
         match lookup {
-            Lookup::Found(state, season, fetched_at) => (
-                EpisodeRatings::found(state, imdb_id, fetched_at),
-                season
+            Lookup::Found(state, season, fetched_at) => {
+                let unscored: Vec<&str> = season
+                    .episodes
+                    .iter()
+                    .filter(|e| e.rating.is_none())
+                    .filter_map(|e| e.imdb_id.as_deref())
+                    .collect();
+                let mut dataset = self.imdb.scores(&unscored).await.unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, imdb_id, number, "reading IMDb ratings failed");
+                    HashMap::new()
+                });
+                let scores = season
                     .episodes
                     .into_iter()
-                    .filter_map(|e| Some((e.number, e.rating?)))
-                    .collect(),
-            ),
+                    .filter_map(|e| {
+                        let rating = e.rating.or_else(|| dataset.remove(e.imdb_id.as_deref()?))?;
+                        Some((e.number, rating))
+                    })
+                    .collect();
+                (EpisodeRatings::found(state, imdb_id, fetched_at), scores)
+            }
             Lookup::Failed(reason) => (
                 EpisodeRatings::unavailable(reason, Some(imdb_id)),
                 HashMap::new(),
@@ -83,8 +127,14 @@ impl RatingsService {
         }
     }
 
-    /// The cached value while fresh, else a refetch, else whatever is cached.
-    async fn lookup<T, F, Fut>(&self, key: &str, fetch: F) -> Lookup<T>
+    /// The cached value while fresh and `complete`, else a refetch, else
+    /// whatever is cached.
+    async fn lookup<T, F, Fut>(
+        &self,
+        key: &str,
+        complete: impl Fn(&T) -> bool,
+        fetch: F,
+    ) -> Lookup<T>
     where
         T: Serialize + DeserializeOwned,
         F: FnOnce(OmdbClient) -> Fut,
@@ -100,7 +150,7 @@ impl RatingsService {
             });
         let now = Timestamp::now();
         let cached = match cached {
-            Some(c) if c.is_fresh(now) => {
+            Some(c) if c.is_fresh(now) && complete(&c.value) => {
                 return Lookup::Found(RatingsState::Fresh, c.value, c.fetched_at);
             }
             other => other,

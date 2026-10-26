@@ -34,6 +34,12 @@ async fn main() -> ExitCode {
         }
     };
 
+    if config.omdb_api_key.is_some() {
+        // OMDb's season listings give each episode's IMDb identifier, which
+        // the dataset is looked up by.
+        tokio::spawn(catalog.clone().keep_imdb_ratings_fresh());
+    }
+
     match &config.home_assistant {
         Some(ha) => {
             tracing::info!(players = ?ha.players, "marking episodes watched from Home Assistant");
