@@ -13,13 +13,41 @@
 <body>
   <header class="site">
     <a class="brand" href="/"><img src="/static/favicon.svg" alt="credits" width="32" height="32"></a>
-    <nav class="site-nav" aria-label="Main">
+    <button type="button" class="menu-toggle" aria-expanded="false" aria-controls="main-nav" hidden>
+      <svg class="icon-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      <svg class="icon-close" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      <span class="visually-hidden">Menu</span>
+    </button>
+    <nav id="main-nav" class="site-nav" aria-label="Main">
       <a href="/watchlist">To watch</a>
       <a href="/favorites">Favorites</a>
       <a href="/watched">Watched</a>
       <a href="/now-playing">Now playing</a>
       <a href="/coming-soon">Coming soon</a>
     </nav>
+    <script>
+      // Marks the current page; on narrow screens the links fold behind a menu
+      // button. Without JavaScript they wrap instead.
+      (function () {
+        var header = document.querySelector("header.site");
+        var toggle = header.querySelector(".menu-toggle");
+        var current = header.querySelector('.site-nav a[href="' + location.pathname + '"]');
+        if (current) current.setAttribute("aria-current", "page");
+        function open(opened) {
+          header.classList.toggle("menu-open", opened);
+          toggle.setAttribute("aria-expanded", String(opened));
+        }
+        toggle.addEventListener("click", function () { open(!header.classList.contains("menu-open")); });
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape" && header.classList.contains("menu-open")) { open(false); toggle.focus(); }
+        });
+        document.addEventListener("click", function (e) { if (!header.contains(e.target)) open(false); });
+        // A back/forward-cache restore comes back with the menu closed.
+        window.addEventListener("pageshow", function () { open(false); });
+        header.classList.add("has-menu");
+        toggle.hidden = false;
+      })();
+    </script>
   </header>
   <main>
     {% block content %}{% endblock %}
