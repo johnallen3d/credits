@@ -791,6 +791,18 @@ fn title_toggle_id(list: &str, kind: &MediaKind, id: &u64) -> String {
     format!("{list}-{}-{id}", kind.slug())
 }
 
+/// The original upload behind a sized TMDB image URL
+/// (`…/t/p/w342/x.jpg` to `…/t/p/original/x.jpg`), for viewing it full size.
+fn full_size(url: &str) -> String {
+    let Some((sized_dir, file)) = url.rsplit_once('/') else {
+        return url.to_owned();
+    };
+    let Some((base, _size)) = sized_dir.rsplit_once('/') else {
+        return url.to_owned();
+    };
+    format!("{base}/original/{file}")
+}
+
 /// Unknown state disables hearts instead of offering a misleading toggle.
 async fn favorite_titles(catalog: &Catalog) -> Option<HashSet<(MediaKind, u64)>> {
     match catalog.favorite_titles().await {

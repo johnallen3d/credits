@@ -10,7 +10,7 @@
 <article class="detail">
   <div class="detail-body">
     {% if let Some(url) = e.still_url %}
-    <img class="still large" src="{{ url }}" alt="{{ e.title }} still" width="300" height="169">
+    <img class="still large" src="{{ url }}" data-full="{{ crate::web::full_size(url) }}" alt="{{ e.title }} still" width="300" height="169">
     {% else %}
     <div class="still large missing" role="img" aria-label="No image available">No image</div>
     {% endif %}

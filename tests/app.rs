@@ -1109,6 +1109,10 @@ async fn movie_detail_page_shows_metadata_and_artwork() {
     assert!(body.contains("136 min"));
     assert!(body.contains("https://img.test/t/p/w342/matrix.jpg"));
     assert!(
+        body.contains(r#"data-full="https://img.test/t/p/original/matrix.jpg""#),
+        "the poster opens full size"
+    );
+    assert!(
         !body.contains(r#"class="backdrop""#),
         "no backdrop when TMDB has none"
     );
@@ -1566,6 +1570,7 @@ async fn episode_page_shows_episode_cast_and_crew() {
     ));
     assert!(body.contains("Season 1 · Episode 1"));
     assert!(body.contains("https://img.test/t/p/w300/pilot.jpg"));
+    assert!(body.contains(r#"data-full="https://img.test/t/p/original/pilot.jpg""#));
     assert!(body.contains("<dt>Runtime</dt><dd>58 min</dd>"));
     assert!(
         body.contains(r#"<dt>Directed by</dt><dd><a href="/person/66633">Vince Gilligan</a></dd>"#)
@@ -1959,6 +1964,7 @@ async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("<title>Keanu Reeves · credits</title>"));
     assert!(body.contains("Known for Acting"));
+    assert!(body.contains(r#"data-full="https://img.test/t/p/original/keanu.jpg""#));
     assert!(body.contains("<dt>Born</dt><dd>Sep 2, 1964 in Beirut, Lebanon</dd>"));
     assert!(body.contains(r#"<p class="biography">He was born in Beirut.</p>"#));
     assert!(body.contains("https://img.test/t/p/w185/keanu.jpg"));

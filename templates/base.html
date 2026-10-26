@@ -76,6 +76,36 @@
       collapse(true);
       box.after(button);
     });
+
+    // Photos and posters open full size over the page; the smaller copy
+    // already shown fills in until the original loads, or if it can't.
+    (function () {
+      var images = document.querySelectorAll("img[data-full]");
+      if (!images.length || !window.HTMLDialogElement) return;
+      var dialog = document.createElement("dialog");
+      dialog.className = "lightbox";
+      dialog.innerHTML = '<button type="button" class="lightbox-close" aria-label="Close">×</button><img alt="">';
+      var big = dialog.querySelector("img");
+      dialog.addEventListener("click", function () { dialog.close(); });
+      document.body.append(dialog);
+      images.forEach(function (img) {
+        img.tabIndex = 0;
+        img.setAttribute("role", "button");
+        img.title = "View full size";
+        function open() {
+          big.src = img.currentSrc || img.src;
+          big.alt = img.alt;
+          var full = new Image();
+          full.onload = function () { big.src = full.src; };
+          full.src = img.dataset.full;
+          dialog.showModal();
+        }
+        img.addEventListener("click", open);
+        img.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+        });
+      });
+    })();
   </script>
   <footer class="site">
     <nav class="site-nav" aria-label="Site">
