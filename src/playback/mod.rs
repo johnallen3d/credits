@@ -10,8 +10,8 @@
 //! marked watched.
 //! Only Infuse (show, season and episode are in the title; any other title is
 //! taken to be a movie's) and Apple's TV app (an episode's content ID ends in
-//! the season and episode; other feature-length videos are movies) are
-//! understood.
+//! the season and episode, or a block of seasons numbered straight through;
+//! other feature-length videos are movies) are understood.
 
 pub mod home_assistant;
 mod live;
@@ -260,16 +260,26 @@ fn leading_number(s: &str) -> Option<(u32, &str)> {
 }
 
 /// The TV app's content IDs for episodes, like "A0178901003", end in a
-/// two-digit season and a three-digit episode number (here S1 E3).
+/// two-digit season and a three-digit episode number (here S1 E3). Usually:
+/// see `content_id_block`.
 fn content_id_episode(id: &str) -> Option<(u32, u32)> {
+    content_id_block(id).map(|(_, block, number)| (block, number))
+}
+
+/// A TV app episode content ID split into the show's block of episodes (the
+/// ID up to the last three digits), the block's number and the episode's
+/// number within it. A block is usually a season, but can span several
+/// numbered straight through: Slow Horses' `A0006403007` is S6 E1, block 3
+/// holding seasons 5 and 6 as episodes 1 to 12.
+pub fn content_id_block(id: &str) -> Option<(&str, u32, u32)> {
     let digits = id.strip_prefix(|c: char| c.is_ascii_uppercase())?;
     if digits.len() < 6 || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let n = digits.len();
-    let season = digits[n - 5..n - 3].parse().ok()?;
-    let episode = digits[n - 3..].parse().ok()?;
-    (episode > 0).then_some((season, episode))
+    let n = id.len();
+    let block = id[n - 5..n - 3].parse().ok()?;
+    let number = id[n - 3..].parse().ok()?;
+    (number > 0).then_some((&id[..n - 3], block, number))
 }
 
 /// Lowercase letters and digits, single-spaced: "Widow’s Bay" and TMDB's
@@ -847,6 +857,7 @@ mod tests {
         assert_eq!(content_id_episode("umc.cmc.123"), None);
         assert_eq!(content_id_episode("A00522"), None);
         assert_eq!(content_id_episode("A0052201000"), None);
+        assert_eq!(content_id_block("A0006403007"), Some(("A0006403", 3, 7)));
         let mut idle = tv(0, true, "", 0);
         idle.title = None;
         idle.content_id = None;

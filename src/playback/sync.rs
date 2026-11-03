@@ -8,7 +8,8 @@ use jiff::{SignedDuration, Timestamp};
 use super::store::{Key, Mapping};
 use super::{
     App, Candidate, Detection, DetectionStatus, HomeAssistant, Kind, Live, PlaybackEvent,
-    accumulate, is_watched, movie_is_watched, movie_title, runtime_fits, show_key,
+    accumulate, content_id_block, is_watched, movie_is_watched, movie_title, runtime_fits,
+    show_key,
 };
 use crate::catalog::{Catalog, CatalogError};
 
@@ -136,7 +137,8 @@ async fn read_players(
 /// What to do with an episode or movie watched far enough.
 #[derive(Debug, PartialEq)]
 enum Outcome {
-    Mark(u64),
+    /// Mark the TMDB show's season and episode (0 and 0 for a movie).
+    Mark(u64, Place),
     Ask(DetectionStatus, String),
     Ignore,
     /// TMDB failed; try again on the next read.
@@ -190,18 +192,23 @@ async fn resolve_pass(catalog: &Catalog, matched: &mut Vec<(App, Kind, String)>)
             item_key: &d.item_key,
         };
         let saved = match resolve(catalog, &d, matched).await {
-            Outcome::Mark(tmdb_id) => {
+            Outcome::Mark(tmdb_id, (season, episode)) => {
                 let marked = match d.kind {
                     Kind::Episode => {
                         catalog
-                            .mark_episode_from_apple_tv(tmdb_id, d.season, d.episode)
+                            .mark_episode_from_apple_tv(tmdb_id, season, episode)
                             .await
                     }
                     Kind::Movie => catalog.mark_movie_from_apple_tv(tmdb_id).await,
                 };
+                if (season, episode) != (d.season, d.episode)
+                    && let Err(e) = store.set_place(&key, season, episode).await
+                {
+                    tracing::warn!(error = %e, "saving an episode's season failed");
+                }
                 match marked {
                     Ok(()) => {
-                        tracing::info!(tmdb_id, kind = d.kind.id(), season = d.season, episode = d.episode, title = %d.show_title, "marked watched from Apple TV");
+                        tracing::info!(tmdb_id, kind = d.kind.id(), season, episode, title = %d.show_title, "marked watched from Apple TV");
                         store
                             .set_status(&key, DetectionStatus::Marked, Some(tmdb_id), None)
                             .await
@@ -275,17 +282,19 @@ async fn resolve(
         Err(e) => Outcome::Retry(format!("couldn't read {noun} choices: {e}")),
         Ok(Some(Mapping::Ignored)) => Outcome::Ignore,
         // The movie itself was chosen; there's nothing more to check.
-        Ok(Some(Mapping::Show(movie_id))) if d.kind == Kind::Movie => Outcome::Mark(movie_id),
+        Ok(Some(Mapping::Show(movie_id))) if d.kind == Kind::Movie => {
+            Outcome::Mark(movie_id, (0, 0))
+        }
         Ok(Some(Mapping::Show(tv_id))) => match fit(catalog, tv_id, d).await {
             Err(e) => Outcome::Retry(retry_note(&e)),
-            Ok(Fit::Yes) => Outcome::Mark(tv_id),
+            Ok((Fit::Yes, place)) => Outcome::Mark(tv_id, place),
             // Infuse names the episode itself; only its runtime differs.
-            Ok(Fit::Runtime) if d.app == App::Infuse => Outcome::Mark(tv_id),
-            Ok(Fit::Runtime) => Outcome::Ask(
+            Ok((Fit::Runtime, place)) if d.app == App::Infuse => Outcome::Mark(tv_id, place),
+            Ok((Fit::Runtime, _)) => Outcome::Ask(
                 DetectionStatus::NeedsConfirmation,
                 format!("{what}'s runtime on TMDB doesn't match what played"),
             ),
-            Ok(Fit::Missing) => Outcome::Ask(
+            Ok((Fit::Missing, _)) => Outcome::Ask(
                 DetectionStatus::NeedsConfirmation,
                 format!("TMDB doesn't list {what} for the chosen show"),
             ),
@@ -304,13 +313,13 @@ async fn resolve(
             let mut fitting = Vec::new();
             for c in &named {
                 match fit(catalog, c.id, d).await {
-                    Ok(Fit::Yes) => fitting.push(c.id),
+                    Ok((Fit::Yes, place)) => fitting.push((c.id, place)),
                     Ok(_) => {}
                     Err(e) => return Outcome::Retry(retry_note(&e)),
                 }
             }
             match fitting.as_slice() {
-                [id] => {
+                [(id, place)] => {
                     if let Err(e) = store
                         .set_mapping(
                             d.app,
@@ -325,7 +334,7 @@ async fn resolve(
                         return Outcome::Retry(format!("couldn't save the {noun} match: {e}"));
                     }
                     matched.push((d.app, d.kind, d.show_key.clone()));
-                    Outcome::Mark(*id)
+                    Outcome::Mark(*id, *place)
                 }
                 [] => Outcome::Ask(
                     DetectionStatus::NeedsConfirmation,
@@ -380,29 +389,141 @@ enum Fit {
     Missing,
 }
 
+/// A season and episode on TMDB.
+type Place = (u32, u32);
+
+/// A season's number and its episodes' numbers and runtimes in minutes.
+type Season = (u32, Vec<(u32, Option<u32>)>);
+
 /// Whether TMDB's show `id` has the episode, or its movie `id` is the
-/// movie, with a runtime that fits what played. Those without a runtime on
-/// TMDB fit.
-async fn fit(catalog: &Catalog, id: u64, d: &Detection) -> Result<Fit, CatalogError> {
+/// movie, with a runtime that fits what played, and where the episode is.
+/// Those without a runtime on TMDB fit. A TV app episode goes where its
+/// block's other episodes say, if they say (see `block_place`).
+async fn fit(catalog: &Catalog, id: u64, d: &Detection) -> Result<(Fit, Place), CatalogError> {
     if d.kind == Kind::Movie {
-        return Ok(match (catalog.movie_runtime(id).await?, d.duration) {
+        let fit = match (catalog.movie_runtime(id).await?, d.duration) {
             (Some(runtime), Some(duration)) if !runtime_fits(duration, runtime) => Fit::Runtime,
             _ => Fit::Yes,
-        });
+        };
+        return Ok((fit, (0, 0)));
+    }
+    if d.app == App::Tv
+        && let Some(place) = block_place(catalog, id, d).await?
+    {
+        return Ok((Fit::Yes, place));
     }
     let runtimes = match catalog.episode_runtimes(id, d.season).await {
         Ok(runtimes) => runtimes,
-        Err(CatalogError::NotFound) => return Ok(Fit::Missing),
+        Err(CatalogError::NotFound) => return Ok((Fit::Missing, (d.season, d.episode))),
         Err(e) => return Err(e),
     };
-    Ok(match runtimes.iter().find(|(n, _)| *n == d.episode) {
+    let fit = match runtimes.iter().find(|(n, _)| *n == d.episode) {
         None => Fit::Missing,
-        Some((_, Some(runtime))) => match d.duration {
-            Some(duration) if !runtime_fits(duration, *runtime) => Fit::Runtime,
-            _ => Fit::Yes,
-        },
-        Some((_, None)) => Fit::Yes,
-    })
+        Some((_, runtime)) => fits(d.duration, *runtime),
+    };
+    Ok((fit, (d.season, d.episode)))
+}
+
+fn fits(duration: Option<u32>, runtime: Option<u32>) -> Fit {
+    match (duration, runtime) {
+        (Some(duration), Some(runtime)) if !runtime_fits(duration, runtime) => Fit::Runtime,
+        _ => Fit::Yes,
+    }
+}
+
+/// The most seasons a block of TV app episodes is looked for in.
+const MAX_BLOCK_SEASONS: u32 = 30;
+
+/// Where a TV app episode is on TMDB's show `id` when its content ID's
+/// block isn't simply its season: the block's episodes are numbered
+/// straight through from some season on. Once an episode of the block has
+/// been marked, that season is known; otherwise it's the one season from
+/// which every episode of the block seen so far exists and fits what played.
+/// `None` if the block has no single such season and nothing in it was
+/// marked, or it does but this episode doesn't fit there.
+async fn block_place(
+    catalog: &Catalog,
+    id: u64,
+    d: &Detection,
+) -> Result<Option<Place>, CatalogError> {
+    let Some((block, first_season, number)) = content_id_block(&d.item_key) else {
+        return Ok(None);
+    };
+    let Ok(episodes) = catalog
+        .playback_store()
+        .show_episodes(d.app, &d.show_key)
+        .await
+    else {
+        return Ok(None);
+    };
+    // The block's episodes, by their number in it.
+    let block_episodes: Vec<(u32, &Detection)> = episodes
+        .iter()
+        .filter_map(|e| match content_id_block(&e.item_key) {
+            Some((b, _, n)) if b == block => Some((n, e)),
+            _ => None,
+        })
+        .collect();
+    let mut seasons = Vec::new();
+    for season in first_season.max(1)..first_season.max(1) + MAX_BLOCK_SEASONS {
+        match catalog.episode_runtimes(id, season).await {
+            Ok(runtimes) if !runtimes.is_empty() => seasons.push((season, runtimes)),
+            Ok(_) | Err(CatalogError::NotFound) => break,
+            Err(e) => return Err(e),
+        }
+    }
+    let starts = seasons.iter().map(|(s, _)| *s);
+    let marked: Vec<u32> = starts
+        .clone()
+        .filter(|&start| {
+            block_episodes.iter().any(|(n, e)| {
+                e.status == DetectionStatus::Marked
+                    && e.tmdb_id == Some(id)
+                    && locate(&seasons, start, *n).map(|(place, _)| place)
+                        == Some((e.season, e.episode))
+            })
+        })
+        .collect();
+    let start = match marked.as_slice() {
+        [start] => *start,
+        [] => {
+            let fitting: Vec<u32> = starts
+                .filter(|&start| {
+                    block_episodes.iter().all(|(n, e)| {
+                        locate(&seasons, start, *n)
+                            .is_some_and(|(_, r)| matches!(fits(e.duration, r), Fit::Yes))
+                    })
+                })
+                .collect();
+            match fitting.as_slice() {
+                [start] => *start,
+                _ => return Ok(None),
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(locate(&seasons, start, number)
+        .filter(|(_, r)| matches!(fits(d.duration, *r), Fit::Yes))
+        .map(|(place, _)| place))
+}
+
+/// The `number`th episode counting straight through `seasons` from `start`,
+/// with its runtime.
+fn locate(
+    seasons: &[Season],
+    start: u32,
+    number: u32,
+) -> Option<(Place, Option<u32>)> {
+    let mut n = number;
+    for (season, runtimes) in seasons.iter().filter(|(s, _)| *s >= start) {
+        let count = runtimes.len() as u32;
+        if n <= count {
+            let (episode, runtime) = runtimes.iter().find(|(e, _)| *e == n)?;
+            return Some(((*season, *episode), *runtime));
+        }
+        n -= count;
+    }
+    None
 }
 
 /// Records which TMDB show or movie (or none) an app's show or movie is,

@@ -117,6 +117,10 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         { "id": 334042, "name": "Dark Matter: The Official Podcast",
                           "first_air_date": "2026-08-27" }
                     ]),
+                    Some("Slow Horses") => json!([
+                        { "id": 95480, "name": "Slow Horses", "first_air_date": "2022-04-01",
+                          "overview": "Disgraced MI5 agents." }
+                    ]),
                     _ => json!([]),
                 };
                 Json(json!({ "results": results }))
@@ -426,6 +430,29 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                                   "runtime": if id == 196322 { 58 } else { 30 } }
                             ]
                         })),
+                    );
+                }
+                // Slow Horses' runtimes on TMDB, six episodes a season.
+                let slow_horses: &[[u32; 6]] = &[
+                    [57, 52, 42, 42, 42, 54],
+                    [44, 49, 53, 46, 42, 46],
+                    [44, 44, 45, 47, 42, 45],
+                    [44, 47, 47, 43, 41, 53],
+                    [46, 48, 40, 40, 45, 52],
+                    [48, 47, 49, 50, 48, 62],
+                ];
+                if id == 95480 {
+                    let Some(runtimes) = number.checked_sub(1).and_then(|i| slow_horses.get(i as usize)) else {
+                        return (StatusCode::NOT_FOUND, Json(json!({ "status_code": 34 })));
+                    };
+                    let episodes: Vec<Value> = runtimes
+                        .iter()
+                        .zip(1..)
+                        .map(|(r, n)| json!({ "episode_number": n, "name": "", "runtime": r }))
+                        .collect();
+                    return (
+                        StatusCode::OK,
+                        Json(json!({ "season_number": number, "name": "", "episodes": episodes })),
                     );
                 }
                 if id != 1396 || number > 2 {
@@ -4597,6 +4624,40 @@ async fn credits_skipped_missing_durations_and_later_matches_still_mark() {
     assert!(dm.episode(1, 1) && dm.episode(1, 2));
     let body = p.page().await;
     assert!(!body.contains("Which show or movie is this?"));
+}
+
+#[tokio::test]
+async fn tv_app_blocks_spanning_seasons_find_their_season() {
+    let p = PlaybackApp::new().await;
+    // Slow Horses S6 E1 to E4 as the TV app reports them: block 3 holds
+    // seasons 5 and 6, so these are its episodes 7 to 10, not S3 E7 to E10.
+    p.ha.set_rows(vec![
+        tv_app_row(500, "playing", "Slow Horses", "A0006403007", 3073),
+        tv_app_row(410, "playing", "Slow Horses", "A0006403008", 2971),
+        tv_app_row(320, "playing", "Slow Horses", "A0006403009", 3030),
+        tv_app_row(230, "playing", "Slow Horses", "A0006403010", 3189),
+        tv_app_row(140, "paused", "Slow Horses", "A0006403010", 3189),
+    ]);
+    p.sync().await.unwrap();
+    let watched = p.t.catalog.watched(95480).await;
+    for episode in 1..=4 {
+        assert!(watched.episode(6, episode), "S6 E{episode}");
+    }
+    assert!(!watched.episode(3, 6) && !watched.episode(4, 1) && !watched.episode(5, 1));
+    let body = p.page().await;
+    assert!(!body.contains("Which show or movie is this?"));
+    assert!(body.contains(r#"<a href="/tv/95480/season/6/episode/1">Slow Horses S6 E1</a>"#));
+
+    // Once the block's season is known, an episode of it on its own goes
+    // there too: episode 1 is S5 E1, though S3 E1 would fit by runtime.
+    p.ha.set_rows(vec![
+        tv_app_row(120, "playing", "Slow Horses", "A0006403001", 2800),
+        tv_app_row(1, "paused", "Slow Horses", "A0006403001", 2800),
+    ]);
+    p.sync().await.unwrap();
+    let watched = p.t.catalog.watched(95480).await;
+    assert!(watched.episode(5, 1));
+    assert!(!watched.episode(3, 1));
 }
 
 #[tokio::test]

@@ -255,6 +255,44 @@ impl Playback {
         Ok(rows.into_iter().filter_map(detection).collect())
     }
 
+    /// Every episode of a show seen in `app`, on any player.
+    pub async fn show_episodes(
+        &self,
+        app: App,
+        show_key: &str,
+    ) -> Result<Vec<Detection>, sqlx::Error> {
+        let rows: Vec<Row> = sqlx::query_as(&format!(
+            "SELECT {COLUMNS} FROM playback_progress
+             WHERE app = ? AND kind = 'episode' AND show_key = ?"
+        ))
+        .bind(app.id())
+        .bind(show_key)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().filter_map(detection).collect())
+    }
+
+    /// Corrects which season and episode a row is, once TMDB has placed it.
+    pub async fn set_place(
+        &self,
+        key: &Key<'_>,
+        season: u32,
+        episode: u32,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE playback_progress SET season = ?, episode = ?
+             WHERE player = ? AND app = ? AND item_key = ?",
+        )
+        .bind(season)
+        .bind(episode)
+        .bind(key.player)
+        .bind(key.app.id())
+        .bind(key.item_key)
+        .execute(&self.pool)
+        .await
+        .map(drop)
+    }
+
     pub async fn set_status(
         &self,
         key: &Key<'_>,
