@@ -80,8 +80,8 @@ async fn ingest_live(
     event: PlaybackEvent,
 ) -> Result<(), sqlx::Error> {
     let store = catalog.playback_store();
-    let open = store.cursor(player).await?;
-    let batch = accumulate(open, vec![event]);
+    let cursor = store.cursor(player).await?;
+    let batch = accumulate(cursor.open, cursor.last, vec![event]);
     store.ingest(player, &batch).await?;
     resolve_ready(catalog).await;
     Ok(())
@@ -111,12 +111,15 @@ async fn read_players(
     let store = catalog.playback_store();
     for player in players {
         let now = Timestamp::now();
-        let open = store
+        let cursor = store
             .cursor(player)
             .await
             .map_err(|e| format!("reading the playback position failed: {e}"))?;
         let earliest = now - SignedDuration::from_hours(24 * LOOKBACK_DAYS);
-        let start = open.as_ref().map_or(earliest, |o| o.at.max(earliest));
+        let start = cursor
+            .open
+            .as_ref()
+            .map_or(earliest, |o| o.at.max(earliest));
         let mut events = ha
             .history(player, start, now)
             .await
@@ -125,7 +128,7 @@ async fn read_players(
         for e in &mut events {
             e.at = e.at.max(start);
         }
-        let batch = accumulate(open, events);
+        let batch = accumulate(cursor.open, cursor.last, events);
         store
             .ingest(player, &batch)
             .await

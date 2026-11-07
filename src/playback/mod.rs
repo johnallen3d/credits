@@ -330,6 +330,10 @@ pub fn runtime_fits(duration: u32, runtime_minutes: u32) -> bool {
 /// known yet.
 const MAX_INTERVAL: u32 = 4 * 60 * 60;
 
+/// How long after the last named episode a row without a title can still
+/// continue it, with other apps played in between.
+const UNTITLED_WITHIN: i64 = 12 * 60 * 60;
+
 /// What a run of history rows says about each episode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Seen {
@@ -349,24 +353,37 @@ pub struct Batch {
     pub other: BTreeMap<String, u32>,
     /// The last row: how long it lasts is only known from the next one.
     pub open: Option<PlaybackEvent>,
+    /// The last row that named an episode or movie, with the duration known
+    /// for it, for untitled rows in the next run to continue.
+    pub last: Option<PlaybackEvent>,
 }
 
 /// Adds up playing time from `events`, continuing from `open`, the last row
-/// of the previous run. Rows at or before `open` were already counted.
+/// of the previous run, and `last`, the previous run's last named episode.
+/// Rows at or before `open` were already counted.
 /// Each row in the playing state counts until the next row, at most the
 /// episode's duration, so an interrupted history can't run on for hours.
-/// A row without a title continues the episode before it, if it's from the
-/// same app and reports the same duration. (The TV app's menus send
+/// A row without a title continues the episode before it, even with other
+/// apps played in between, if it's from the same app, reports the same
+/// duration and comes within `UNTITLED_WITHIN`. (The TV app's menus send
 /// untitled rows without one.) A row with a position reaches that position
 /// plus, while playing, the time until the next row.
-pub fn accumulate(open: Option<PlaybackEvent>, mut events: Vec<PlaybackEvent>) -> Batch {
+pub fn accumulate(
+    open: Option<PlaybackEvent>,
+    last: Option<PlaybackEvent>,
+    mut events: Vec<PlaybackEvent>,
+) -> Batch {
     if let Some(open) = &open {
         events.retain(|e| e.at > open.at);
     }
     events.sort_by_key(|e| e.at);
     let rows: Vec<PlaybackEvent> = open.into_iter().chain(events).collect();
     let mut batch = Batch::default();
-    let mut last: Option<(Item, Option<u32>)> = None;
+    let mut last: Option<(Item, Option<u32>, PlaybackEvent)> =
+        last.and_then(|row| match parse(&row) {
+            Parsed::Item(item) => Some((item, row.duration, row)),
+            _ => None,
+        });
     for (i, row) in rows.iter().enumerate() {
         let next = rows.get(i + 1);
         let elapsed = next.map_or(0, |n| {
@@ -375,8 +392,11 @@ pub fn accumulate(open: Option<PlaybackEvent>, mut events: Vec<PlaybackEvent>) -
         let elapsed = if row.playing { elapsed } else { 0 };
         let parsed = match parse(row) {
             Parsed::Untitled(app) => match &last {
-                Some((item, duration))
-                    if item.app == app && row.duration.is_some() && row.duration == *duration =>
+                Some((item, duration, seen))
+                    if item.app == app
+                        && row.duration.is_some()
+                        && row.duration == *duration
+                        && row.at.as_second() - seen.at.as_second() <= UNTITLED_WITHIN =>
                 {
                     Parsed::Item(item.clone())
                 }
@@ -386,21 +406,21 @@ pub fn accumulate(open: Option<PlaybackEvent>, mut events: Vec<PlaybackEvent>) -
         };
         if let Parsed::Item(item) = &parsed {
             let duration = match &last {
-                Some((l, d)) if l == item => row.duration.or(*d),
+                Some((l, d, _)) if l == item => row.duration.or(*d),
                 _ => row.duration,
             };
-            last = Some((item.clone(), duration));
+            // Saved for the next run, which can't see the rows before it.
+            let saved = naming(row, item);
+            last = Some((
+                item.clone(),
+                duration,
+                PlaybackEvent {
+                    duration,
+                    ..saved.clone()
+                },
+            ));
             if next.is_none() {
-                // Saved for the next run, which can't see the rows before it.
-                let mut open = row.clone();
-                open.title = Some(match item.app {
-                    App::Infuse => item.key.clone(),
-                    App::Tv => item.title.clone(),
-                });
-                if item.app == App::Tv {
-                    open.content_id = Some(item.key.clone());
-                }
-                batch.open = Some(open);
+                batch.open = Some(saved);
             }
         }
         match parsed {
@@ -442,7 +462,21 @@ pub fn accumulate(open: Option<PlaybackEvent>, mut events: Vec<PlaybackEvent>) -
     if batch.open.is_none() {
         batch.open = rows.into_iter().last();
     }
+    batch.last = last.map(|(_, _, row)| row);
     batch
+}
+
+/// `row`, titled so it names `item` again when parsed on its own.
+fn naming(row: &PlaybackEvent, item: &Item) -> PlaybackEvent {
+    let mut row = row.clone();
+    row.title = Some(match item.app {
+        App::Infuse => item.key.clone(),
+        App::Tv => item.title.clone(),
+    });
+    if item.app == App::Tv {
+        row.content_id = Some(item.key.clone());
+    }
+    row
 }
 
 /// How far into its episode `row` got: its position, plus the time it kept
@@ -967,6 +1001,7 @@ mod tests {
     fn playing_time_counts_until_the_next_row() {
         let batch = accumulate(
             None,
+            None,
             vec![
                 tv(100, false, "A0178901004", 2261),
                 tv(0, true, "A0178901003", 2461),
@@ -1002,10 +1037,10 @@ mod tests {
             infuse(600, true, "New Girl - S3 ∙ E5 - The Box", Some(1303)),
             infuse(1300, false, "New Girl - S3 ∙ E5 - The Box", Some(1303)),
         ];
-        let whole = accumulate(None, rows.clone());
-        let first = accumulate(None, rows[..3].to_vec());
+        let whole = accumulate(None, None, rows.clone());
+        let first = accumulate(None, None, rows[..3].to_vec());
         // The next read overlaps: it starts at the open row's time.
-        let second = accumulate(first.open.clone(), rows[2..].to_vec());
+        let second = accumulate(first.open.clone(), None, rows[2..].to_vec());
         assert_eq!(whole.seen[0].playing_seconds, 1200);
         assert_eq!(
             first.seen[0].playing_seconds + second.seen[0].playing_seconds,
@@ -1033,7 +1068,7 @@ mod tests {
             untitled(1400, true, Some(999)),
             infuse(1500, false, "New Girl - S4 ∙ E7 - Goldmine", None),
         ];
-        let batch = accumulate(None, rows.clone());
+        let batch = accumulate(None, None, rows.clone());
         assert_eq!(
             batch.seen[0].playing_seconds,
             300 + 500,
@@ -1045,15 +1080,61 @@ mod tests {
         );
 
         // Across runs: the saved row names the episode it continues.
-        let first = accumulate(None, rows[..3].to_vec());
+        let first = accumulate(None, None, rows[..3].to_vec());
         assert_eq!(first.open.as_ref().unwrap().title.as_deref(), Some(e6));
-        let second = accumulate(first.open, rows[2..].to_vec());
+        let second = accumulate(first.open, None, rows[2..].to_vec());
         assert_eq!(second.seen[0].playing_seconds, 500);
+    }
+
+    #[test]
+    fn untitled_rows_continue_the_episode_after_other_apps() {
+        let untitled = |second, playing| {
+            let mut e = infuse(second, playing, "", Some(1303));
+            e.title = None;
+            e
+        };
+        // New Girl S4 E16 on Nov 7: paused in the morning, YouTube all day,
+        // then 22 minutes without a title until E17 played.
+        let e16 = "New Girl - S4 ∙ E16 - Oregon";
+        let rows = vec![
+            infuse(0, false, e16, Some(1303)),
+            other(60, true, "com.google.ios.youtube", "YouTube"),
+            other(26_000, false, "com.google.ios.youtube", "YouTube"),
+            untitled(26_600, true),
+            untitled(28_000, false),
+            infuse(28_100, true, "New Girl - S4 ∙ E17 - Spiderhunt", None),
+        ];
+        let whole = accumulate(None, None, rows.clone());
+        assert_eq!(whole.seen[0].playing_seconds, 1303);
+
+        // The live feed reads one row at a time.
+        let mut cursor = (None, None);
+        let mut played = 0;
+        for row in rows.clone() {
+            let batch = accumulate(cursor.0, cursor.1.clone(), vec![row]);
+            played += batch
+                .seen
+                .iter()
+                .filter(|s| s.item.key == e16)
+                .map(|s| s.playing_seconds)
+                .sum::<u32>();
+            cursor = (batch.open, batch.last.or(cursor.1));
+        }
+        assert_eq!(played, 1303);
+
+        // Not the next day.
+        let mut late = rows;
+        late[3] = untitled(UNTITLED_WITHIN + 1, true);
+        late[4] = untitled(UNTITLED_WITHIN + 1400, false);
+        late[5] = infuse(UNTITLED_WITHIN + 1500, true, e16, None);
+        let batch = accumulate(None, None, late);
+        assert_eq!(batch.seen[0].playing_seconds, 0);
     }
 
     #[test]
     fn a_stretch_counts_at_most_the_duration() {
         let batch = accumulate(
+            None,
             None,
             vec![
                 infuse(0, true, "New Girl - S3 ∙ E5 - The Box", Some(1303)),
@@ -1073,6 +1154,7 @@ mod tests {
         // Resumed at 30 min, 5 min played, a skip to 39 min, then paused.
         let batch = accumulate(
             None,
+            None,
             vec![
                 at_position(0, true, 1800),
                 at_position(300, true, 2340),
@@ -1086,12 +1168,14 @@ mod tests {
         // and never past the end.
         let batch = accumulate(
             Some(at_position(0, true, 2400)),
+            None,
             vec![tv(600, false, "A0178901003", 2461)],
         );
         assert_eq!(batch.seen[0].max_position, Some(2461));
 
         // History rows have no position.
         let batch = accumulate(
+            None,
             None,
             vec![
                 tv(0, true, "A0178901003", 2461),
@@ -1104,6 +1188,7 @@ mod tests {
     #[test]
     fn the_longest_reported_duration_wins() {
         let batch = accumulate(
+            None,
             None,
             vec![
                 infuse(0, false, "New Girl - S2 ∙ E25 - Elaine's Big Day", None),

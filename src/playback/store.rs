@@ -29,6 +29,13 @@ pub struct Key<'a> {
     pub item_key: &'a str,
 }
 
+/// Where reading a player's history left off: see `accumulate`.
+#[derive(Debug, Default)]
+pub struct Cursor {
+    pub open: Option<PlaybackEvent>,
+    pub last: Option<PlaybackEvent>,
+}
+
 /// Which TMDB show or movie an app's title is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mapping {
@@ -132,17 +139,22 @@ impl Playback {
         };
     }
 
-    /// The last history row read for `player`.
-    pub async fn cursor(&self, player: &str) -> Result<Option<PlaybackEvent>, sqlx::Error> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT event FROM playback_cursor WHERE player = ?")
+    /// The last history row read for `player`, and the last one that named
+    /// an episode or movie.
+    pub async fn cursor(&self, player: &str) -> Result<Cursor, sqlx::Error> {
+        let row: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT event, last FROM playback_cursor WHERE player = ?")
                 .bind(player)
                 .fetch_optional(&self.pool)
                 .await?;
-        Ok(row.and_then(|(json,)| {
-            serde_json::from_str(&json)
+        let read = |json: &str| {
+            serde_json::from_str(json)
                 .inspect_err(|e| tracing::warn!(error = %e, player, "unreadable playback cursor"))
                 .ok()
+        };
+        Ok(row.map_or_else(Cursor::default, |(open, last)| Cursor {
+            open: read(&open),
+            last: last.as_deref().and_then(read),
         }))
     }
 
@@ -182,13 +194,15 @@ impl Playback {
             .await?;
         }
         if let Some(open) = &batch.open {
-            let json = serde_json::to_string(open).expect("events serialize");
+            let json = |e| serde_json::to_string(e).expect("events serialize");
             sqlx::query(
-                "INSERT INTO playback_cursor (player, event) VALUES (?, ?)
-                 ON CONFLICT (player) DO UPDATE SET event = excluded.event",
+                "INSERT INTO playback_cursor (player, event, last) VALUES (?, ?, ?)
+                 ON CONFLICT (player) DO UPDATE SET event = excluded.event,
+                     last = coalesce(excluded.last, last)",
             )
             .bind(player)
-            .bind(json)
+            .bind(json(open))
+            .bind(batch.last.as_ref().map(json))
             .execute(&mut *tx)
             .await?;
         }
