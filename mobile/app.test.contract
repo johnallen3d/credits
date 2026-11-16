@@ -74,3 +74,60 @@ test "a season watched with the whole show can't be unmarked here"
   expect text "season-state" == "Watched with the whole show"
   expect disabled "mark-season"
   expect text "mark-episode-1" == "Watched"
+
+test "where to watch groups the offers and marks the user's services"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":null,"poster_url":null,"backdrop_url":null,"ratings":{"preferred":null},"cast":[],"season_list":null,"marks":{"to_watch":false,"favorite":false,"watched":false},"in_theaters":false,"where_to_watch":{"region":"US","state":"fresh","link":"https://www.themoviedb.org/movie/603-the-matrix/watch?locale=US","offers":[{"kind":"stream","providers":[{"id":8,"name":"Netflix","logo_url":null,"mine":true},{"id":2528,"name":"YouTube TV","logo_url":null,"mine":false}]},{"kind":"rent","providers":[{"id":10,"name":"Amazon Video","logo_url":null,"mine":false}]},{"kind":"buy","providers":[{"id":10,"name":"Amazon Video","logo_url":null,"mine":false}]}],"fetched_at":"2026-11-02T10:00:00Z","my_services":"chosen"}}
+  clock data
+  expect tree has "offers-stream"
+  expect tree has "offers-rent"
+  expect tree has "offers-buy"
+  expect tree has "provider-8-mine"
+  expect tree has "provider-2528"
+  expect text "where-mine" == "On your services: Netflix"
+  expect tree has "where-link"
+  expect tree missing "where-stale"
+  expect tree missing "services-not-chosen"
+
+test "where to watch says when it couldn't be loaded rather than showing nothing"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":null,"poster_url":null,"backdrop_url":null,"ratings":{"preferred":null},"cast":[],"season_list":null,"marks":{"to_watch":false,"favorite":false,"watched":false},"in_theaters":false,"where_to_watch":{"region":"US","state":"unavailable","link":null,"offers":[],"fetched_at":null,"my_services":"chosen"}}
+  clock data
+  expect tree has "where-unavailable"
+  expect tree missing "where-none"
+  expect tree missing "where-link"
+
+test "where to watch says when nothing is offered, or the title is still in theaters"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":null,"poster_url":null,"backdrop_url":null,"ratings":{"preferred":null},"cast":[],"season_list":null,"marks":{"to_watch":false,"favorite":false,"watched":false},"in_theaters":false,"where_to_watch":{"region":"US","state":"fresh","link":"https://www.themoviedb.org/movie/603-the-matrix/watch?locale=US","offers":[],"fetched_at":"2026-11-02T10:00:00Z","my_services":"chosen"}}
+  clock data
+  expect tree has "where-none"
+  expect tree missing "where-unavailable"
+
+test "a title in theaters with no offers says so"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":null,"poster_url":null,"backdrop_url":null,"ratings":{"preferred":null},"cast":[],"season_list":null,"marks":{"to_watch":false,"favorite":false,"watched":false},"in_theaters":true,"where_to_watch":{"region":"US","state":"fresh","link":"https://www.themoviedb.org/movie/603-the-matrix/watch?locale=US","offers":[],"fetched_at":"2026-11-02T10:00:00Z","my_services":"chosen"}}
+  clock data
+  expect tree has "where-in-theaters"
+  expect tree missing "where-none"
+
+test "stale offers say when they were listed, and unreadable services say none are highlighted"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":null,"poster_url":null,"backdrop_url":null,"ratings":{"preferred":null},"cast":[],"season_list":null,"marks":{"to_watch":false,"favorite":false,"watched":false},"in_theaters":false,"where_to_watch":{"region":"US","state":"stale","link":"https://www.themoviedb.org/movie/603-the-matrix/watch?locale=US","offers":[{"kind":"stream","providers":[{"id":8,"name":"Netflix","logo_url":null,"mine":false}]}],"fetched_at":"2026-11-02T10:00:00Z","my_services":"unreadable"}}
+  clock data
+  expect text "where-stale" == "Couldn’t refresh where to watch; showing what was listed on Nov 2, 2026."
+  expect tree has "services-unreadable"
+  expect tree missing "where-mine"
+
+test "services not yet chosen ask to choose them"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":null,"poster_url":null,"backdrop_url":null,"ratings":{"preferred":null},"cast":[],"season_list":null,"marks":{"to_watch":false,"favorite":false,"watched":false},"in_theaters":false,"where_to_watch":{"region":"US","state":"fresh","link":"https://www.themoviedb.org/movie/603-the-matrix/watch?locale=US","offers":[{"kind":"stream","providers":[{"id":8,"name":"Netflix","logo_url":null,"mine":false}]}],"fetched_at":"2026-11-02T10:00:00Z","my_services":"not_chosen"}}
+  clock data
+  expect tree has "services-not-chosen"
+  expect tree missing "where-mine"

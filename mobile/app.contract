@@ -52,6 +52,27 @@ shape Marks
   favorite: bool
   watched: bool
 
+// Where a title can be watched in the server's region, from the title API's
+// where_to_watch. state is fresh, stale or unavailable; my_services is
+// not_chosen, chosen or unreadable (whether mine could be set).
+shape WatchProvider
+  id: number
+  name: string
+  logo_url: option<string>
+  mine: bool
+
+shape OfferGroup
+  kind: string
+  providers: WatchProvider[]
+
+shape WhereToWatch
+  region: string
+  state: string
+  link: option<string>
+  offers: OfferGroup[]
+  fetched_at: option<string>
+  my_services: string
+
 shape Title
   kind: string
   id: number
@@ -67,6 +88,8 @@ shape Title
   cast: CastMember[]
   season_list: option<SeasonSummary[]>
   marks: Marks
+  in_theaters: bool
+  where_to_watch: WhereToWatch
 
 shape Episode
   number: number
@@ -156,6 +179,10 @@ fn themeName(t: string): string = t == "tokyo-night" ? "Tokyo Night" : t == "cat
 fn seasonSeen(w: SeasonWatched, season: number): bool = w.show or w.seasons.filter(n => n == season).length > 0
 fn seen(w: SeasonWatched, season: number, ep: number): bool =
   seasonSeen(w, season) or w.episodes.filter(e => e.season == season and e.number == ep).length > 0
+fn offerLabel(k: string): string = k == "stream" ? "Stream" : k == "free" ? "Free" : k == "ads" ? "Free with ads" : k == "rent" ? "Rent" : "Buy"
+fn uniq(xs: string[]): string[] = range(xs.length).filter(i => xs.indexOf(text(xs.at(i))) == i).map(i => text(xs.at(i)))
+fn myServices(w: WhereToWatch): string[] = uniq(w.offers.map(g => g.providers.filter(p => p.mine).map(p => p.name)).flat())
+fn listedOn(w: WhereToWatch): string = match w.fetched_at { case some(t) => formatDate(t.slice(0, 10), 0, "medium"), case none => "" }
 
 component App
   // The web's theme picker, remembered on the phone. The dark themes keep the
@@ -312,6 +339,7 @@ component TitleScreen
           section
             MarkButtons(marks=marks, busy=pending(marked), failed=(failed(marked) and not pending(marked)),
               toWatch=toggleToWatch, favorite=toggleFavorite, watched=toggleWatched)
+          WhereToWatchSection(w=t.where_to_watch, inTheaters=t.in_theaters)
           if seasonsOf(t).length > 0
             section
               header
@@ -330,6 +358,69 @@ component TitleScreen
                 column flex=1 min-width=0
                   text c.name
                   text text(c.role) font="-exact-footnote" color="text.muted"
+
+// The title's offers in the region, grouped as stream, rent and buy, with the
+// user's services marked. Says when the offers couldn't be loaded or refreshed
+// rather than showing an empty or silently old list, as the web's section does.
+component WhereToWatchSection
+  props
+    w: WhereToWatch
+    inTheaters: bool
+  view
+    section testId="where-to-watch"
+      header
+        text `Where to Watch in ${w.region}`
+      if w.offers.length == 0
+        if w.state == "unavailable"
+          row gap=8 background-color="surface.card" testId="where-unavailable"
+            image "symbol:alert" color="text.muted"
+            text "Where to watch couldn’t be loaded right now." color="text.muted" flex=1
+        else if inTheaters
+          text `In theaters. Not streaming or for rent or sale in ${w.region} yet.` background-color="surface.card" testId="where-in-theaters"
+        else
+          text `No streaming, rental or purchase options are listed for ${w.region}.` color="text.muted"
+            background-color="surface.card" testId="where-none"
+      else
+        if myServices(w).length > 0
+          row gap=8 background-color="surface.card" testId="where-mine"
+            image "symbol:checkmark" color="accent"
+            text `On your services: ${myServices(w).join(", ")}` color="accent" flex=1
+        for g in w.offers key=g.kind
+          column gap=8 padding-top=10 padding-bottom=10 background-color="surface.card" testId=`offers-${g.kind}`
+            text offerLabel(g.kind) font="-exact-footnote" color="text.muted"
+            row flex-wrap="wrap" gap=12
+              for p in g.providers key=`${p.id}`
+                Provider(p=p)
+      if w.state == "stale"
+        text (listedOn(w) == "" ? "Couldn’t refresh where to watch." : `Couldn’t refresh where to watch; showing what was listed on ${listedOn(w)}.`)
+          font="-exact-footnote" color="text.muted" background-color="surface.card" testId="where-stale"
+      if w.offers.length > 0 and w.my_services == "unreadable"
+        text "Your services couldn’t be read, so none are highlighted." font="-exact-footnote" color="text.muted"
+          background-color="surface.card" testId="services-unreadable"
+      else if w.offers.length > 0 and w.my_services == "not_chosen"
+        text "Choose your streaming services to highlight them here." font="-exact-footnote" color="text.muted"
+          background-color="surface.card" testId="services-not-chosen"
+      if w.state != "unavailable"
+        match w.link
+          case some(u)
+            link href=u background-color="surface.card" testId="where-link"
+              text "All options on TMDB" flex=1
+              image "symbol:forward-chevron" color="text.muted"
+          case none
+            text "Availability from JustWatch" font="-exact-footnote" color="text.muted" background-color="surface.card"
+
+// A service's logo and name; one of the user's services is ringed and checked.
+component Provider
+  props
+    p: WatchProvider
+  view
+    column width="4.5rem" align-items="center" gap=4 testId=(p.mine ? `provider-${p.id}-mine` : `provider-${p.id}`)
+      image text(p.logo_url) aria-label="" width=44 height=44 border-radius=10 object-fit="cover"
+        border=(p.mine ? "2px solid var(--accent)" : "none")
+      row gap=2 align-items="center" justify-content="center"
+        if p.mine
+          image "symbol:checkmark" color="accent" font="-exact-caption-1" aria-label="Your service"
+        text p.name font="-exact-caption-1" text-align="center" color=(p.mine ? "accent" : "text.primary")
 
 // A season's episodes. An episode not yet watched keeps its summary and still
 // blurred, as the web's spoiler guard does.
