@@ -88,8 +88,8 @@ shape Title
   cast: CastMember[]
   season_list: option<SeasonSummary[]>
   marks: Marks
-  in_theaters: bool
-  where_to_watch: WhereToWatch
+  in_theaters: option<bool>
+  where_to_watch: option<WhereToWatch>
 
 shape Episode
   number: number
@@ -177,6 +177,7 @@ fn scoreText(r: Ratings): string = match r.preferred {
 fn seasonsOf(t: Title): SeasonSummary[] = match t.season_list { case some(xs) => xs.filter(x => x.episode_count > 0), case none => [] }
 fn themeName(t: string): string = t == "tokyo-night" ? "Tokyo Night" : t == "catppuccin" ? "Catppuccin" : t == "classic" ? "Classic" : "Rosé Pine"
 fn seasonSeen(w: SeasonWatched, season: number): bool = w.show or w.seasons.filter(n => n == season).length > 0
+fn theatersOf(t: Title): bool = match t.in_theaters { case some(b) => b, case none => false }
 fn seen(w: SeasonWatched, season: number, ep: number): bool =
   seasonSeen(w, season) or w.episodes.filter(e => e.season == season and e.number == ep).length > 0
 fn offerLabel(k: string): string = k == "stream" ? "Stream" : k == "free" ? "Free" : k == "ads" ? "Free with ads" : k == "rent" ? "Rent" : "Buy"
@@ -339,7 +340,10 @@ component TitleScreen
           section
             MarkButtons(marks=marks, busy=pending(marked), failed=(failed(marked) and not pending(marked)),
               toWatch=toggleToWatch, favorite=toggleFavorite, watched=toggleWatched)
-          WhereToWatchSection(w=t.where_to_watch, inTheaters=t.in_theaters)
+          match t.where_to_watch
+            case some(w)
+              WhereToWatchSection(w=w, inTheaters=theatersOf(t))
+            case none
           if seasonsOf(t).length > 0
             section
               header
