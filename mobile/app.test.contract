@@ -8,3 +8,12 @@ test "start screen lists recently viewed titles"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null},{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
   expect tree has "recent-movie-603"
   expect tree has "recent-person-6384"
+
+test "the theme starts as Rosé Pine and survives a relaunch"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  expect state theme == "rose-pine"
+  tap "theme"
+  tap "theme-tokyo-night"
+  expect state theme == "tokyo-night"
+  reload
+  expect state theme == "tokyo-night"

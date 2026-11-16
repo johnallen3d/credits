@@ -1,0 +1,44 @@
+// The web's themes (static/app.css), picked in the app and kept across launches.
+// Rosé Pine is the default; the three dark themes are dark in either scheme, and
+// Classic follows the system as the web's does.
+forma credits
+
+axes
+  palette = rose-pine | tokyo-night | catppuccin | classic
+
+theme
+  accent = #c4a7e7
+    when palette=tokyo-night: #7aa2f7
+    when palette=catppuccin: #cba6f7
+    when palette=classic: light-dark(#0d6efd, #3d8bfd)
+  surface.page = #191724
+    when palette=tokyo-night: #1a1b26
+    when palette=catppuccin: #1e1e2e
+    when palette=classic: light-dark(#f2f2f7, #000000)
+  surface.card = #1f1d2e
+    when palette=tokyo-night: #24283b
+    when palette=catppuccin: #313244
+    when palette=classic: light-dark(#ffffff, #1c1c1e)
+  surface.thumb = #26233a
+    when palette=tokyo-night: #3b4261
+    when palette=catppuccin: #45475a
+    when palette=classic: light-dark(#e7e5e4, #44403c)
+  text.primary = #e0def4  pair=surface.card
+    when palette=tokyo-night: #c0caf5
+    when palette=catppuccin: #cdd6f4
+    when palette=classic: light-dark(#1c1917, #f5f5f4)
+  text.muted = #908caa  pair=surface.card
+    when palette=tokyo-night: #8b94c3
+    when palette=catppuccin: #a6adc8
+    when palette=classic: light-dark(#78716c, #a8a29e)
+  mark.favorite = #eb6f92  pair=surface.card
+    when palette=tokyo-night: #f7768e
+    when palette=catppuccin: #f38ba8
+    when palette=classic: light-dark(#c2410c, #fdba74)
+  mark.watched = #9ccfd8  pair=surface.card
+    when palette=tokyo-night: #9ece6a
+    when palette=catppuccin: #a6e3a1
+    when palette=classic: light-dark(#047857, #6ee7b7)
+
+icons
+  icon.theme = icon(sf "paintpalette", svg "icons/palette.svg")

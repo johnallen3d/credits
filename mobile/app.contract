@@ -120,15 +120,21 @@ fn scoreText(r: Ratings): string = match r.preferred {
   case some(s) => s.scale == 100 ? `RT ${round(s.score)}%` : `IMDb ${s.score}`,
   case none => "" }
 fn seasonsOf(t: Title): SeasonSummary[] = match t.season_list { case some(xs) => xs.filter(x => x.episode_count > 0), case none => [] }
+fn themeName(t: string): string = t == "tokyo-night" ? "Tokyo Night" : t == "catppuccin" ? "Catppuccin" : t == "classic" ? "Classic" : "Rosé Pine"
 fn seen(w: SeasonWatched, season: number, ep: number): bool = w.episodes.filter(e => e.season == season and e.number == ep).length > 0
 
 component App
+  // The web's theme picker, remembered on the phone. The dark themes keep the
+  // system chrome dark; Classic follows the phone's light or dark.
+  state theme = "rose-pine" persist
   state query = ""
   state asked = ""
   resource hits = search(asked) when asked != "" as shape Hit[] else empty()
   resource recents = recent() as shape Recent[] else empty()
   mutation viewed as shape Recent[] refreshes recents
 
+  task scheme when theme != "" key=theme
+    change(applyScheme)
   task opened when top(nav).name == "movie" or top(nav).name == "tv" key=top(nav).id
     change(record)
 
@@ -141,21 +147,34 @@ component App
     nav = back(nav)
   action follow(url: string)
     nav = go(nav, url)
+  action pickTheme(t: string)
+    theme = t
+  action applyScheme
+    setScheme(theme == "classic" ? "system" : "dark")
   action record
     send viewed = recordView(top(nav).name, numberOf(top(nav).params.id))
 
   view
     main navigationKey=`${top(nav).id}` navigate=follow testId="app" width="100%" height="100%"
+      -exact-mode=`palette=${theme}`
+      background-color="surface.page" color="text.primary"
       for e in stack(nav) key=e.id
         if e.name == "search"
           column navigationKey=`${e.id}` navigationScroll="hits" position="absolute" inset=0
             display="flex" flex-direction="column"
-            header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px"
+            header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px" background-color="surface.page"
               text "Credits" role="heading" aria-level=1 flex=1
+              button popovertarget="theme-menu" aria-label="Theme" testId="theme"
+                image "symbol:icon.theme" color="accent"
+              column id="theme-menu" popover="auto" role="menu"
+                for t in ["rose-pine", "tokyo-night", "catppuccin", "classic"] key=t
+                  button press=pickTheme(t) role="menuitemradio" aria-checked=(theme == t)
+                    popovertarget="theme-menu" popovertargetaction="hide" testId=`theme-${t}`
+                    text themeName(t)
               input type="search" value=query input=edit placeholder="Movies, shows, people"
                 aria-label="Search" testId="search" width="100%"
             if asked == "" and recents.length > 0
-              list id="recent" testId="recent" appearance="auto" listStyle="plain" flex=1 min-height=0
+              list id="recent" testId="recent" appearance="auto" listStyle="plain" flex=1 min-height=0 background-color="surface.page"
                 section
                   header
                     text "Recently Viewed"
@@ -170,7 +189,7 @@ component App
             else if hits.length == 0 and not pending(hits)
               EmptyState(symbol="symbol:search", title=`No Results for “${asked}”`, message="Check the spelling or try a new search.")
             else
-              list id="hits" appearance="auto" listStyle="plain" flex=1 min-height=0
+              list id="hits" appearance="auto" listStyle="plain" flex=1 min-height=0 background-color="surface.page"
                 section
                   for h in hits key=`${h.kind}-${h.id}`
                     Entry(testId=`hit-${h.kind}-${h.id}`, kind=h.kind, id=`${h.id}`, label=label(h), picture=picture(h), year=text(h.year))
@@ -193,25 +212,26 @@ component Entry
     year: string
   view
     if kind == "person"
-      row gap=12 testId=testId
+      row gap=12 testId=testId background-color="surface.page"
         Thumb(url=picture)
         column flex=1 min-width=0
           text label
-          text "Person" font="-exact-footnote" color="-exact-secondary-label"
+          text "Person" font="-exact-footnote" color="text.muted"
     else
       link href=(kind == "movie" ? path("movie", id) : path("tv", id)) display="flex" align-items="center" gap=12 testId=testId
+        background-color="surface.page"
         Thumb(url=picture)
         column flex=1 min-width=0
           text label
-          text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-footnote" color="-exact-secondary-label"
-        image "symbol:forward-chevron"
+          text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-footnote" color="text.muted"
+        image "symbol:forward-chevron" color="text.muted"
 
 component Thumb
   props
     url: string
   view
     if url == ""
-      column width=46 height=69 border-radius=6 background-color="-exact-secondary-background"
+      column width=46 height=69 border-radius=6 background-color="surface.thumb"
     else
       image url aria-label="" width=46 height=69 border-radius=6 object-fit="cover"
 
@@ -224,45 +244,45 @@ component TitleScreen
   view
     column navigationKey=navKey navigationScroll="title" position="absolute" inset=0
       display="flex" flex-direction="column"
-      header display="flex" align-items="center" padding="8px 16px"
+      header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
         text (current(t) ? t.title : "") role="heading" aria-level=2 testId="title"
       if failed(t)
         EmptyState(symbol="symbol:alert", title="Can’t Load Title", message="The server didn’t answer.")
       else if not current(t)
         progress aria-label="Loading" testId="loading"
       else
-        list id="title" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+        list id="title" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
           section
-            row gap=16 align-items="flex-start" padding-top=12 padding-bottom=12
+            row gap=16 align-items="flex-start" padding-top=12 padding-bottom=12 background-color="surface.card"
               image text(t.poster_url) aria-label=`Poster for ${t.title}` width=110 height=165 border-radius=8 object-fit="cover"
               column flex=1 min-width=0 gap=6
-                text `${text(t.year)}${t.genres.length > 0 ? " · " : ""}${t.genres.join(", ")}` color="-exact-secondary-label"
+                text `${text(t.year)}${t.genres.length > 0 ? " · " : ""}${t.genres.join(", ")}` color="text.muted"
                 if scoreText(t.ratings) != ""
                   text scoreText(t.ratings) font="-exact-headline" testId="score"
                 if t.marks.favorite
-                  text "★ Favorite" color="-exact-system-orange"
+                  text "★ Favorite" color="mark.favorite"
                 if text(t.tagline) != ""
-                  text text(t.tagline) font="-exact-footnote" color="-exact-secondary-label"
+                  text text(t.tagline) font="-exact-footnote" color="text.muted"
             if text(t.overview) != ""
-              text text(t.overview) padding-top=8 padding-bottom=8 testId="overview"
+              text text(t.overview) padding-top=8 padding-bottom=8 testId="overview" background-color="surface.card"
           if seasonsOf(t).length > 0
             section
               header
                 text "Seasons"
               for s in seasonsOf(t) key=`${s.number}`
-                link href=path("season", id, `${s.number}`) testId=`season-${s.number}`
+                link href=path("season", id, `${s.number}`) testId=`season-${s.number}` background-color="surface.card"
                   text s.name flex=1
-                  text `${s.episode_count} ${s.episode_count == 1 ? "episode" : "episodes"}` color="-exact-secondary-label"
-                  image "symbol:forward-chevron"
+                  text `${s.episode_count} ${s.episode_count == 1 ? "episode" : "episodes"}` color="text.muted"
+                  image "symbol:forward-chevron" color="text.muted"
           section
             header
               text "Cast"
             for c in t.cast.slice(0, 10) key=`${c.person_id}`
-              row gap=12
+              row gap=12 background-color="surface.card"
                 image text(c.profile_url) aria-label="" width=40 height=40 border-radius=999 object-fit="cover"
                 column flex=1 min-width=0
                   text c.name
-                  text text(c.role) font="-exact-footnote" color="-exact-secondary-label"
+                  text text(c.role) font="-exact-footnote" color="text.muted"
 
 // A season's episodes. An episode not yet watched keeps its summary and still
 // blurred, as the web's spoiler guard does.
@@ -275,21 +295,21 @@ component SeasonScreen
   view
     column navigationKey=navKey navigationScroll="season" position="absolute" inset=0
       display="flex" flex-direction="column"
-      header display="flex" align-items="center" padding="8px 16px"
+      header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
         text (current(s) ? `${s.show_title}: ${s.name}` : "") role="heading" aria-level=2 testId="season-title"
       if failed(s)
         EmptyState(symbol="symbol:alert", title="Can’t Load Season", message="The server didn’t answer.")
       else if not current(s)
         progress aria-label="Loading"
       else
-        list id="season" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+        list id="season" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
           section
             for ep in s.episodes key=`${ep.number}`
-              column gap=6 padding-top=10 padding-bottom=10 testId=`episode-${ep.number}`
+              column gap=6 padding-top=10 padding-bottom=10 testId=`episode-${ep.number}` background-color="surface.card"
                 row gap=8
                   text `${ep.number}. ${ep.title}` font="-exact-headline" flex=1
                   if seen(s.watched, s.number, ep.number)
-                    text "Watched" font="-exact-footnote" color="-exact-system-green"
+                    text "Watched" font="-exact-footnote" color="mark.watched"
                 image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
                   filter=(seen(s.watched, s.number, ep.number) ? "none" : "blur(14px)")
                 text text(ep.overview) font="-exact-subheadline"
