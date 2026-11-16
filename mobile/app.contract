@@ -1,0 +1,250 @@
+use EmptyState from "exact:content"
+
+// Credits spike: search, a title's detail and a season with spoiler guard, read
+// straight from the credits JSON API (no data module, so no JavaScript engine).
+// The web host reaches the API through tools/cors-proxy.ts; a phone would name the
+// server itself.
+
+routes nav
+  search "/"
+    movie "/movie/:id"
+    tv "/tv/:id"
+      season "/tv/:id/season/:n"
+
+shape Hit
+  kind: string
+  id: number
+  title: option<string>
+  name: option<string>
+  year: option<string>
+  poster_url: option<string>
+  profile_url: option<string>
+
+shape Score
+  source: string
+  score: number
+  scale: number
+
+shape Ratings
+  preferred: option<Score>
+
+shape CastMember
+  person_id: number
+  name: string
+  role: option<string>
+  profile_url: option<string>
+
+shape SeasonSummary
+  number: number
+  name: string
+  year: option<string>
+  episode_count: number
+
+shape Marks
+  to_watch: bool
+  favorite: bool
+  watched: bool
+
+shape Title
+  kind: string
+  id: number
+  title: string
+  tagline: option<string>
+  overview: option<string>
+  year: option<string>
+  genres: string[]
+  runtime_minutes: option<number>
+  poster_url: option<string>
+  backdrop_url: option<string>
+  ratings: Ratings
+  cast: CastMember[]
+  season_list: option<SeasonSummary[]>
+  marks: Marks
+
+shape Episode
+  number: number
+  title: string
+  air_date: option<string>
+  overview: option<string>
+  still_url: option<string>
+
+shape EpisodeRef
+  season: number
+  number: number
+
+shape SeasonWatched
+  episodes: EpisodeRef[]
+
+shape Season
+  show_title: string
+  number: number
+  name: string
+  episodes: Episode[]
+  watched: SeasonWatched
+
+source search(q: string) as shape Hit[]
+  url "http://127.0.0.1:8790/api/search?q={q}"
+  pointer "/results"
+
+source title(kind: string, id: string) as shape Title
+  url "http://127.0.0.1:8790/api/{kind}/{id}"
+
+source season(id: string, n: string) as shape Season
+  url "http://127.0.0.1:8790/api/tv/{id}/season/{n}"
+
+fn text(o: option<string>): string = match o { case some(s) => s, case none => "" }
+fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(h.name) }
+fn picture(h: Hit): string = match h.poster_url { case some(u) => u, case none => text(h.profile_url) }
+fn kindName(k: string): string = k == "movie" ? "Movie" : k == "tv" ? "TV" : "Person"
+fn scoreText(r: Ratings): string = match r.preferred {
+  case some(s) => s.scale == 100 ? `RT ${round(s.score)}%` : `IMDb ${s.score}`,
+  case none => "" }
+fn seasonsOf(t: Title): SeasonSummary[] = match t.season_list { case some(xs) => xs.filter(x => x.episode_count > 0), case none => [] }
+fn seen(w: SeasonWatched, season: number, ep: number): bool = w.episodes.filter(e => e.season == season and e.number == ep).length > 0
+
+component App
+  state query = ""
+  state asked = ""
+  resource hits = search(asked) when asked != "" as shape Hit[] else empty()
+
+  action edit(v: string)
+    query = v
+    asked = v.trim()
+  action retry
+    refresh hits
+  action back
+    nav = back(nav)
+  action follow(url: string)
+    nav = go(nav, url)
+
+  view
+    main navigationKey=`${top(nav).id}` navigate=follow testId="app" width="100%" height="100%"
+      for e in stack(nav) key=e.id
+        if e.name == "search"
+          column navigationKey=`${e.id}` navigationScroll="hits" position="absolute" inset=0
+            display="flex" flex-direction="column"
+            header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px"
+              text "Credits" role="heading" aria-level=1 flex=1
+              input type="search" value=query input=edit placeholder="Movies, shows, people"
+                aria-label="Search" testId="search" width="100%"
+            if asked == ""
+              EmptyState(symbol="symbol:search", title="Search", message="Find a movie, show or person.")
+            else if failed(hits)
+              EmptyState(symbol="symbol:alert", title="Can’t Reach Credits", message="The server didn’t answer.")
+                button press=retry testId="retry"
+                  text "Try Again"
+            else if hits.length == 0 and not pending(hits)
+              EmptyState(symbol="symbol:search", title=`No Results for “${asked}”`, message="Check the spelling or try a new search.")
+            else
+              list id="hits" appearance="auto" listStyle="plain" flex=1 min-height=0
+                section
+                  for h in hits key=`${h.kind}-${h.id}`
+                    if h.kind == "person"
+                      row gap=12 testId=`hit-${h.kind}-${h.id}`
+                        Thumb(url=picture(h))
+                        column flex=1 min-width=0
+                          text label(h)
+                          text "Person" font="-exact-footnote" color="-exact-secondary-label"
+                    else
+                      link href=(h.kind == "movie" ? path("movie", `${h.id}`) : path("tv", `${h.id}`)) display="flex" align-items="center" gap=12 testId=`hit-${h.kind}-${h.id}`
+                        Thumb(url=picture(h))
+                        column flex=1 min-width=0
+                          text label(h)
+                          text (text(h.year) == "" ? kindName(h.kind) : `${kindName(h.kind)} · ${text(h.year)}`) font="-exact-footnote" color="-exact-secondary-label"
+                        image "symbol:forward-chevron"
+        if e.name == "movie"
+          TitleScreen(navKey=`${e.id}`, kind="movie", id=e.params.id)
+        if e.name == "tv"
+          TitleScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
+        if e.name == "season"
+          SeasonScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n)
+
+component Thumb
+  props
+    url: string
+  view
+    if url == ""
+      column width=46 height=69 border-radius=6 background-color="-exact-secondary-background"
+    else
+      image url aria-label="" width=46 height=69 border-radius=6 object-fit="cover"
+
+component TitleScreen
+  props
+    navKey: string
+    kind: string
+    id: string
+  resource t = title(kind, id) as shape Title
+  view
+    column navigationKey=navKey navigationScroll="title" position="absolute" inset=0
+      display="flex" flex-direction="column"
+      header display="flex" align-items="center" padding="8px 16px"
+        text (current(t) ? t.title : "") role="heading" aria-level=2 testId="title"
+      if failed(t)
+        EmptyState(symbol="symbol:alert", title="Can’t Load Title", message="The server didn’t answer.")
+      else if not current(t)
+        progress aria-label="Loading" testId="loading"
+      else
+        list id="title" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+          section
+            row gap=16 align-items="flex-start" padding-top=12 padding-bottom=12
+              image text(t.poster_url) aria-label=`Poster for ${t.title}` width=110 height=165 border-radius=8 object-fit="cover"
+              column flex=1 min-width=0 gap=6
+                text `${text(t.year)}${t.genres.length > 0 ? " · " : ""}${t.genres.join(", ")}` color="-exact-secondary-label"
+                if scoreText(t.ratings) != ""
+                  text scoreText(t.ratings) font="-exact-headline" testId="score"
+                if t.marks.favorite
+                  text "★ Favorite" color="-exact-system-orange"
+                if text(t.tagline) != ""
+                  text text(t.tagline) font="-exact-footnote" color="-exact-secondary-label"
+            if text(t.overview) != ""
+              text text(t.overview) padding-top=8 padding-bottom=8 testId="overview"
+          if seasonsOf(t).length > 0
+            section
+              header
+                text "Seasons"
+              for s in seasonsOf(t) key=`${s.number}`
+                link href=path("season", id, `${s.number}`) testId=`season-${s.number}`
+                  text s.name flex=1
+                  text `${s.episode_count} ${s.episode_count == 1 ? "episode" : "episodes"}` color="-exact-secondary-label"
+                  image "symbol:forward-chevron"
+          section
+            header
+              text "Cast"
+            for c in t.cast.slice(0, 10) key=`${c.person_id}`
+              row gap=12
+                image text(c.profile_url) aria-label="" width=40 height=40 border-radius=999 object-fit="cover"
+                column flex=1 min-width=0
+                  text c.name
+                  text text(c.role) font="-exact-footnote" color="-exact-secondary-label"
+
+// A season's episodes. An episode not yet watched keeps its summary and still
+// blurred, as the web's spoiler guard does.
+component SeasonScreen
+  props
+    navKey: string
+    id: string
+    n: string
+  resource s = season(id, n) as shape Season
+  view
+    column navigationKey=navKey navigationScroll="season" position="absolute" inset=0
+      display="flex" flex-direction="column"
+      header display="flex" align-items="center" padding="8px 16px"
+        text (current(s) ? `${s.show_title}: ${s.name}` : "") role="heading" aria-level=2 testId="season-title"
+      if failed(s)
+        EmptyState(symbol="symbol:alert", title="Can’t Load Season", message="The server didn’t answer.")
+      else if not current(s)
+        progress aria-label="Loading"
+      else
+        list id="season" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+          section
+            for ep in s.episodes key=`${ep.number}`
+              column gap=6 padding-top=10 padding-bottom=10 testId=`episode-${ep.number}`
+                row gap=8
+                  text `${ep.number}. ${ep.title}` font="-exact-headline" flex=1
+                  if seen(s.watched, s.number, ep.number)
+                    text "Watched" font="-exact-footnote" color="-exact-system-green"
+                image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
+                  filter=(seen(s.watched, s.number, ep.number) ? "none" : "blur(14px)")
+                text text(ep.overview) font="-exact-subheadline"
+                  filter=(seen(s.watched, s.number, ep.number) ? "none" : "blur(5px)")
+                  testId=`overview-${ep.number}`

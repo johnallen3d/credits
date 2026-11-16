@@ -1,0 +1,3 @@
+test "search starts empty"
+  expect tree has "app"
+  expect tree has "search"

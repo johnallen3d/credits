@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../exact/scripts/app.schema.json",
+  "name": "Credits",
+  "short_name": "Credits",
+  "id": "com.example.mobile-5c5e69",
+  "start_url": "/",
+  "display": "standalone",
+  "app": {
+    "id": "com.example.mobile-5c5e69",
+    "name": "Credits"
+  },
+  "host": {
+    "web": {}
+  },
+  "deploy": {
+    "store": {
+      "web": "0"
+    }
+  }
+}
