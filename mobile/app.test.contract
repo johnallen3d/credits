@@ -131,3 +131,29 @@ test "services not yet chosen ask to choose them"
   clock data
   expect tree has "services-not-chosen"
   expect tree missing "where-mine"
+
+test "now playing lists movies with their dates and ratings, linking to their screens"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/now-playing?page=1" with 200 {"page":1,"total_pages":2,"titles":[{"id":603,"title":"The Matrix","release_date":"1999-03-31","poster_url":null,"rating":{"source":"imdb","score":8.7,"scale":10}},{"id":604,"title":"Unrated","release_date":null,"poster_url":null,"rating":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/now-playing?page=2" with 200 {"page":2,"total_pages":2,"titles":[{"id":605,"title":"The Matrix Revolutions","release_date":"2003-11-05","poster_url":null,"rating":null}]}
+  tap "browse"
+  tap "browse-now-playing"
+  expect text "releases-title" == "Now Playing"
+  expect tree has "release-603"
+  expect tree has "release-604"
+  expect tree missing "release-605"
+  tap "more"
+  expect tree has "release-605"
+  expect tree missing "more"
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  tap "release-603"
+  expect text "title" == "The Matrix"
+
+test "coming soon says so when the server doesn't answer"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  fail fetch "https://credits.jallen7usa.com/api/coming-soon?page=1"
+  tap "browse"
+  tap "browse-coming-soon"
+  expect text "releases-title" == "Coming Soon"
+  expect tree missing "releases"

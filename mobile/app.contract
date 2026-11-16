@@ -10,6 +10,7 @@ routes nav
     movie "/movie/:id"
     tv "/tv/:id"
       season "/tv/:id/season/:n"
+    releases "/releases/:list"
 
 shape Hit
   kind: string
@@ -130,6 +131,23 @@ source recordView(kind: string, id: number) as shape Recent[]
   body json
   pointer "/recent"
 
+// The web's Now Playing and Coming Soon pages: movies in the region's theaters,
+// twenty a page.
+shape Release
+  id: number
+  title: string
+  release_date: option<string>
+  poster_url: option<string>
+  rating: option<Score>
+
+shape Releases
+  page: number
+  total_pages: number
+  titles: Release[]
+
+source releases(list: string, page: number) as shape Releases
+  url "https://credits.jallen7usa.com/api/{list}?page={page}"
+
 source title(kind: string, id: string) as shape Title
   url "https://credits.jallen7usa.com/api/{kind}/{id}"
 
@@ -171,9 +189,16 @@ fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(
 fn picture(h: Hit): string = match h.poster_url { case some(u) => u, case none => text(h.profile_url) }
 fn numberOf(s: string): number = match parseNumber(s) { case some(n) => n, case none => 0 }
 fn kindName(k: string): string = k == "movie" ? "Movie" : k == "tv" ? "TV" : "Person"
-fn scoreText(r: Ratings): string = match r.preferred {
+fn scoreOf(o: option<Score>): string = match o {
   case some(s) => s.scale == 100 ? `RT ${round(s.score)}%` : `IMDb ${s.score}`,
   case none => "" }
+fn scoreText(r: Ratings): string = scoreOf(r.preferred)
+fn releaseList(l: string): string = l == "coming-soon" ? "Coming Soon" : "Now Playing"
+fn releasesListOf(es: Entry[]): string = match es.filter(e => e.name == "releases").at(-1) { case some(e) => e.params.list, case none => "" }
+fn releasesPageNumbers(es: Entry[], pages: number): number[] = releasesListOf(es) == "" ? [] : range(pages).map(i => i + 1)
+fn releaseLine(r: Release): string = match r.release_date {
+  case some(d) => scoreOf(r.rating) == "" ? formatDate(d, 0, "medium") : `${formatDate(d, 0, "medium")} · ${scoreOf(r.rating)}`,
+  case none => scoreOf(r.rating) }
 fn seasonsOf(t: Title): SeasonSummary[] = match t.season_list { case some(xs) => xs.filter(x => x.episode_count > 0), case none => [] }
 fn themeName(t: string): string = t == "tokyo-night" ? "Tokyo Night" : t == "catppuccin" ? "Catppuccin" : t == "classic" ? "Classic" : "Rosé Pine"
 fn seasonSeen(w: SeasonWatched, season: number): bool = w.show or w.seasons.filter(n => n == season).length > 0
@@ -194,6 +219,9 @@ component App
   resource hits = search(asked) when asked != "" as shape Hit[] else empty()
   resource recents = recent() as shape Recent[] else empty()
   mutation viewed as shape Recent[] refreshes recents
+  // The releases screen's pages, one request each: More asks for the next.
+  state releasesPages = 1
+  resource releasesLoaded = releases(releasesListOf(stack(nav)), n) for n in releasesPageNumbers(stack(nav), releasesPages) key=`${n}` as shape Releases
 
   task scheme when theme != "" key=theme
     change(applyScheme)
@@ -209,6 +237,13 @@ component App
     nav = back(nav)
   action follow(url: string)
     nav = go(nav, url)
+  action browse(l: string)
+    releasesPages = 1
+    nav = go(nav, path("releases", l))
+  action releasesMore
+    releasesPages = releasesPages + 1
+  action releasesRetry
+    refresh releasesLoaded
   action pickTheme(t: string)
     theme = t
   action applyScheme
@@ -233,6 +268,13 @@ component App
                   button press=pickTheme(t) role="menuitemradio" aria-checked=(theme == t)
                     popovertarget="theme-menu" popovertargetaction="hide" testId=`theme-${t}`
                     text themeName(t)
+              button popovertarget="browse-menu" aria-label="Browse" testId="browse"
+                image "symbol:more" color="accent"
+              column id="browse-menu" popover="auto" role="menu"
+                for l in ["now-playing", "coming-soon"] key=l
+                  button press=browse(l) popovertarget="browse-menu" popovertargetaction="hide"
+                    testId=`browse-${l}`
+                    text releaseList(l)
               input type="search" value=query input=edit placeholder="Movies, shows, people"
                 aria-label="Search" testId="search" width="100%"
             if asked == "" and recents.length > 0
@@ -261,6 +303,9 @@ component App
           TitleScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
         if e.name == "season"
           SeasonScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n)
+        if e.name == "releases"
+          ReleasesScreen(navKey=`${e.id}`, list=e.params.list, loaded=releasesLoaded, pages=releasesPages,
+            pending=pending(releasesLoaded), failed=failed(releasesLoaded), more=releasesMore, retry=releasesRetry)
 
 // A search hit or recently viewed page: a title links to its screen; a person has
 // none yet.
@@ -504,3 +549,51 @@ component MarkButtons
           text "Watched"
       if failed
         text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite" testId="mark-error"
+
+// Now Playing or Coming Soon: one request per page of twenty, and More adds the
+// next below the last, as the web's Load More does.
+component ReleasesScreen
+  props
+    navKey: string
+    list: string
+    loaded: Releases[]
+    pages: number
+    pending: bool
+    failed: bool
+    more: action
+    retry: action
+  derive movies = loaded.map(p => p.titles).flat()
+  derive lastPage = match loaded.at(0) { case some(p) => p.total_pages, case none => 1 }
+  view
+    column navigationKey=navKey navigationScroll="releases" position="absolute" inset=0
+      display="flex" flex-direction="column"
+      header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
+        text releaseList(list) role="heading" aria-level=2 testId="releases-title"
+      if failed and movies.length == 0
+        EmptyState(symbol="symbol:alert", title=`Can’t Load ${releaseList(list)}`, message="The server didn’t answer.")
+          button press=retry testId="retry"
+            text "Try Again"
+      else if movies.length == 0 and pending
+        progress aria-label="Loading" testId="loading"
+      else if movies.length == 0
+        EmptyState(symbol="symbol:calendar", title="No Movies", message=(list == "coming-soon" ? "Nothing is coming to theaters soon." : "Nothing is playing in theaters."))
+      else
+        list id="releases" testId="releases" appearance="auto" listStyle="plain" flex=1 min-height=0 background-color="surface.page"
+          section
+            for r in movies key=`${r.id}`
+              link href=path("movie", `${r.id}`) display="flex" align-items="center" gap=12 testId=`release-${r.id}`
+                background-color="surface.page"
+                Thumb(url=text(r.poster_url))
+                column flex=1 min-width=0
+                  text r.title
+                  text releaseLine(r) font="-exact-footnote" color="text.muted"
+                image "symbol:forward-chevron" color="text.muted"
+          section
+            if pending
+              progress aria-label="Loading more" background-color="surface.page"
+            else if failed
+              button press=retry testId="retry-more" background-color="surface.page"
+                text "Couldn’t load more. Try Again"
+            else if pages < lastPage
+              button press=more testId="more" background-color="surface.page"
+                text "More"
