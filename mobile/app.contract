@@ -80,6 +80,8 @@ shape EpisodeRef
   number: number
 
 shape SeasonWatched
+  show: bool
+  seasons: number[]
   episodes: EpisodeRef[]
 
 shape Season
@@ -108,6 +110,36 @@ source recordView(kind: string, id: number) as shape Recent[]
 source title(kind: string, id: string) as shape Title
   url "https://credits.jallen7usa.com/api/{kind}/{id}"
 
+// Marks: each PUT answers with the marks after the change. The body carries every
+// parameter; the server reads only `listed` or `watched`.
+source setToWatch(kind: string, id: string, listed: bool) as shape Marks
+  url "https://credits.jallen7usa.com/api/{kind}/{id}/watchlist"
+  method "PUT"
+  body json
+  pointer "/marks"
+
+source setFavorite(kind: string, id: string, listed: bool) as shape Marks
+  url "https://credits.jallen7usa.com/api/{kind}/{id}/favorite"
+  method "PUT"
+  body json
+  pointer "/marks"
+
+source setWatched(kind: string, id: string, watched: bool) as shape Marks
+  url "https://credits.jallen7usa.com/api/{kind}/{id}/watched"
+  method "PUT"
+  body json
+  pointer "/marks"
+
+source setSeasonWatched(id: string, n: string, watched: bool) as shape SeasonWatched
+  url "https://credits.jallen7usa.com/api/tv/{id}/season/{n}/watched"
+  method "PUT"
+  body json
+
+source setEpisodeWatched(id: string, n: string, episode: number, watched: bool) as shape SeasonWatched
+  url "https://credits.jallen7usa.com/api/tv/{id}/season/{n}/episode/{episode}/watched"
+  method "PUT"
+  body json
+
 source season(id: string, n: string) as shape Season
   url "https://credits.jallen7usa.com/api/tv/{id}/season/{n}"
 
@@ -121,7 +153,9 @@ fn scoreText(r: Ratings): string = match r.preferred {
   case none => "" }
 fn seasonsOf(t: Title): SeasonSummary[] = match t.season_list { case some(xs) => xs.filter(x => x.episode_count > 0), case none => [] }
 fn themeName(t: string): string = t == "tokyo-night" ? "Tokyo Night" : t == "catppuccin" ? "Catppuccin" : t == "classic" ? "Classic" : "Rosé Pine"
-fn seen(w: SeasonWatched, season: number, ep: number): bool = w.episodes.filter(e => e.season == season and e.number == ep).length > 0
+fn seasonSeen(w: SeasonWatched, season: number): bool = w.show or w.seasons.filter(n => n == season).length > 0
+fn seen(w: SeasonWatched, season: number, ep: number): bool =
+  seasonSeen(w, season) or w.episodes.filter(e => e.season == season and e.number == ep).length > 0
 
 component App
   // The web's theme picker, remembered on the phone. The dark themes keep the
@@ -241,6 +275,16 @@ component TitleScreen
     kind: string
     id: string
   resource t = title(kind, id) as shape Title
+  // The last mark's reply is the server's marks after it, shown until the screen
+  // closes; the title is read again too, since favoriting a show marks its seasons.
+  mutation marked as shape Marks queue refreshes t
+  derive marks = match marked { case some(m) => m, case none => t.marks }
+  action toggleToWatch
+    send marked = setToWatch(kind, id, not marks.to_watch)
+  action toggleFavorite
+    send marked = setFavorite(kind, id, not marks.favorite)
+  action toggleWatched
+    send marked = setWatched(kind, id, not marks.watched)
   view
     column navigationKey=navKey navigationScroll="title" position="absolute" inset=0
       display="flex" flex-direction="column"
@@ -259,12 +303,15 @@ component TitleScreen
                 text `${text(t.year)}${t.genres.length > 0 ? " · " : ""}${t.genres.join(", ")}` color="text.muted"
                 if scoreText(t.ratings) != ""
                   text scoreText(t.ratings) font="-exact-headline" testId="score"
-                if t.marks.favorite
-                  text "★ Favorite" color="mark.favorite"
+                if marks.favorite
+                  text "★ Favorite" color="mark.favorite" testId="favorite-badge"
                 if text(t.tagline) != ""
                   text text(t.tagline) font="-exact-footnote" color="text.muted"
             if text(t.overview) != ""
               text text(t.overview) padding-top=8 padding-bottom=8 testId="overview" background-color="surface.card"
+          section
+            MarkButtons(marks=marks, busy=pending(marked), failed=(failed(marked) and not pending(marked)),
+              toWatch=toggleToWatch, favorite=toggleFavorite, watched=toggleWatched)
           if seasonsOf(t).length > 0
             section
               header
@@ -292,6 +339,13 @@ component SeasonScreen
     id: string
     n: string
   resource s = season(id, n) as shape Season
+  // As on TitleScreen, the last mark's reply is the show's watched marks after it.
+  mutation marked as shape SeasonWatched queue refreshes s
+  derive w = match marked { case some(m) => m, case none => s.watched }
+  action toggleSeason
+    send marked = setSeasonWatched(id, n, not seasonSeen(w, s.number))
+  action toggleEpisode(ep: number)
+    send marked = setEpisodeWatched(id, n, ep, not seen(w, s.number, ep))
   view
     column navigationKey=navKey navigationScroll="season" position="absolute" inset=0
       display="flex" flex-direction="column"
@@ -304,14 +358,54 @@ component SeasonScreen
       else
         list id="season" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
           section
+            row gap=8 align-items="center" background-color="surface.card"
+              text (w.show ? "Watched with the whole show" : seasonSeen(w, s.number) ? "Season watched" : "Season not watched")
+                flex=1 color="text.muted" testId="season-state"
+              button press=toggleSeason buttonStyle="bordered" aria-pressed=seasonSeen(w, s.number)
+                disabled=(w.show or pending(marked)) testId="mark-season"
+                text (seasonSeen(w, s.number) ? "Unmark Season" : "Mark Season Watched")
+            if failed(marked) and not pending(marked)
+              text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite"
+                background-color="surface.card" testId="mark-error"
+          section
             for ep in s.episodes key=`${ep.number}`
               column gap=6 padding-top=10 padding-bottom=10 testId=`episode-${ep.number}` background-color="surface.card"
                 row gap=8
                   text `${ep.number}. ${ep.title}` font="-exact-headline" flex=1
-                  if seen(s.watched, s.number, ep.number)
-                    text "Watched" font="-exact-footnote" color="mark.watched"
+                  button press=toggleEpisode(ep.number) aria-pressed=seen(w, s.number, ep.number)
+                    aria-label=`Episode ${ep.number} watched` disabled=(seasonSeen(w, s.number) or pending(marked))
+                    testId=`mark-episode-${ep.number}`
+                    if seen(w, s.number, ep.number)
+                      text "Watched" font="-exact-footnote" color="mark.watched"
+                    else
+                      text "Mark Watched" font="-exact-footnote"
                 image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
-                  filter=(seen(s.watched, s.number, ep.number) ? "none" : "blur(14px)")
+                  filter=(seen(w, s.number, ep.number) ? "none" : "blur(14px)")
                 text text(ep.overview) font="-exact-subheadline"
-                  filter=(seen(s.watched, s.number, ep.number) ? "none" : "blur(5px)")
+                  filter=(seen(w, s.number, ep.number) ? "none" : "blur(5px)")
                   testId=`overview-${ep.number}`
+
+// To watch, Favorite and Watched on a movie or show, as the web's detail page
+// toggles them. Each press flips one mark; the screen re-reads the title after.
+component MarkButtons
+  props
+    marks: Marks
+    busy: bool
+    failed: bool
+    toWatch: action
+    favorite: action
+    watched: action
+  view
+    column gap=8 padding-top=8 padding-bottom=8 background-color="surface.card"
+      row gap=8 flex-wrap="wrap"
+        button press=toWatch buttonStyle="bordered" aria-pressed=marks.to_watch disabled=busy testId="mark-to-watch"
+          image (marks.to_watch ? "symbol:bookmark-fill" : "symbol:bookmark")
+          text "To Watch"
+        button press=favorite buttonStyle="bordered" aria-pressed=marks.favorite disabled=busy testId="mark-favorite"
+          image (marks.favorite ? "symbol:heart-fill" : "symbol:heart")
+          text "Favorite"
+        button press=watched buttonStyle="bordered" aria-pressed=marks.watched disabled=busy testId="mark-watched"
+          image (marks.watched ? "symbol:checkmark" : "symbol:circle")
+          text "Watched"
+      if failed
+        text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite" testId="mark-error"

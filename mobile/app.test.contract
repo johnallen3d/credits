@@ -17,3 +17,60 @@ test "the theme starts as Rosé Pine and survives a relaunch"
   expect state theme == "tokyo-night"
   reload
   expect state theme == "tokyo-night"
+
+test "marking a movie a favorite shows the server's new marks"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false}}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603/favorite" with 200 {"marks":{"to_watch":true,"favorite":true,"watched":false}}
+  expect tree has "mark-favorite"
+  expect tree missing "favorite-badge"
+  tap "mark-favorite"
+  clock data
+  expect tree has "favorite-badge"
+  expect tree missing "mark-error"
+
+test "a mark the server refuses says so"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false}}
+  fail fetch "https://credits.jallen7usa.com/api/movie/603/watched"
+  tap "mark-watched"
+  clock data
+  expect tree has "mark-error"
+  expect refusal "marked"
+
+test "marking a season watched unblurs and marks its episodes"
+  at "/tv/95396/season/1"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396" with 200 {"kind":"tv","id":95396,"title":"Severance","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396/season/1" with 200 {"show_title":"Severance","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Good News About Hell"},{"number":2,"title":"Half Loop"}],"watched":{"show":false,"seasons":[],"episodes":[]}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396/season/1/watched" with 200 {"state":"read","show":false,"seasons":[1],"episodes":[]}
+  expect text "season-state" == "Season not watched"
+  expect text "mark-episode-1" == "Mark Watched"
+  tap "mark-season"
+  clock data
+  expect text "season-state" == "Season watched"
+  expect text "mark-episode-2" == "Watched"
+  expect disabled "mark-episode-2"
+
+test "marking one episode watched leaves the others"
+  at "/tv/95396/season/1"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396" with 200 {"kind":"tv","id":95396,"title":"Severance","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396/season/1" with 200 {"show_title":"Severance","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Good News About Hell"},{"number":2,"title":"Half Loop"}],"watched":{"show":false,"seasons":[],"episodes":[]}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396/season/1/episode/1/watched" with 200 {"state":"read","show":false,"seasons":[],"episodes":[{"season":1,"number":1}]}
+  tap "mark-episode-1"
+  clock data
+  expect text "mark-episode-1" == "Watched"
+  expect text "mark-episode-2" == "Mark Watched"
+  expect enabled "mark-episode-1"
+
+test "a season watched with the whole show can't be unmarked here"
+  at "/tv/95396/season/1"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396" with 200 {"kind":"tv","id":95396,"title":"Severance","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396/season/1" with 200 {"show_title":"Severance","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Good News About Hell"},{"number":2,"title":"Half Loop"}],"watched":{"show":true,"seasons":[],"episodes":[]}}
+  expect text "season-state" == "Watched with the whole show"
+  expect disabled "mark-season"
+  expect text "mark-episode-1" == "Watched"
