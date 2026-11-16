@@ -18,11 +18,14 @@
   "$schema": "../../../exact/scripts/app.schema.json",
   "name": "Credits",
   "short_name": "Credits",
-  "id": "com.example.mobile-5c5e69",
+  "id": "com.johnallen3d.credits",
   "start_url": "/",
   "display": "standalone",
+  "icons": [
+    { "src": "assets/icon.png", "sizes": "1024x1024", "type": "image/png" }
+  ],
   "app": {
-    "id": "com.example.mobile-5c5e69",
+    "id": "com.johnallen3d.credits",
     "name": "Credits"
   },
   "rust": {

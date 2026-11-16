@@ -27,6 +27,9 @@ run = "git config core.hooksPath .githooks"
 # against.
 [vars]
 exact_rev = "30f725e5"
+# John's free personal Apple team. Its installs expire after 7 days: rerun
+# mobile:phone to renew.
+ios_team = "96RT8K7VDR"
 
 [tasks."mobile:setup"]
 description = "Clone Exact into mobile/.exact-sdk and install its toolchains (Xcode 27.1+ for iOS)"
@@ -41,7 +44,7 @@ bun "$EXACT/scripts/exact.mjs" setup
 '''
 
 [tasks."mobile:proxy"]
-description = "Serve the credits API with CORS on 127.0.0.1:8790, where the app's sources read it"
+description = "Serve the credits API with CORS on 127.0.0.1:8790, for the web dev loop (the app's sources read the hosted API)"
 dir = "mobile"
 tools = { bun = "1.4.2" }
 run = "bun tools/cors-proxy.ts"
@@ -59,6 +62,13 @@ dir = "mobile"
 tools = { bun = "1.4.2", rust = "1.99.1" }
 env = { EXACT = "{{config_root}}/mobile/.exact-sdk", EXACT_FEEDBACK = "0" }
 run = "bun exact.mjs ios --run"
+
+[tasks."mobile:phone"]
+description = "Build the Exact app and install it on the iPhone plugged in over USB (rerun weekly: free-team installs expire after 7 days)"
+dir = "mobile"
+tools = { bun = "1.4.2", rust = "1.99.1" }
+env = { EXACT = "{{config_root}}/mobile/.exact-sdk", EXACT_FEEDBACK = "0", DEVELOPMENT_TEAM = "{{vars.ios_team}}" }
+run = "bun exact.mjs ios --device --run"
 
 [tasks."mobile:verify"]
 description = "Run Exact's checks on the app: tests, layout, accessibility, relaunch"

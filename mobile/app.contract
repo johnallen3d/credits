@@ -83,14 +83,14 @@ shape Season
   watched: SeasonWatched
 
 source search(q: string) as shape Hit[]
-  url "http://127.0.0.1:8790/api/search?q={q}"
+  url "https://credits.jallen7usa.com/api/search?q={q}"
   pointer "/results"
 
 source title(kind: string, id: string) as shape Title
-  url "http://127.0.0.1:8790/api/{kind}/{id}"
+  url "https://credits.jallen7usa.com/api/{kind}/{id}"
 
 source season(id: string, n: string) as shape Season
-  url "http://127.0.0.1:8790/api/tv/{id}/season/{n}"
+  url "https://credits.jallen7usa.com/api/tv/{id}/season/{n}"
 
 fn text(o: option<string>): string = match o { case some(s) => s, case none => "" }
 fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(h.name) }
