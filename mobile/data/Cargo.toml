@@ -1,0 +1,16 @@
+[package]
+name = "credits-data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The app's Rust data source: none, since every source is declared in app.contract"
+publish = false
+workspace = "../.exact/shells"
+
+[lib]
+name = "credits_data"
+test = false
+bench = false
+
+[dependencies]
+exact-runner.workspace = true

@@ -7,3 +7,5 @@
 /.exact/
 /.env.local
 /.exact-sdk/
+/rust-toolchain.toml
+/.cargo/config.toml
