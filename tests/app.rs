@@ -984,7 +984,13 @@ async fn json_api_lists_and_records_recently_viewed_pages() {
             "image_url": "https://img.test/t/p/w342/matrix.jpg",
         })
     );
-    post_json(t.app(), "/api/recent", json!({ "kind": "tv", "id": 1396 })).await;
+    let (status, json) = post_json(
+        t.app(),
+        "/api/recent",
+        json!({ "kind": "tv", "id": 1396.0 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a whole float is an id: {json}");
     let (_, _, body) = get_page(t.app(), "/", false).await;
     let breaking_bad = body.find(r#"<a href="/tv/1396">"#).unwrap();
     let keanu = body.find(r#"<a href="/person/6384">"#).unwrap();
@@ -1004,6 +1010,13 @@ async fn json_api_lists_and_records_recently_viewed_pages() {
     )
     .await;
     assert!(status.is_client_error());
+    let (status, _) = post_json(
+        t.app(),
+        "/api/recent",
+        json!({ "kind": "movie", "id": 603.5 }),
+    )
+    .await;
+    assert!(status.is_client_error(), "a fraction is no id");
     let (_, json) = get_json(t.app(), "/api/recent").await;
     assert_eq!(json["recent"].as_array().unwrap().len(), 3);
 

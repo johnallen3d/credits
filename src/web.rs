@@ -227,7 +227,21 @@ struct ListedBody {
 #[derive(Deserialize, ToSchema)]
 struct ViewedBody {
     kind: RecentKind,
+    #[serde(deserialize_with = "whole_number")]
     id: u64,
+}
+
+/// A JSON number that is a whole number, written `1396` or `1396.0`: the iOS
+/// app's runner sends every number as a float.
+fn whole_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    let n = serde_json::Number::deserialize(d)?;
+    n.as_u64()
+        .or_else(|| {
+            n.as_f64()
+                .filter(|f| f.fract() == 0.0 && *f >= 0.0 && *f <= u64::MAX as f64)
+                .map(|f| f as u64)
+        })
+        .ok_or_else(|| serde::de::Error::custom(format!("expected a whole number, found {n}")))
 }
 
 /// Marks something watched or not.
