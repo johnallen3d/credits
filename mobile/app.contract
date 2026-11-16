@@ -1,6 +1,6 @@
 use EmptyState from "exact:content"
 
-// Credits spike: search, a title's detail and a season with spoiler guard, read
+// Credits spike: recently viewed, search, a title's detail and a season with spoiler guard, read
 // straight from the credits JSON API (no data module, so no JavaScript engine).
 // The web host reaches the API through tools/cors-proxy.ts; a phone would name the
 // server itself.
@@ -19,6 +19,13 @@ shape Hit
   year: option<string>
   poster_url: option<string>
   profile_url: option<string>
+
+shape Recent
+  kind: string
+  id: number
+  name: string
+  year: option<string>
+  image_url: option<string>
 
 shape Score
   source: string
@@ -86,6 +93,18 @@ source search(q: string) as shape Hit[]
   url "https://credits.jallen7usa.com/api/search?q={q}"
   pointer "/results"
 
+// The home page's recently viewed list. Reading a title through the API doesn't
+// count as a view, so opening one posts it, as the web page's load does.
+source recent() as shape Recent[]
+  url "https://credits.jallen7usa.com/api/recent"
+  pointer "/recent"
+
+source recordView(kind: string, id: number) as shape Recent[]
+  url "https://credits.jallen7usa.com/api/recent"
+  method "POST"
+  body json
+  pointer "/recent"
+
 source title(kind: string, id: string) as shape Title
   url "https://credits.jallen7usa.com/api/{kind}/{id}"
 
@@ -95,6 +114,7 @@ source season(id: string, n: string) as shape Season
 fn text(o: option<string>): string = match o { case some(s) => s, case none => "" }
 fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(h.name) }
 fn picture(h: Hit): string = match h.poster_url { case some(u) => u, case none => text(h.profile_url) }
+fn numberOf(s: string): number = match parseNumber(s) { case some(n) => n, case none => 0 }
 fn kindName(k: string): string = k == "movie" ? "Movie" : k == "tv" ? "TV" : "Person"
 fn scoreText(r: Ratings): string = match r.preferred {
   case some(s) => s.scale == 100 ? `RT ${round(s.score)}%` : `IMDb ${s.score}`,
@@ -106,6 +126,11 @@ component App
   state query = ""
   state asked = ""
   resource hits = search(asked) when asked != "" as shape Hit[] else empty()
+  resource recents = recent() as shape Recent[] else empty()
+  mutation viewed as shape Recent[] refreshes recents
+
+  task opened when top(nav).name == "movie" or top(nav).name == "tv" key=top(nav).id
+    change(record)
 
   action edit(v: string)
     query = v
@@ -116,6 +141,8 @@ component App
     nav = back(nav)
   action follow(url: string)
     nav = go(nav, url)
+  action record
+    send viewed = recordView(top(nav).name, numberOf(top(nav).params.id))
 
   view
     main navigationKey=`${top(nav).id}` navigate=follow testId="app" width="100%" height="100%"
@@ -127,7 +154,14 @@ component App
               text "Credits" role="heading" aria-level=1 flex=1
               input type="search" value=query input=edit placeholder="Movies, shows, people"
                 aria-label="Search" testId="search" width="100%"
-            if asked == ""
+            if asked == "" and recents.length > 0
+              list id="recent" testId="recent" appearance="auto" listStyle="plain" flex=1 min-height=0
+                section
+                  header
+                    text "Recently Viewed"
+                  for r in recents key=`${r.kind}-${r.id}`
+                    Entry(testId=`recent-${r.kind}-${r.id}`, kind=r.kind, id=`${r.id}`, label=r.name, picture=text(r.image_url), year=text(r.year))
+            else if asked == ""
               EmptyState(symbol="symbol:search", title="Search", message="Find a movie, show or person.")
             else if failed(hits)
               EmptyState(symbol="symbol:alert", title="Can’t Reach Credits", message="The server didn’t answer.")
@@ -139,25 +173,38 @@ component App
               list id="hits" appearance="auto" listStyle="plain" flex=1 min-height=0
                 section
                   for h in hits key=`${h.kind}-${h.id}`
-                    if h.kind == "person"
-                      row gap=12 testId=`hit-${h.kind}-${h.id}`
-                        Thumb(url=picture(h))
-                        column flex=1 min-width=0
-                          text label(h)
-                          text "Person" font="-exact-footnote" color="-exact-secondary-label"
-                    else
-                      link href=(h.kind == "movie" ? path("movie", `${h.id}`) : path("tv", `${h.id}`)) display="flex" align-items="center" gap=12 testId=`hit-${h.kind}-${h.id}`
-                        Thumb(url=picture(h))
-                        column flex=1 min-width=0
-                          text label(h)
-                          text (text(h.year) == "" ? kindName(h.kind) : `${kindName(h.kind)} · ${text(h.year)}`) font="-exact-footnote" color="-exact-secondary-label"
-                        image "symbol:forward-chevron"
+                    Entry(testId=`hit-${h.kind}-${h.id}`, kind=h.kind, id=`${h.id}`, label=label(h), picture=picture(h), year=text(h.year))
         if e.name == "movie"
           TitleScreen(navKey=`${e.id}`, kind="movie", id=e.params.id)
         if e.name == "tv"
           TitleScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
         if e.name == "season"
           SeasonScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n)
+
+// A search hit or recently viewed page: a title links to its screen; a person has
+// none yet.
+component Entry
+  props
+    testId: string
+    kind: string
+    id: string
+    label: string
+    picture: string
+    year: string
+  view
+    if kind == "person"
+      row gap=12 testId=testId
+        Thumb(url=picture)
+        column flex=1 min-width=0
+          text label
+          text "Person" font="-exact-footnote" color="-exact-secondary-label"
+    else
+      link href=(kind == "movie" ? path("movie", id) : path("tv", id)) display="flex" align-items="center" gap=12 testId=testId
+        Thumb(url=picture)
+        column flex=1 min-width=0
+          text label
+          text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-footnote" color="-exact-secondary-label"
+        image "symbol:forward-chevron"
 
 component Thumb
   props
