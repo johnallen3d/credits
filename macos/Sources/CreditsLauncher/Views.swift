@@ -452,6 +452,9 @@ struct TitleDetailView: View {
                                 HStack(spacing: 4) {
                                     Text(season.name)
                                     Text(seasonFacts(season)).foregroundStyle(Theme.muted)
+                                    if model.changing.contains(SearchHit(kind: .season, id: title.id, season: season.number)) {
+                                        ProgressView().controlSize(.mini)
+                                    }
                                     if let w = title.watched {
                                         if w.season(season.number) {
                                             Label("Watched", systemImage: "eye.fill").foregroundStyle(Theme.accent)
@@ -799,8 +802,11 @@ struct SeasonDetailView: View {
                     Text("TV SEASON").font(.caption2.bold()).kerning(0.5).foregroundStyle(Theme.tv)
                     Text(season.name).font(.title.bold())
                     Text(facts).foregroundStyle(Theme.muted)
-                    if seasonWatched {
-                        Label("Watched", systemImage: "eye.fill").font(.callout).foregroundStyle(Theme.accent)
+                    HStack(spacing: 8) {
+                        WatchedChip(model: model, on: seasonWatched)
+                        if season.watched?.show ?? false {
+                            Text("with the whole show").font(.callout).foregroundStyle(Theme.muted)
+                        }
                     }
                     if let overview = season.overview, !overview.isEmpty {
                         Text(overview).fixedSize(horizontal: false, vertical: true)
@@ -928,7 +934,7 @@ struct EpisodeDetailView: View {
                     Text("\(e.showTitle) · \(e.seasonName) · Episode \(e.number)").foregroundStyle(Theme.muted)
                     Text(facts).foregroundStyle(Theme.muted)
                     HStack(spacing: 8) {
-                        WatchedChip(on: e.seen, changing: model.watchedTarget.map(model.changing.contains) ?? false)
+                        WatchedChip(model: model, on: e.seen)
                         if e.watched?.fromAppleTV(e.seasonNumber, e.number) ?? false {
                             Text("Watched on Apple TV").font(.callout).foregroundStyle(Theme.muted)
                         }
@@ -1030,12 +1036,15 @@ struct EpisodeDetailView: View {
     }
 }
 
-/// Watched on or off for the page's season or episode, with its shortcut.
+/// Watched on or off for the page's season or episode, with its shortcut; a
+/// click flips it.
 struct WatchedChip: View {
+    let model: LauncherModel
     let on: Bool
-    let changing: Bool
 
     var body: some View {
+        let hit = model.pageWatchedHit
+        let changing = hit.map(model.changing.contains) ?? false
         HStack(spacing: 6) {
             HStack(spacing: 5) {
                 Image(systemName: on ? "eye.fill" : "eye")
@@ -1046,6 +1055,10 @@ struct WatchedChip: View {
             .foregroundStyle(on ? Theme.accent : Theme.muted)
             .padding(.horizontal, 8).padding(.vertical, 3)
             .overlay(Capsule().stroke(on ? Theme.accent : Theme.line))
+            .contentShape(Capsule())
+            .onTapGesture { if let hit { model.toggleWatched(hit) } }
+            .disabled(changing)
+            .help(on ? "Unmark watched" : "Mark watched")
             if changing { ProgressView().controlSize(.small) }
         }
     }

@@ -735,6 +735,15 @@ struct CreditsAPI {
         return try await send(request)
     }
 
+    /// Marks a season watched or not; returns the show's watched marks after.
+    func setSeasonWatched(_ showId: Int, _ season: Int, _ on: Bool) async throws -> WatchedMarks {
+        var request = URLRequest(url: base.appendingPathComponent("api/tv/\(showId)/season/\(season)/watched"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["watched": on])
+        return try await send(request)
+    }
+
     private func get<T: Decodable>(_ url: URL) async throws -> T {
         try await send(URLRequest(url: url))
     }

@@ -488,15 +488,22 @@ final class LauncherModel {
         return detailHit ?? selection
     }
 
-    /// The episode ⌘W marks watched: the one selected on a season's or an
-    /// episode's page, else the episode in detail.
+    /// The season or episode ⌘W marks watched: the one selected on a show's,
+    /// a season's or an episode's page, else the season or episode in detail.
+    /// On a show's page with no season selected, ⌘W marks the show instead.
     var watchedTarget: SearchHit? {
-        let row = detailRow.flatMap { detailRows[safe: $0] }
+        if let row = detailRow.flatMap({ detailRows[safe: $0] }), row.kind == .season || row.kind == .episode {
+            return row
+        }
+        return pageWatchedHit
+    }
+
+    /// The season or episode in detail, which its Watched chip marks.
+    var pageWatchedHit: SearchHit? {
         switch detail {
-        case .season:
-            return row?.kind == .episode ? row : nil
+        case .season(let s):
+            return SearchHit(kind: .season, id: s.showId, title: s.name, season: s.number)
         case .episode(let e):
-            if let row, row.kind == .episode { return row }
             return SearchHit(kind: .episode, id: e.showId, title: e.title, season: e.seasonNumber, episode: e.number)
         default:
             return nil
@@ -513,8 +520,9 @@ final class LauncherModel {
         }
     }
 
-    /// An episode as a flash names it: "3. Title", or "Episode 3" from a pager.
+    /// A season by name, and an episode as "3. Title", or "Episode 3" from a pager.
     private func label(_ hit: SearchHit) -> String {
+        if hit.kind == .season { return hit.displayName }
         let n = hit.episode ?? 0
         return hit.title.map { "\(n). \($0)" } ?? "Episode \(n)"
     }
@@ -561,18 +569,24 @@ final class LauncherModel {
         }
     }
 
-    /// Flips an episode's watched mark, then shows the show's marks the
-    /// server answers with on every page of the show, here and behind.
-    func toggleWatched(_ episode: SearchHit) {
-        guard let season = episode.season, let number = episode.episode, !changing.contains(episode) else { return }
-        let on = !(pageWatched?.episode(season, number) ?? false)
-        changing.insert(episode)
+    /// Flips a season's or an episode's watched mark, then shows the show's
+    /// marks the server answers with on every page of the show, here and behind.
+    func toggleWatched(_ target: SearchHit) {
+        guard let season = target.season, !changing.contains(target) else { return }
+        let number = target.episode
+        let seen = number.map { pageWatched?.episode(season, $0) } ?? pageWatched?.season(season)
+        let on = !(seen ?? false)
+        changing.insert(target)
         Task {
-            defer { changing.remove(episode) }
+            defer { changing.remove(target) }
             do {
-                let marks = try await api.setEpisodeWatched(episode.id, season, number, on)
-                applyWatched(marks, show: episode.id)
-                show("\(on ? "Marked watched" : "Unmarked watched"): \(label(episode))", failed: false)
+                let marks = if let number {
+                    try await api.setEpisodeWatched(target.id, season, number, on)
+                } else {
+                    try await api.setSeasonWatched(target.id, season, on)
+                }
+                applyWatched(marks, show: target.id)
+                show("\(on ? "Marked watched" : "Unmarked watched"): \(label(target))", failed: false)
             } catch is CancellationError {
             } catch {
                 show("Couldn't update Watched: \(error.localizedDescription)", failed: true)
