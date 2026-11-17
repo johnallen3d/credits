@@ -105,8 +105,8 @@ struct TitleDetail: Decodable {
     let cast: [Credit]
     let metadata: Metadata
     let marks: TitleMarks?
-    /// On To watch only: who or what recommended it.
-    let source: String?
+    /// On To watch only: tags naming who or what recommended it.
+    let sources: [String]?
 }
 
 /// Whether a title is on To watch and Favorites and marked watched. Each is
@@ -292,8 +292,8 @@ struct ListEntry: Decodable {
     let posterUrl: String?
     let availability: Availability?
     let marks: TitleMarks?
-    /// Who or what recommended it.
-    let source: String?
+    /// On To watch only: tags naming who or what recommended it.
+    let sources: [String]?
 }
 
 struct Availability: Decodable {

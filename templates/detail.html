@@ -38,7 +38,7 @@
       </form>
       {% endif %}
       </div>
-      <div id="watchlist-source">{% if listed %}{% call watchlist::source(d.kind.slug(), d.id, source, sources, page) %}{% endcall %}{% endif %}</div>
+      <div id="watchlist-source">{% if listed %}{% call watchlist::sources(d.kind.slug(), d.id, d.title, sources, page, true) %}{% endcall %}{% call watchlist::suggestions(known_sources) %}{% endcall %}{% endif %}</div>
       {% if movie_watched.apple_tv %}<p class="muted auto-marked">Marked watched from what played on the Apple TV. <a href="/playback">Seen on Apple TV</a></p>{% endif %}
       {% if favorited.is_none() %}<p class="muted" role="status">Favorites couldn't be read. Please reload to try again.</p>{% endif %}
       <section class="ratings" aria-label="Ratings">

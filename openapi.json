@@ -733,6 +733,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "description": "Only titles with this source tag, ignoring case and a leading `#`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -768,7 +777,7 @@
     },
     "/api/watchlist/sources": {
       "get": {
-        "summary": "Sources used on To watch so far, to offer when setting one.",
+        "summary": "Source tags used on To watch so far, to offer when tagging a title.",
         "operationId": "api_watchlist_sources",
         "responses": {
           "200": {
@@ -1350,10 +1359,10 @@
         }
       }
     },
-    "/api/movie/{id}/watchlist/source": {
+    "/api/movie/{id}/watchlist/sources": {
       "put": {
-        "summary": "Sets who or what recommended a movie on To watch.",
-        "operationId": "api_movie_watchlist_source",
+        "summary": "Sets the tags naming who or what recommended a movie on To watch.",
+        "operationId": "api_movie_watchlist_sources",
         "parameters": [
           {
             "name": "id",
@@ -1371,7 +1380,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SourceBody"
+                "$ref": "#/components/schemas/SourcesBody"
               }
             }
           },
@@ -1382,7 +1391,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SourceBody"
+                  "$ref": "#/components/schemas/SourcesBody"
                 }
               }
             }
@@ -1428,10 +1437,10 @@
         }
       }
     },
-    "/api/tv/{id}/watchlist/source": {
+    "/api/tv/{id}/watchlist/sources": {
       "put": {
-        "summary": "Sets who or what recommended a TV show on To watch.",
-        "operationId": "api_tv_watchlist_source",
+        "summary": "Sets the tags naming who or what recommended a TV show on To watch.",
+        "operationId": "api_tv_watchlist_sources",
         "parameters": [
           {
             "name": "id",
@@ -1449,7 +1458,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SourceBody"
+                "$ref": "#/components/schemas/SourcesBody"
               }
             }
           },
@@ -1460,7 +1469,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SourceBody"
+                  "$ref": "#/components/schemas/SourcesBody"
                 }
               }
             }
@@ -2701,12 +2710,12 @@
               }
             ]
           },
-          "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "To watch only: who or what recommended it. Omitted when not set."
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "On To watch only: tags naming who or what recommended it, in the\norder added. Omitted when there are none."
           }
         }
       },
@@ -2959,12 +2968,12 @@
               "marks": {
                 "$ref": "#/components/schemas/TitleMarks"
               },
-              "source": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "On To watch only: who or what recommended it. Omitted when not set."
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "On To watch only: tags naming who or what recommended it, in the\norder added. Omitted when there are none."
               }
             }
           }
@@ -4064,16 +4073,19 @@
           }
         }
       },
-      "SourceBody": {
+      "SourcesBody": {
         "type": "object",
-        "description": "Who or what recommended a To watch title.",
+        "description": "Tags naming who or what recommended a To watch title.",
+        "required": [
+          "sources"
+        ],
         "properties": {
-          "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Free text, whitespace collapsed and cut to 80 characters. Null or\nblank clears it."
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the title's tags, in this order; empty clears them. Each\nloses a leading `#`, has its words joined by hyphens and is cut to 40\ncharacters; blanks and repeats (ignoring case) are dropped. A tag used\nbefore but for case takes its earlier spelling."
           }
         }
       },
@@ -4482,12 +4494,12 @@
               "marks": {
                 "$ref": "#/components/schemas/TitleMarks"
               },
-              "source": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "On To watch only: who or what recommended it. Omitted when not set."
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "On To watch only: tags naming who or what recommended it, in the\norder added. Omitted when there are none."
               }
             }
           }

@@ -130,8 +130,8 @@ final class LauncherModel {
             }
             return HomeList(hits: w.titles.map { t in
                 let services = (t.availability?.services ?? []).map(\.name)
-                let from = t.source.map { "from \($0)" }
-                let info = (services + [from].compactMap { $0 }).joined(separator: " · ")
+                let tags = (t.sources ?? []).map { "#\($0)" }.joined(separator: " ")
+                let info = (services + [tags].filter { !$0.isEmpty }).joined(separator: " · ")
                 return SearchHit(kind: t.kind, id: t.id, title: t.title, year: t.year,
                                  posterUrl: t.posterUrl, info: info)
             }, notes: notes)

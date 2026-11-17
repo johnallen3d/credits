@@ -2,7 +2,7 @@
     `listed` is the current state; `id` names the form; `back` is the page to
     return to. With `inline`, HTMX swaps just this form instead of reloading
     the page. `text` is an optional visible label. `oob` selects more of the
-    returned page to swap in by id, such as the title page's source field. -#}
+    returned page to swap in by id, such as the title page's source tags. -#}
 {% macro toggle(kind, title_id, title, listed, id, back, text, inline, oob = "") %}
 <form class="watch-toggle watchlist-toggle" id="{{ id }}" method="post" action="/{{ kind }}/{{ title_id }}/watchlist"{% if inline %} hx-post="/{{ kind }}/{{ title_id }}/watchlist" hx-target="#{{ id }}" hx-select="#{{ id }}" hx-swap="outerHTML"{% if !oob.is_empty() %} hx-select-oob="{{ oob }}"{% endif %}{% endif %}>
   <input type="hidden" name="listed" value="{{ !listed }}">
@@ -14,16 +14,29 @@
 </form>
 {% endmacro %}
 
-{#- Who or what recommended a title on the "To watch" list: free text, with
-    the sources used before offered to pick from. -#}
-{% macro source(kind, title_id, source, sources, back) %}
-<form class="watchlist-source" method="post" action="/{{ kind }}/{{ title_id }}/watchlist/source" hx-post="/{{ kind }}/{{ title_id }}/watchlist/source" hx-target="#watchlist-source" hx-select="#watchlist-source" hx-swap="outerHTML">
-  <input type="hidden" name="back" value="{{ back }}">
-  <label for="watchlist-source-input">Recommended by</label>
-  <input id="watchlist-source-input" name="source" type="text" list="watchlist-sources" maxlength="{{ crate::catalog::SOURCE_MAX_CHARS }}" autocomplete="off" placeholder="Who or what?" value="{% if let Some(s) = source %}{{ s }}{% endif %}">
-  {%- if !sources.is_empty() %}
-  <datalist id="watchlist-sources">{% for s in sources %}<option value="{{ s }}"></option>{% endfor %}</datalist>
-  {%- endif %}
-  <button type="submit">Save</button>
-</form>
+{#- Tags naming who or what recommended a title on the "To watch" list, each
+    with a button to remove it, and a field to add more. Pair it with
+    `suggestions` once per page. With `labelled`, a visible "Recommended by"
+    leads. -#}
+{% macro sources(kind, title_id, title, names, back, labelled) %}
+<div class="source-tags" id="sources-{{ kind }}-{{ title_id }}">
+  {%- if labelled %}<span class="source-tags-label">Recommended by</span>{% else %}<span class="visually-hidden">Recommended by:</span>{% endif %}
+  {%- for name in names %}
+  <form class="source-tag" method="post" action="/{{ kind }}/{{ title_id }}/watchlist/sources/remove" hx-post="/{{ kind }}/{{ title_id }}/watchlist/sources/remove" hx-target="#sources-{{ kind }}-{{ title_id }}" hx-select="#sources-{{ kind }}-{{ title_id }}" hx-swap="outerHTML">
+    <input type="hidden" name="source" value="{{ name }}">
+    <input type="hidden" name="back" value="{{ back }}">
+    <a href="{{ crate::web::source_tag_href(name) }}" title="To watch titles tagged #{{ name }}">#{{ name }}</a><button type="submit" aria-label="Remove #{{ name }} from {{ title }}" title="Remove">&times;</button>
+  </form>
+  {%- endfor %}
+  <form class="source-add" method="post" action="/{{ kind }}/{{ title_id }}/watchlist/sources" hx-post="/{{ kind }}/{{ title_id }}/watchlist/sources" hx-target="#sources-{{ kind }}-{{ title_id }}" hx-select="#sources-{{ kind }}-{{ title_id }}" hx-swap="outerHTML" hx-select-oob="#watchlist-sources">
+    <input type="hidden" name="back" value="{{ back }}">
+    <input name="source" type="text" list="watchlist-sources" autocomplete="off" spellcheck="false" placeholder="{% if names.is_empty() %}#who-or-what{% else %}#more{% endif %}" aria-label="Tag who or what recommended {{ title }}" title="Tags, separated by spaces">
+    <button type="submit" aria-label="Add tags to {{ title }}">Add</button>
+  </form>
+</div>
+{% endmacro %}
+
+{#- Source tags used before, offered by every `sources` field on the page. -#}
+{% macro suggestions(known) %}
+<datalist id="watchlist-sources">{% for name in known %}<option value="#{{ name }}"></option>{% endfor %}</datalist>
 {% endmacro %}

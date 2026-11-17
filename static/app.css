@@ -247,12 +247,19 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .showtimes-link { font-size: .9rem; padding: .35rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); text-decoration: none; }
 .showtimes-link:hover, .showtimes-link:focus-visible { border-color: var(--accent); color: var(--accent); }
 .detail .meta > .title-actions { margin: .5rem 0; }
-.watchlist-source { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .5rem; margin: 0 0 .5rem; font-size: .9rem; }
-.watchlist-source label { color: var(--muted); }
-.watchlist-source input { flex: 0 1 16rem; min-width: 0; font: inherit; padding: .3rem .7rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--fg); }
-.watchlist-source button { font: inherit; padding: .3rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); cursor: pointer; }
-.watchlist-source button:hover, .watchlist-source button:focus-visible, .watchlist-source input:focus-visible { border-color: var(--accent); color: var(--accent); }
-.list-source { display: block; margin-top: .15rem; font-size: .85rem; color: var(--muted); }
+.source-tags { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: 0 0 .5rem; font-size: .9rem; }
+.filmography .source-tags { margin: .3rem 0 0; font-size: .8rem; }
+.source-tags-label { color: var(--muted); margin-right: .15rem; }
+.source-tag { display: inline-flex; align-items: center; gap: .1rem; padding: .1rem .2rem .1rem .6rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--accent); }
+.source-tag a { color: inherit; text-decoration: none; }
+.source-tag a:hover, .source-tag a:focus-visible { text-decoration: underline; }
+.source-tag button { font: inherit; line-height: 1; padding: .1rem .35rem; border: 0; border-radius: 999px; background: none; color: var(--muted); cursor: pointer; }
+.source-tag button:hover, .source-tag button:focus-visible { color: var(--accent); }
+.source-add { display: inline-flex; align-items: center; gap: .3rem; }
+.source-add input { width: 9rem; min-width: 0; font: inherit; padding: .15rem .6rem; border: 1px dashed var(--line); border-radius: 999px; background: transparent; color: var(--fg); }
+.source-add button { font: inherit; padding: .15rem .6rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); cursor: pointer; }
+.source-add input:placeholder-shown + button { display: none; }
+.source-add button:hover, .source-add button:focus-visible, .source-add input:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
 .favorite-toggle button[aria-pressed="true"] { color: var(--favorite); border-color: var(--favorite); }
 .favorite-toggle button[aria-pressed="true"] .heart { fill: currentColor; }
 .favorite-error:not([hidden]) { display: block; max-width: 15rem; color: var(--error-fg); font-size: .85rem; margin-top: .25rem; }

@@ -77,12 +77,20 @@ pub fn app(catalog: Catalog) -> Router {
             post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Tv, false)),
         )
         .route(
-            "/movie/{id}/watchlist/source",
-            post(|s, p, f| set_watchlist_source(s, p, f, MediaKind::Movie)),
+            "/movie/{id}/watchlist/sources",
+            post(|s, p, f| change_watchlist_source(s, p, f, MediaKind::Movie, false)),
         )
         .route(
-            "/tv/{id}/watchlist/source",
-            post(|s, p, f| set_watchlist_source(s, p, f, MediaKind::Tv)),
+            "/tv/{id}/watchlist/sources",
+            post(|s, p, f| change_watchlist_source(s, p, f, MediaKind::Tv, false)),
+        )
+        .route(
+            "/movie/{id}/watchlist/sources/remove",
+            post(|s, p, f| change_watchlist_source(s, p, f, MediaKind::Movie, true)),
+        )
+        .route(
+            "/tv/{id}/watchlist/sources/remove",
+            post(|s, p, f| change_watchlist_source(s, p, f, MediaKind::Tv, true)),
         )
         .route(
             "/movie/{id}/favorite",
@@ -172,8 +180,8 @@ fn api() -> OpenApiRouter<Catalog> {
         .routes(routes!(api_coming_soon))
         .routes(routes!(api_movie_watchlist))
         .routes(routes!(api_tv_watchlist))
-        .routes(routes!(api_movie_watchlist_source))
-        .routes(routes!(api_tv_watchlist_source))
+        .routes(routes!(api_movie_watchlist_sources))
+        .routes(routes!(api_tv_watchlist_sources))
         .routes(routes!(api_movie_favorite))
         .routes(routes!(api_tv_favorite))
         .routes(routes!(api_movie_watched))
@@ -229,7 +237,7 @@ enum WriteErrors {
     Provider(#[to_schema] ApiError),
 }
 
-/// The ways setting a To watch source fails.
+/// The ways setting a To watch title's sources fails.
 #[derive(IntoResponses)]
 #[allow(dead_code)] // Only describes responses for the spec.
 enum SourceErrors {
@@ -247,12 +255,14 @@ struct ListedBody {
     listed: bool,
 }
 
-/// Who or what recommended a To watch title.
+/// Tags naming who or what recommended a To watch title.
 #[derive(Deserialize, Serialize, ToSchema)]
-struct SourceBody {
-    /// Free text, whitespace collapsed and cut to 80 characters. Null or
-    /// blank clears it.
-    source: Option<String>,
+struct SourcesBody {
+    /// Replaces the title's tags, in this order; empty clears them. Each
+    /// loses a leading `#`, has its words joined by hyphens and is cut to 40
+    /// characters; blanks and repeats (ignoring case) are dropped. A tag used
+    /// before but for case takes its earlier spelling.
+    sources: Vec<String>,
 }
 
 /// Sources used on To watch so far, for offering them again.
@@ -406,10 +416,10 @@ struct DetailPage {
     movie_watched: MovieWatched,
     /// On the "To watch" list.
     listed: bool,
-    /// Who or what recommended it, when listed.
-    source: Option<String>,
-    /// Sources used before, to pick from.
+    /// Tags naming who or what recommended it, when listed.
     sources: Vec<String>,
+    /// Source tags used before, to pick from.
+    known_sources: Vec<String>,
     favorited: Option<bool>,
 }
 
@@ -593,6 +603,10 @@ struct WatchlistPage {
     favorites: bool,
     listed: HashSet<(MediaKind, u64)>,
     favorited: Option<HashSet<(MediaKind, u64)>>,
+    /// To watch only: source tags used before, to pick from.
+    known_sources: Vec<String>,
+    /// To watch only: the source tag every title shown carries.
+    tag: Option<String>,
 }
 
 impl WatchlistPage {
@@ -632,6 +646,8 @@ impl WatchlistPage {
             favorites,
             listed,
             favorited,
+            known_sources: Vec::new(),
+            tag: None,
         }
     }
 
@@ -684,7 +700,27 @@ impl WatchlistPage {
         services: ServicesFilter,
         release: ReleaseFilter,
     ) -> String {
-        watchlist_href(sort, kind, services, release, self.favorites)
+        let href = watchlist_href(sort, kind, services, release, self.favorites);
+        match &self.tag {
+            Some(tag) => self.with_tag(href, tag),
+            None => href,
+        }
+    }
+
+    fn with_tag(&self, href: String, tag: &str) -> String {
+        let join = if href.contains('?') { '&' } else { '?' };
+        format!("{href}{join}tag={}", crate::model::encode_query_value(tag))
+    }
+
+    /// This page as it is but for the tag filter.
+    fn untagged_href(&self) -> String {
+        watchlist_href(
+            self.w.sort,
+            self.kind,
+            self.services,
+            self.release,
+            self.favorites,
+        )
     }
 
     fn kind_href(&self, kind: &KindFilter) -> String {
@@ -728,6 +764,10 @@ impl WatchlistPage {
             ReleaseFilter::All => {}
             ReleaseFilter::OutNow => what.push("out now"),
             ReleaseFilter::ComingSoon => what.push("coming soon"),
+        }
+        let tagged = self.tag.as_ref().map(|t| format!("tagged #{t}"));
+        if let Some(tagged) = &tagged {
+            what.push(tagged);
         }
         if what.is_empty() {
             format!("No {titles} on your list.")
@@ -952,6 +992,31 @@ struct WatchlistParams {
     services: Option<String>,
     /// To watch only: "out_now" or "coming_soon".
     release: Option<String>,
+    /// To watch only: titles with this source tag, ignoring case and a
+    /// leading `#`.
+    tag: Option<String>,
+}
+
+impl WatchlistParams {
+    /// The source tag to filter To watch by, without its `#`.
+    fn tag(&self, favorites: bool) -> Option<String> {
+        let tag = self.tag.as_deref()?.trim().trim_start_matches('#');
+        (!favorites && !tag.is_empty()).then(|| tag.to_owned())
+    }
+}
+
+/// Whether a To watch title carries `tag`, ignoring case; every title does
+/// when there's no tag.
+fn has_tag(e: &FilmographyEntry, tag: Option<&str>) -> bool {
+    tag.is_none_or(|tag| {
+        let tag = tag.to_lowercase();
+        e.sources.iter().any(|s| s.to_lowercase() == tag)
+    })
+}
+
+/// The To watch list filtered to one source tag.
+pub(crate) fn source_tag_href(name: &str) -> String {
+    format!("/watchlist?tag={}", crate::model::encode_query_value(name))
 }
 
 #[derive(Deserialize)]
@@ -971,6 +1036,7 @@ struct WatchlistForm {
 
 #[derive(Deserialize)]
 struct SourceForm {
+    /// Tags to add, separated by spaces or commas; or the one to remove.
     source: String,
     /// Page to return to; only paths on this site are honored.
     back: Option<String>,
@@ -1060,14 +1126,13 @@ async fn detail_page(
         _ => MovieWatched::default(),
     };
     let listed = result.is_ok() && catalog.watchlist_titles().await.contains(&(kind, id));
-    let (source, sources) = if listed {
-        let sources = catalog.watchlist_sources().await.unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "reading sources failed");
-            Vec::new()
-        });
-        (catalog.watchlist_source(kind, id).await, sources)
+    let (sources, known_sources) = if listed {
+        (
+            catalog.watchlist_sources_of(kind, id).await,
+            known_sources(&catalog).await,
+        )
     } else {
-        (None, Vec::new())
+        (Vec::new(), Vec::new())
     };
     let favorited = favorite_titles(&catalog)
         .await
@@ -1078,8 +1143,8 @@ async fn detail_page(
             watched,
             movie_watched,
             listed,
-            source,
             sources,
+            known_sources,
             favorited,
         }),
         || not_found_title(kind),
@@ -1369,16 +1434,35 @@ async fn set_on_watchlist(
     }
 }
 
-async fn set_watchlist_source(
+/// Source tags used before, for suggesting; none if unreadable.
+async fn known_sources(catalog: &Catalog) -> Vec<String> {
+    catalog.watchlist_sources().await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "reading sources failed");
+        Vec::new()
+    })
+}
+
+/// Adds the typed source tags to a To watch title, or with `remove` takes
+/// one off.
+async fn change_watchlist_source(
     State(catalog): State<Catalog>,
     Path(id): Path<String>,
     Form(form): Form<SourceForm>,
     kind: MediaKind,
+    remove: bool,
 ) -> Response {
     let Ok(id) = id.parse::<u64>() else {
         return not_found_title(kind);
     };
-    match catalog.set_watchlist_source(kind, id, &form.source).await {
+    let result = if remove {
+        catalog
+            .remove_watchlist_source(kind, id, &form.source)
+            .await
+            .map(|()| true)
+    } else {
+        catalog.add_watchlist_sources(kind, id, &form.source).await
+    };
+    match result {
         Ok(true) => {
             let back = form
                 .back
@@ -1389,10 +1473,10 @@ async fn set_watchlist_source(
         Ok(false) => error_page(
             StatusCode::NOT_FOUND,
             "Not on your To watch list",
-            "Add the title to your To watch list, then say who recommended it.",
+            "Add the title to your To watch list, then tag who recommended it.",
         ),
         Err(e) => {
-            tracing::warn!(error = %e, ?kind, id, "saving the source failed");
+            tracing::warn!(error = %e, ?kind, id, "saving the sources failed");
             error_page(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Couldn't save who recommended it",
@@ -1427,11 +1511,16 @@ async fn watchlist_page(
         Ok(w) => {
             let listed = catalog.watchlist_titles().await;
             let favorited = favorite_titles(&catalog).await;
-            html(
-                StatusCode::OK,
-                WatchlistPage::new(w, kind, services, release, favorites, listed, favorited)
-                    .render(),
-            )
+            let tag = params.tag(favorites);
+            let mut w = w;
+            w.titles.retain(|e| has_tag(e, tag.as_deref()));
+            let mut page =
+                WatchlistPage::new(w, kind, services, release, favorites, listed, favorited);
+            if !favorites {
+                page.known_sources = known_sources(&catalog).await;
+            }
+            page.tag = tag;
+            html(StatusCode::OK, page.render())
         }
         Err(e) => {
             tracing::warn!(error = %e, "reading the watchlist failed");
@@ -1457,6 +1546,7 @@ async fn watchlist_page(
         ("sort" = Option<WatchlistSort>, Query, description = "Defaults to `added`"),
         ("services" = Option<String>, Query, description = "`mine`: only titles on your services, once any are chosen"),
         ("release" = Option<String>, Query, description = "`out_now`: only titles watchable at home today; `coming_soon`: only those with a release still ahead. Titles whose dates couldn't be loaded match neither"),
+        ("tag" = Option<String>, Query, description = "Only titles with this source tag, ignoring case and a leading `#`"),
     ),
     responses((status = OK, body = WatchlistDetail), ReadError)
 )]
@@ -1464,7 +1554,7 @@ async fn api_watchlist(state: State<Catalog>, query: Query<WatchlistParams>) -> 
     api_list(state, query, false).await
 }
 
-/// Sources used on To watch so far, to offer when setting one.
+/// Source tags used on To watch so far, to offer when tagging a title.
 #[utoipa::path(
     get,
     path = "/api/watchlist/sources",
@@ -1506,6 +1596,7 @@ async fn api_list(
     let kind = KindFilter::from_query(params.kind.as_deref());
     let services = ServicesFilter::from_query(params.services.as_deref());
     let release = ReleaseFilter::from_query(params.release.as_deref());
+    let tag = params.tag(favorites);
     let result = if favorites {
         catalog.favorites(sort).await
     } else {
@@ -1518,6 +1609,7 @@ async fn api_list(
                 kind.matches(e.kind)
                     && (!chosen || services.matches(e))
                     && (favorites || release.matches(e))
+                    && has_tag(e, tag.as_deref())
             });
             catalog.mark_entries(&mut w.titles).await;
             Json(w).into_response()
@@ -1973,7 +2065,7 @@ async fn api_movie(State(catalog): State<Catalog>, Path(id): Path<String>) -> Re
         Ok(title) => Ok(MovieWithMarks {
             title,
             marks: catalog.title_marks(MediaKind::Movie, id).await,
-            source: catalog.watchlist_source(MediaKind::Movie, id).await,
+            sources: catalog.watchlist_sources_of(MediaKind::Movie, id).await,
         }),
         Err(e) => Err(e),
     };
@@ -1997,7 +2089,7 @@ async fn api_tv(State(catalog): State<Catalog>, Path(id): Path<String>) -> Respo
             title,
             watched: catalog.watched_marks(id).await,
             marks: catalog.title_marks(MediaKind::Tv, id).await,
-            source: catalog.watchlist_source(MediaKind::Tv, id).await,
+            sources: catalog.watchlist_sources_of(MediaKind::Tv, id).await,
         }),
         Err(e) => Err(e),
     };
@@ -2168,60 +2260,60 @@ async fn api_tv_watchlist(
     api_set_listed(state, id, body, MediaKind::Tv, false).await
 }
 
-/// Sets who or what recommended a movie on To watch.
+/// Sets the tags naming who or what recommended a movie on To watch.
 #[utoipa::path(
     put,
-    path = "/api/movie/{id}/watchlist/source",
+    path = "/api/movie/{id}/watchlist/sources",
     params(("id" = u64, Path, description = "TMDB movie ID")),
-    request_body = SourceBody,
-    responses((status = OK, body = SourceBody), SourceErrors)
+    request_body = SourcesBody,
+    responses((status = OK, body = SourcesBody), SourceErrors)
 )]
-async fn api_movie_watchlist_source(
+async fn api_movie_watchlist_sources(
     state: State<Catalog>,
     id: Path<String>,
-    body: Result<Json<SourceBody>, JsonRejection>,
+    body: Result<Json<SourcesBody>, JsonRejection>,
 ) -> Response {
-    api_set_source(state, id, body, MediaKind::Movie).await
+    api_set_sources(state, id, body, MediaKind::Movie).await
 }
 
-/// Sets who or what recommended a TV show on To watch.
+/// Sets the tags naming who or what recommended a TV show on To watch.
 #[utoipa::path(
     put,
-    path = "/api/tv/{id}/watchlist/source",
+    path = "/api/tv/{id}/watchlist/sources",
     params(("id" = u64, Path, description = "TMDB TV ID")),
-    request_body = SourceBody,
-    responses((status = OK, body = SourceBody), SourceErrors)
+    request_body = SourcesBody,
+    responses((status = OK, body = SourcesBody), SourceErrors)
 )]
-async fn api_tv_watchlist_source(
+async fn api_tv_watchlist_sources(
     state: State<Catalog>,
     id: Path<String>,
-    body: Result<Json<SourceBody>, JsonRejection>,
+    body: Result<Json<SourcesBody>, JsonRejection>,
 ) -> Response {
-    api_set_source(state, id, body, MediaKind::Tv).await
+    api_set_sources(state, id, body, MediaKind::Tv).await
 }
 
-/// Answers with the source as saved.
-async fn api_set_source(
+/// Answers with the tags as saved.
+async fn api_set_sources(
     State(catalog): State<Catalog>,
     Path(id): Path<String>,
-    body: Result<Json<SourceBody>, JsonRejection>,
+    body: Result<Json<SourcesBody>, JsonRejection>,
     kind: MediaKind,
 ) -> Response {
     let Ok(id) = id.parse::<u64>() else {
         return api_not_found();
     };
-    let source = match body {
-        Ok(Json(body)) => body.source.unwrap_or_default(),
+    let sources = match body {
+        Ok(Json(body)) => body.sources,
         Err(e) => return api_error(e.status(), &e.body_text()),
     };
-    match catalog.set_watchlist_source(kind, id, &source).await {
-        Ok(true) => Json(SourceBody {
-            source: catalog.watchlist_source(kind, id).await,
+    match catalog.set_watchlist_sources(kind, id, &sources).await {
+        Ok(true) => Json(SourcesBody {
+            sources: catalog.watchlist_sources_of(kind, id).await,
         })
         .into_response(),
         Ok(false) => api_error(StatusCode::NOT_FOUND, "the title isn't on the watchlist"),
         Err(e) => {
-            tracing::warn!(error = %e, ?kind, id, "api source save failed");
+            tracing::warn!(error = %e, ?kind, id, "api sources save failed");
             api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "the watchlist couldn't be updated, so nothing was saved",

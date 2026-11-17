@@ -2068,78 +2068,110 @@ async fn watching_a_title_takes_it_off_to_watch() {
 }
 
 #[tokio::test]
-async fn to_watch_titles_remember_who_recommended_them() {
+async fn to_watch_titles_are_tagged_with_who_recommended_them() {
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
     let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
     assert!(body.contains(r##"hx-select-oob="#watchlist-source""##));
     assert!(
         body.contains(r#"<div id="watchlist-source"></div>"#),
-        "no field until listed"
+        "no tags until listed"
     );
-    let (status, _) = post_form(t.app(), "/movie/603/watchlist/source", "source=Sam").await;
+    let (status, _) = post_form(t.app(), "/movie/603/watchlist/sources", "source=sam").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
     post_form(t.app(), "/tv/1396/watchlist", "listed=true").await;
     let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
-    assert!(body.contains(r#"action="/movie/603/watchlist/source""#));
-    assert!(body.contains(r#"placeholder="Who or what?" value="">"#));
-    assert!(!body.contains("<datalist"), "nothing to offer yet");
+    assert!(body.contains(r#"action="/movie/603/watchlist/sources""#));
+    assert!(body.contains(r#"<datalist id="watchlist-sources"></datalist>"#));
 
+    // Several at once, spaces or commas between, `#` optional.
     let (status, headers) = post_form(
         t.app(),
-        "/movie/603/watchlist/source",
-        "source=++Sam++from+work+&back=%2Fmovie%2F603",
+        "/movie/603/watchlist/sources",
+        "source=%23jazzy%2C+Sam++%23JAZZY&back=%2Fmovie%2F603",
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers[header::LOCATION], "/movie/603");
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(
+        r#"<a href="/watchlist?tag=jazzy" title="To watch titles tagged #jazzy">#jazzy</a>"#
+    ));
+    assert!(body.contains(">#Sam</a>"));
+    assert!(body.contains(r#"aria-label="Remove #Sam from The Matrix""#));
     let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
     assert!(body.contains(
-        r#"<datalist id="watchlist-sources"><option value="Sam from work"></option></datalist>"#
+        r##"<datalist id="watchlist-sources"><option value="#jazzy"></option><option value="#Sam"></option></datalist>"##
     ));
-    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
-    assert!(body.contains(r#"<span class="list-source">From Sam from work</span>"#));
 
-    // Over JSON: a different case reuses the earlier spelling.
+    // Managed from the To watch page too.
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert!(body.contains(r#"id="sources-movie-603""#) && body.contains(r#"id="sources-tv-1396""#));
+    assert!(body.contains(r#"action="/tv/1396/watchlist/sources""#));
+    assert!(body.contains(
+        r#"<form class="source-tag" method="post" action="/movie/603/watchlist/sources/remove""#
+    ));
+    let (status, headers) = post_form(
+        t.app(),
+        "/movie/603/watchlist/sources/remove",
+        "source=%23sam&back=%2Fwatchlist",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/watchlist");
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json["sources"], json!(["jazzy"]));
+
+    // Filtering the list by a tag, ignoring case and `#`, keeps it in links.
+    let (_, _, body) = get_page(t.app(), "/watchlist?tag=%23JAZZY&kind=movie", false).await;
+    assert!(
+        body.contains(r#"id="sources-movie-603""#) && !body.contains(r#"id="sources-tv-1396""#)
+    );
+    assert!(body.contains(
+        r#"<a href="/watchlist?kind=movie" aria-current="true" title="Show every tag">#JAZZY"#
+    ));
+    assert!(
+        body.contains(r#"<a href="/watchlist?tag=JAZZY">All <span class="count">1</span></a>"#)
+    );
+    let (_, _, body) = get_page(t.app(), "/watchlist?tag=nobody", false).await;
+    assert!(body.contains("None of the titles on your list are tagged #nobody."));
+    let (_, json) = get_json(t.app(), "/api/watchlist?tag=jazzy").await;
+    assert_eq!(json["titles"].as_array().unwrap().len(), 1);
+    assert_eq!(json["titles"][0]["id"], 603);
+    let (_, _, body) = get_page(t.app(), "/favorites", false).await;
+    assert!(!body.contains("source-tags"), "Favorites carry no sources");
+
+    // Over JSON the list replaces them; words join, earlier spellings win.
     let (status, json) = put_json(
         t.app(),
-        "/api/tv/1396/watchlist/source",
-        json!({ "source": "sam FROM work" }),
+        "/api/tv/1396/watchlist/sources",
+        json!({ "sources": ["#sam", "a podcast", "", "SAM"] }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json, json!({ "source": "Sam from work" }));
-    let (_, json) = put_json(
-        t.app(),
-        "/api/movie/603/watchlist/source",
-        json!({ "source": "A podcast" }),
-    )
-    .await;
-    assert_eq!(json["source"], "A podcast");
-    let (_, json) = get_json(t.app(), "/api/movie/603").await;
-    assert_eq!(json["source"], "A podcast");
+    assert_eq!(json, json!({ "sources": ["Sam", "a-podcast"] }));
     let (_, json) = get_json(t.app(), "/api/watchlist").await;
-    assert_eq!(json["titles"][0]["source"], "Sam from work");
-    assert_eq!(json["titles"][1]["source"], "A podcast");
+    assert_eq!(json["titles"][0]["sources"], json!(["Sam", "a-podcast"]));
+    assert_eq!(json["titles"][1]["sources"], json!(["jazzy"]));
 
-    // Sources outlive their titles; cleared ones are omitted.
+    // Tags outlive their titles; titles without any omit them.
     let (_, json) = put_json(
         t.app(),
-        "/api/tv/1396/watchlist/source",
-        json!({ "source": null }),
+        "/api/tv/1396/watchlist/sources",
+        json!({ "sources": [] }),
     )
     .await;
-    assert_eq!(json, json!({ "source": null }));
+    assert_eq!(json, json!({ "sources": [] }));
     post_form(t.app(), "/movie/603/watched", "watched=true").await;
     let (_, json) = get_json(t.app(), "/api/watchlist").await;
-    assert!(json["titles"][0].get("source").is_none());
+    assert!(json["titles"][0].get("sources").is_none());
     let (_, json) = get_json(t.app(), "/api/watchlist/sources").await;
-    assert_eq!(json, json!({ "sources": ["A podcast", "Sam from work"] }));
+    assert_eq!(json["sources"].as_array().unwrap().len(), 3);
     let (status, _) = put_json(
         t.app(),
-        "/api/movie/603/watchlist/source",
-        json!({ "source": "Sam" }),
+        "/api/movie/603/watchlist/sources",
+        json!({ "sources": ["sam"] }),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -5229,8 +5261,8 @@ async fn terminal_client_shows_who_recommended_to_watch_titles() {
     post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
     put_json(
         t.app(),
-        "/api/movie/603/watchlist/source",
-        json!({ "source": "Sam" }),
+        "/api/movie/603/watchlist/sources",
+        json!({ "sources": ["Sam", "jazzy"] }),
     )
     .await;
     let base = serve(t.app()).await;
@@ -5246,14 +5278,14 @@ async fn terminal_client_shows_who_recommended_to_watch_titles() {
     .await;
     let list = screen(&mut app);
     assert!(
-        list.contains("The Matrix") && list.contains("from Sam"),
+        list.contains("The Matrix") && list.contains("#Sam #jazzy"),
         "{list}"
     );
 
     let open = press(&mut app, KeyCode::Enter);
     fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
     let movie = screen(&mut app);
-    assert!(movie.contains("Recommended by Sam"), "{movie}");
+    assert!(movie.contains("Recommended by #Sam #jazzy"), "{movie}");
 }
 
 #[tokio::test]

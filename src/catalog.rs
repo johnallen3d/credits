@@ -775,37 +775,63 @@ impl Catalog {
             in_theaters: false,
             next_release: None,
             release_status: None,
-            source: None,
+            sources: Vec::new(),
         };
         Ok((entry, seasons))
     }
 
-    /// Sets who or what recommended a To watch title. Blank clears it;
-    /// whitespace is collapsed and long text cut to `SOURCE_MAX_CHARS`.
-    /// False, and nothing saved, when the title isn't on the list.
-    pub async fn set_watchlist_source(
+    /// Tags a To watch title with the sources in `input`, separated by
+    /// spaces or commas, a leading `#` optional. False, and nothing saved,
+    /// when the title isn't on the list.
+    pub async fn add_watchlist_sources(
         &self,
         kind: MediaKind,
         id: u64,
-        source: &str,
+        input: &str,
     ) -> Result<bool, sqlx::Error> {
-        let source = normalize_source(source);
         self.watchlist
-            .set_source(kind, id, source.as_deref(), Timestamp::now())
+            .add_sources(kind, id, &parse_sources(input), Timestamp::now())
             .await
     }
 
-    /// Who or what recommended a To watch title; `None` if unset or unreadable.
-    pub async fn watchlist_source(&self, kind: MediaKind, id: u64) -> Option<String> {
+    /// Replaces a To watch title's sources. Each one's words are joined with
+    /// hyphens, so a name stays one tag. False, and nothing saved, when the
+    /// title isn't on the list.
+    pub async fn set_watchlist_sources(
+        &self,
+        kind: MediaKind,
+        id: u64,
+        names: &[String],
+    ) -> Result<bool, sqlx::Error> {
+        let names = dedupe_sources(names.iter().filter_map(|n| normalize_source(n)));
         self.watchlist
-            .source(kind, id)
+            .set_sources(kind, id, &names, Timestamp::now())
             .await
-            .inspect_err(|e| tracing::warn!(error = %e, ?kind, id, "reading the source failed"))
-            .ok()
-            .flatten()
     }
 
-    /// Sources used before, most recent first; none if they can't be read.
+    /// Takes a source off a To watch title, a leading `#` optional.
+    pub async fn remove_watchlist_source(
+        &self,
+        kind: MediaKind,
+        id: u64,
+        name: &str,
+    ) -> Result<(), sqlx::Error> {
+        match normalize_source(name) {
+            Some(name) => self.watchlist.remove_source(kind, id, &name).await,
+            None => Ok(()),
+        }
+    }
+
+    /// A To watch title's sources in the order added; none if unreadable.
+    pub async fn watchlist_sources_of(&self, kind: MediaKind, id: u64) -> Vec<String> {
+        self.watchlist
+            .sources_of(kind, id)
+            .await
+            .inspect_err(|e| tracing::warn!(error = %e, ?kind, id, "reading the sources failed"))
+            .unwrap_or_default()
+    }
+
+    /// Sources used before, most recent first.
     pub async fn watchlist_sources(&self) -> Result<Vec<String>, sqlx::Error> {
         self.watchlist.sources().await
     }
@@ -1338,7 +1364,7 @@ impl Catalog {
                     in_theaters: false,
                     next_release: None,
                     release_status: None,
-                    source: None,
+                    sources: Vec::new(),
                 };
                 Some((
                     (department.clone(), kind, c.id),
@@ -2562,21 +2588,38 @@ fn known_for_titles(
     .collect()
 }
 
-/// The longest source kept, in characters.
-pub const SOURCE_MAX_CHARS: usize = 80;
+/// The longest source tag kept, in characters.
+pub const SOURCE_MAX_CHARS: usize = 40;
 
-/// A source as saved: inner whitespace collapsed, cut to
-/// `SOURCE_MAX_CHARS`; `None` when blank.
-fn normalize_source(source: &str) -> Option<String> {
-    let source: String = source
+/// A source tag as saved: without a leading `#`, its words joined by
+/// hyphens, cut to `SOURCE_MAX_CHARS`; `None` when blank.
+fn normalize_source(name: &str) -> Option<String> {
+    let name: String = name
+        .trim()
+        .trim_start_matches('#')
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ")
+        .join("-")
         .chars()
         .take(SOURCE_MAX_CHARS)
         .collect();
-    let source = source.trim_end();
-    (!source.is_empty()).then(|| source.to_owned())
+    let name = name.trim_end_matches('-');
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// The source tags typed in `input`, split at spaces and commas.
+fn parse_sources(input: &str) -> Vec<String> {
+    dedupe_sources(
+        input
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter_map(normalize_source),
+    )
+}
+
+/// The first of each name, ignoring case.
+fn dedupe_sources(names: impl Iterator<Item = String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    names.filter(|n| seen.insert(n.to_lowercase())).collect()
 }
 
 /// The services page's options: the user's services, then the popular ones,
@@ -2872,15 +2915,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sources_are_tidied_before_saving() {
+    fn sources_are_tidied_into_tags() {
         assert_eq!(
-            normalize_source("  Sam \n  from   work "),
-            Some("Sam from work".to_owned())
+            normalize_source("  #Sam \n  from   work "),
+            Some("Sam-from-work".to_owned())
         );
-        assert_eq!(normalize_source(" \t "), None);
-        let long = "a ".repeat(SOURCE_MAX_CHARS);
-        let cut = normalize_source(&long).unwrap();
-        assert!(cut.chars().count() <= SOURCE_MAX_CHARS && !cut.ends_with(' '));
+        assert_eq!(normalize_source(" # "), None);
+        assert_eq!(
+            parse_sources("#jazzy, sam  #Jazzy,,podcast #"),
+            ["jazzy", "sam", "podcast"]
+        );
+        let long = "a".repeat(SOURCE_MAX_CHARS + 5);
+        assert_eq!(
+            normalize_source(&long).unwrap().chars().count(),
+            SOURCE_MAX_CHARS
+        );
     }
 
     #[test]

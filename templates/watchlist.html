@@ -6,7 +6,7 @@
 <section class="watchlist" aria-labelledby="watchlist-heading">
   <h1 id="watchlist-heading">{{ self.label() }}</h1>
   {% if favorited.is_none() %}<p class="muted" role="status">Favorites couldn't be read. Please reload to try again.</p>{% endif %}
-  {% if w.titles.is_empty() %}
+  {% if w.titles.is_empty() && tag.is_none() %}
   {% if favorites %}
   <p class="hint">No favorites yet. Use the heart button on any movie or TV show, or beside a title in a person's filmography or your To watch list, and it will be listed here.</p>
   {% else %}
@@ -32,6 +32,12 @@
   <nav class="sort" aria-label="Filter by release">
     <span class="muted">Release</span>
     <span class="segments">{% for r in ReleaseFilter::ALL %}<a href="{{ self.release_href(r) }}"{% if r == release %} aria-current="true"{% endif %}>{{ r.label() }} <span class="count">{{ self.release_count(r) }}</span></a>{% endfor %}</span>
+  </nav>
+  {% endif %}
+  {% if let Some(tag) = tag %}
+  <nav class="sort" aria-label="Filter by tag">
+    <span class="muted">Tag</span>
+    <span class="segments"><a href="{{ self.untagged_href() }}" aria-current="true" title="Show every tag">#{{ tag }} <span aria-hidden="true">&times;</span><span class="visually-hidden">(show every tag)</span></a></span>
   </nav>
   {% endif %}
   </div>
@@ -65,7 +71,7 @@
       {%- else if !a.services.is_empty() %} <span class="service-badges{% if a.is_stale() %} stale{% endif %}"{% if a.is_stale() %}{% if let Some(day) = a.fetched_on() %} title="Listed on {{ day }}"{% endif %}{% endif %}><span class="visually-hidden">On your services:</span>{% for svc in a.services %}{% if let Some(logo) = svc.logo_url %}<img class="service-badge" src="{{ logo }}" alt="{{ svc.name }}" title="{{ svc.name }}" width="22" height="22" loading="lazy">{% else %}<span class="service-badge text">{{ svc.name }}</span>{% endif %}{% endfor %}</span>
       {%- endif %}
       {%- endif %}
-      {%- if let Some(source) = e.source %} <span class="list-source">From {{ source }}</span>{% endif %}</span>
+      {%- if !favorites %}{% call watchlist::sources(e.kind.slug(), e.id, e.title, e.sources.as_slice(), back, false) %}{% endcall %}{% endif %}</span>
       <div class="title-actions">
       {% call watchlist::toggle(e.kind.slug(), e.id, e.title, self.is_listed(e), crate::web::watchlist_toggle_id(e), back, "", favorites) %}{% endcall %}
       {% call favorite::toggle(e.kind.slug(), e.id, e.title, self.is_favorite(e), crate::web::favorite_toggle_id(e), back, "", !favorites) %}{% endcall %}
@@ -75,6 +81,7 @@
     <li class="empty-row"><span class="muted">{{ self.empty_message() }}</span></li>
     {% endfor %}
   </ul>
+  {% if !favorites %}{% call watchlist::suggestions(known_sources) %}{% endcall %}{% endif %}
   {% endif %}
 </section>
 {% endblock %}

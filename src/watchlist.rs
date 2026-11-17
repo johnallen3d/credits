@@ -1,21 +1,15 @@
 //! Persistent title lists (To watch and Favorites), beside the provider cache.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use jiff::Timestamp;
-use sqlx::sqlite::SqlitePool;
+use sqlx::Transaction;
+use sqlx::sqlite::{Sqlite, SqlitePool};
 
 use crate::model::{FilmographyEntry, MediaKind};
 
-/// kind, id, title, year, poster_url, source
-type Row = (
-    String,
-    i64,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-);
+/// kind, id, title, year, poster_url
+type Row = (String, i64, String, Option<String>, Option<String>);
 
 #[derive(Clone)]
 pub struct Watchlist {
@@ -82,35 +76,45 @@ impl Watchlist {
         tx.commit().await
     }
 
+    /// Takes a title off the list, with its sources.
     pub async fn remove(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
         sqlx::query(&format!(
             "DELETE FROM {} WHERE kind = ? AND id = ?",
             self.table
         ))
         .bind(kind.slug())
         .bind(id as i64)
-        .execute(&self.pool)
-        .await
-        .map(drop)
+        .execute(&mut *tx)
+        .await?;
+        if self.has_sources() {
+            Self::clear_sources(&mut tx, kind, id).await?;
+        }
+        tx.commit().await
     }
 
-    /// Most recently added first.
+    /// Most recently added first; To watch titles carry their sources.
     pub async fn list(&self) -> Result<Vec<FilmographyEntry>, sqlx::Error> {
-        // Only To watch records sources.
-        let source = if self.has_sources() { "source" } else { "NULL" };
         let rows: Vec<Row> = sqlx::query_as(&format!(
-            "SELECT kind, id, title, year, poster_url, {source} FROM {}
+            "SELECT kind, id, title, year, poster_url FROM {}
              ORDER BY added_at DESC, rowid DESC",
             self.table,
         ))
         .fetch_all(&self.pool)
         .await?;
+        let mut sources = if self.has_sources() {
+            self.title_sources().await?
+        } else {
+            HashMap::new()
+        };
         Ok(rows
             .into_iter()
-            .filter_map(|(kind, id, title, year, poster_url, source)| {
+            .filter_map(|(kind, id, title, year, poster_url)| {
+                let kind = MediaKind::from_slug(&kind)?;
+                let id = u64::try_from(id).ok()?;
                 Some(FilmographyEntry {
-                    kind: MediaKind::from_slug(&kind)?,
-                    id: u64::try_from(id).ok()?,
+                    kind,
+                    id,
                     title,
                     year,
                     role: None,
@@ -122,7 +126,7 @@ impl Watchlist {
                     in_theaters: false,
                     next_release: None,
                     release_status: None,
-                    source,
+                    sources: sources.remove(&(kind, id)).unwrap_or_default(),
                 })
             })
             .collect())
@@ -132,63 +136,146 @@ impl Watchlist {
         self.table == "watchlist"
     }
 
-    /// Sets who or what recommended a saved title, or clears it with `None`.
-    /// A source matching an earlier one but for case takes the earlier
-    /// spelling. False, and nothing saved, when the title isn't on the list.
-    pub async fn set_source(
+    /// Every saved title's sources, each in the order added.
+    async fn title_sources(&self) -> Result<HashMap<(MediaKind, u64), Vec<String>>, sqlx::Error> {
+        let rows: Vec<(String, i64, String)> =
+            sqlx::query_as("SELECT kind, id, name FROM watchlist_title_sources ORDER BY rowid")
+                .fetch_all(&self.pool)
+                .await?;
+        let mut sources: HashMap<_, Vec<String>> = HashMap::new();
+        for (kind, id, name) in rows {
+            if let (Some(kind), Ok(id)) = (MediaKind::from_slug(&kind), u64::try_from(id)) {
+                sources.entry((kind, id)).or_default().push(name);
+            }
+        }
+        Ok(sources)
+    }
+
+    /// Tags a saved title with each of `names` it doesn't already have. A
+    /// name matching an earlier one but for case takes the earlier spelling.
+    /// False, and nothing saved, when the title isn't on the list.
+    pub async fn add_sources(
         &self,
         kind: MediaKind,
         id: u64,
-        source: Option<&str>,
+        names: &[String],
         at: Timestamp,
     ) -> Result<bool, sqlx::Error> {
         debug_assert!(self.has_sources());
         let mut tx = self.pool.begin().await?;
-        let source = match source {
-            Some(name) => {
-                let known: Option<(String,)> =
-                    sqlx::query_as("SELECT name FROM watchlist_sources WHERE name = ?")
-                        .bind(name)
-                        .fetch_optional(&mut *tx)
-                        .await?;
-                Some(known.map_or_else(|| name.to_owned(), |(known,)| known))
-            }
-            None => None,
-        };
-        let updated = sqlx::query("UPDATE watchlist SET source = ? WHERE kind = ? AND id = ?")
-            .bind(&source)
-            .bind(kind.slug())
-            .bind(id as i64)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        if updated == 0 {
+        if !Self::is_saved(&mut tx, kind, id).await? {
             return Ok(false);
         }
-        if let Some(name) = &source {
+        Self::insert_sources(&mut tx, kind, id, names, at).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Replaces a saved title's sources with `names`, in that order. False,
+    /// and nothing saved, when the title isn't on the list.
+    pub async fn set_sources(
+        &self,
+        kind: MediaKind,
+        id: u64,
+        names: &[String],
+        at: Timestamp,
+    ) -> Result<bool, sqlx::Error> {
+        debug_assert!(self.has_sources());
+        let mut tx = self.pool.begin().await?;
+        if !Self::is_saved(&mut tx, kind, id).await? {
+            return Ok(false);
+        }
+        Self::clear_sources(&mut tx, kind, id).await?;
+        Self::insert_sources(&mut tx, kind, id, names, at).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Takes a source off a saved title, matching case-insensitively. It's
+    /// still offered for other titles.
+    pub async fn remove_source(
+        &self,
+        kind: MediaKind,
+        id: u64,
+        name: &str,
+    ) -> Result<(), sqlx::Error> {
+        debug_assert!(self.has_sources());
+        sqlx::query("DELETE FROM watchlist_title_sources WHERE kind = ? AND id = ? AND name = ?")
+            .bind(kind.slug())
+            .bind(id as i64)
+            .bind(name)
+            .execute(&self.pool)
+            .await
+            .map(drop)
+    }
+
+    async fn is_saved(
+        tx: &mut Transaction<'_, Sqlite>,
+        kind: MediaKind,
+        id: u64,
+    ) -> Result<bool, sqlx::Error> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM watchlist WHERE kind = ? AND id = ?")
+                .bind(kind.slug())
+                .bind(id as i64)
+                .fetch_optional(&mut **tx)
+                .await?;
+        Ok(row.is_some())
+    }
+
+    async fn clear_sources(
+        tx: &mut Transaction<'_, Sqlite>,
+        kind: MediaKind,
+        id: u64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM watchlist_title_sources WHERE kind = ? AND id = ?")
+            .bind(kind.slug())
+            .bind(id as i64)
+            .execute(&mut **tx)
+            .await
+            .map(drop)
+    }
+
+    async fn insert_sources(
+        tx: &mut Transaction<'_, Sqlite>,
+        kind: MediaKind,
+        id: u64,
+        names: &[String],
+        at: Timestamp,
+    ) -> Result<(), sqlx::Error> {
+        for name in names {
             sqlx::query(
                 "INSERT INTO watchlist_sources (name, used_at) VALUES (?, ?)
                  ON CONFLICT (name) DO UPDATE SET used_at = excluded.used_at",
             )
             .bind(name)
             .bind(at.as_second())
-            .execute(&mut *tx)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO watchlist_title_sources (kind, id, name)
+                 SELECT ?, ?, name FROM watchlist_sources WHERE name = ?",
+            )
+            .bind(kind.slug())
+            .bind(id as i64)
+            .bind(name)
+            .execute(&mut **tx)
             .await?;
         }
-        tx.commit().await?;
-        Ok(true)
+        Ok(())
     }
 
-    /// Who or what recommended a saved title; `None` when unset or not saved.
-    pub async fn source(&self, kind: MediaKind, id: u64) -> Result<Option<String>, sqlx::Error> {
+    /// A saved title's sources in the order added; none when it isn't saved.
+    pub async fn sources_of(&self, kind: MediaKind, id: u64) -> Result<Vec<String>, sqlx::Error> {
         debug_assert!(self.has_sources());
-        let row: Option<(Option<String>,)> =
-            sqlx::query_as("SELECT source FROM watchlist WHERE kind = ? AND id = ?")
-                .bind(kind.slug())
-                .bind(id as i64)
-                .fetch_optional(&self.pool)
-                .await?;
-        Ok(row.and_then(|(source,)| source))
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM watchlist_title_sources WHERE kind = ? AND id = ? ORDER BY rowid",
+        )
+        .bind(kind.slug())
+        .bind(id as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(name,)| name).collect())
     }
 
     /// Every source used so far, including for titles no longer on the
@@ -235,7 +322,7 @@ mod tests {
             in_theaters: false,
             next_release: None,
             release_status: None,
-            source: None,
+            sources: Vec::new(),
         }
     }
 
@@ -251,11 +338,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sources_are_kept_and_offered_after_their_titles_leave() {
+    async fn sources_are_tags_kept_and_offered_after_their_titles_leave() {
         let pool = ProviderCache::open(IN_MEMORY).await.unwrap().pool();
         let list = Watchlist::new(pool);
         let at = Timestamp::from_second(1_700_000_000).unwrap();
         let later = Timestamp::from_second(1_700_000_100).unwrap();
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         list.add(&title(MediaKind::Movie, 1, "One"), at)
             .await
             .unwrap();
@@ -265,58 +353,81 @@ mod tests {
 
         assert!(
             !list
-                .set_source(MediaKind::Movie, 9, Some("Sam"), at)
+                .add_sources(MediaKind::Movie, 9, &names(&["sam"]), at)
                 .await
                 .unwrap()
         );
         assert!(list.sources().await.unwrap().is_empty());
 
         assert!(
-            list.set_source(MediaKind::Movie, 1, Some("Sam"), at)
+            list.add_sources(MediaKind::Movie, 1, &names(&["Sam", "jazzy"]), at)
                 .await
                 .unwrap()
         );
         assert!(
-            list.set_source(MediaKind::Tv, 2, Some("A podcast"), later)
+            list.add_sources(MediaKind::Tv, 2, &names(&["podcast"]), later)
                 .await
                 .unwrap()
         );
-        assert_eq!(list.sources().await.unwrap(), ["A podcast", "Sam"]);
+        assert_eq!(list.sources().await.unwrap(), ["podcast", "jazzy", "Sam"]);
 
-        // Re-adding keeps the source; a different case reuses the first spelling.
-        list.add(&title(MediaKind::Movie, 1, "One"), later)
-            .await
-            .unwrap();
-        assert_eq!(
-            list.source(MediaKind::Movie, 1).await.unwrap().as_deref(),
-            Some("Sam")
-        );
+        // Adding again or in another case keeps one tag, in the first spelling.
         let latest = Timestamp::from_second(1_700_000_200).unwrap();
         assert!(
-            list.set_source(MediaKind::Tv, 2, Some("sam"), latest)
+            list.add_sources(MediaKind::Movie, 1, &names(&["JAZZY"]), latest)
+                .await
+                .unwrap()
+        );
+        assert!(
+            list.add_sources(MediaKind::Tv, 2, &names(&["sam"]), latest)
                 .await
                 .unwrap()
         );
         assert_eq!(
-            list.source(MediaKind::Tv, 2).await.unwrap().as_deref(),
-            Some("Sam")
+            list.sources_of(MediaKind::Movie, 1).await.unwrap(),
+            ["Sam", "jazzy"]
         );
-        assert_eq!(list.sources().await.unwrap(), ["Sam", "A podcast"]);
         let sources: Vec<_> = list
             .list()
             .await
             .unwrap()
             .into_iter()
-            .map(|e| e.source)
+            .map(|e| e.sources)
             .collect();
-        assert_eq!(sources, [Some("Sam".to_owned()), Some("Sam".to_owned())]);
+        assert_eq!(
+            sources,
+            [names(&["podcast", "Sam"]), names(&["Sam", "jazzy"])]
+        );
 
-        list.set_source(MediaKind::Movie, 1, None, latest)
+        // Re-adding the title keeps its tags.
+        list.add(&title(MediaKind::Movie, 1, "One"), latest)
             .await
             .unwrap();
-        assert_eq!(list.source(MediaKind::Movie, 1).await.unwrap(), None);
+        list.remove_source(MediaKind::Movie, 1, "SAM")
+            .await
+            .unwrap();
+        assert_eq!(
+            list.sources_of(MediaKind::Movie, 1).await.unwrap(),
+            ["jazzy"]
+        );
+
+        assert!(
+            list.set_sources(MediaKind::Movie, 1, &names(&["work", "Podcast"]), latest)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            list.sources_of(MediaKind::Movie, 1).await.unwrap(),
+            ["work", "podcast"]
+        );
+
+        // Leaving the list drops a title's tags but not the names.
         list.remove(MediaKind::Tv, 2).await.unwrap();
-        assert_eq!(list.sources().await.unwrap(), ["Sam", "A podcast"]);
+        list.add(&title(MediaKind::Tv, 2, "Show"), latest)
+            .await
+            .unwrap();
+        assert!(list.sources_of(MediaKind::Tv, 2).await.unwrap().is_empty());
+        assert_eq!(list.sources().await.unwrap().len(), 4);
     }
 
     async fn assert_list_order_and_identity(list: Watchlist) {
