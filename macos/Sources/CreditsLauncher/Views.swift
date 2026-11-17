@@ -49,7 +49,9 @@ struct LauncherView: View {
                        lists: model.listTarget?.isTitle ?? false,
                        tags: model.detailTags != nil,
                        editingTags: model.editingTags,
-                       image: model.viewing == nil ? model.pageImage != nil : nil)
+                       image: model.viewing == nil ? model.pageImage != nil : nil,
+                       watched: model.watchedTarget != nil,
+                       peek: model.canPeek ? model.peeking : nil)
         }
         .overlay {
             if let image = model.viewing {
@@ -303,6 +305,7 @@ struct DetailContainer: View {
                                             model: model)
                         case .person(let p): PersonDetailView(person: p, credits: credits, model: model)
                         case .season(let s): SeasonDetailView(season: s, credits: credits, model: model)
+                        case .episode(let e): EpisodeDetailView(episode: e, credits: credits, model: model)
                         case .credits(let c): CreditsDetailView(titleCredits: c, credits: credits)
                         }
                     }
@@ -427,7 +430,7 @@ struct TitleDetailView: View {
             let crewCount = title.keyCrew.reduce(0) { $0 + $1.people.count }
             let seasons = title.seasonList ?? []
             ForEach(crew, id: \.first) { crew in
-                Section(heading: crewHeading(crew.role.role)) {
+                Section(heading: keyCrewHeading(crew.role.role)) {
                     FlowLayout {
                         ForEach(Array(crew.role.people.enumerated()), id: \.offset) { i, person in
                             HStack(spacing: 0) {
@@ -500,13 +503,15 @@ struct TitleDetailView: View {
             .compactMap { $0 }.joined(separator: " ")
     }
 
-    private func crewHeading(_ role: String) -> String {
-        switch role {
-        case "creator": return "Created by"
-        case "director": return "Directed by"
-        case "writer": return "Written by"
-        default: return role.capitalized
-        }
+}
+
+/// A key crew role as the web heads it.
+func keyCrewHeading(_ role: String) -> String {
+    switch role {
+    case "creator": return "Created by"
+    case "director": return "Directed by"
+    case "writer": return "Written by"
+    default: return role.capitalized
     }
 }
 
@@ -540,12 +545,12 @@ struct CreditsDetailView: View {
                 if c.cast.isEmpty {
                     Text("TMDB has no cast listed for this title.").foregroundStyle(Theme.muted)
                 } else {
-                    people(c.cast, first: 0, prefix: "as ")
+                    PeopleList(people: c.cast, first: 0, prefix: "as ", credits: credits)
                 }
             }
             ForEach(departments, id: \.first) { d in
                 Section(heading: "\(d.dept.name) (\(d.dept.people.count))") {
-                    people(d.dept.people, first: d.first, prefix: "")
+                    PeopleList(people: d.dept.people, first: d.first, prefix: "", credits: credits)
                 }
             }
             if c.crew.isEmpty {
@@ -556,9 +561,19 @@ struct CreditsDetailView: View {
         }
     }
 
-    private func people(_ list: [Credit], first: Int, prefix: String) -> some View {
+}
+
+/// People credited on a page, one per row from row `first`: each name, then
+/// its role after `prefix` and its episode count.
+struct PeopleList: View {
+    let people: [Credit]
+    let first: Int
+    let prefix: String
+    let credits: Credits
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            ForEach(Array(list.enumerated()), id: \.offset) { i, p in
+            ForEach(Array(people.enumerated()), id: \.offset) { i, p in
                 credits.row(first + i) {
                     HStack(spacing: 4) {
                         Text(p.name)
@@ -873,6 +888,169 @@ struct SeasonDetailView: View {
     }
 }
 
+/// An episode, as the web's episode page: its still, facts, score and summary,
+/// the episodes either side, key crew, guest stars and series cast. Until it's
+/// watched its still, score and summary stay hidden; ⌘P peeks at them.
+struct EpisodeDetailView: View {
+    let episode: EpisodeDetail
+    let credits: Credits
+    let model: LauncherModel
+
+    /// Rows before the crew: the previous and next episodes.
+    private var pager: [Int] { [episode.previous, episode.next].compactMap { $0 } }
+
+    private var shown: Bool { episode.seen || model.peeking }
+
+    /// Each key crew role with the row number of its first person.
+    private var crew: [(role: KeyCrew, first: Int)] {
+        var next = pager.count
+        return episode.keyCrew.map { role in
+            defer { next += role.people.count }
+            return (role, next)
+        }
+    }
+
+    private var facts: String {
+        [episode.airDate.map { "Aired \(shortDate($0))" } ?? "Air date not announced",
+         episode.runtimeMinutes.map { "\($0) min" }]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    var body: some View {
+        let e = episode
+        let crewCount = e.keyCrew.reduce(0) { $0 + $1.people.count }
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 16) {
+                still
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("TV EPISODE").font(.caption2.bold()).kerning(0.5).foregroundStyle(Theme.tv)
+                    Text(e.title).font(.title.bold())
+                    Text("\(e.showTitle) · \(e.seasonName) · Episode \(e.number)").foregroundStyle(Theme.muted)
+                    Text(facts).foregroundStyle(Theme.muted)
+                    HStack(spacing: 8) {
+                        WatchedChip(on: e.seen, changing: model.watchedTarget.map(model.changing.contains) ?? false)
+                        if e.watched?.fromAppleTV(e.seasonNumber, e.number) ?? false {
+                            Text("Watched on Apple TV").font(.callout).foregroundStyle(Theme.muted)
+                        }
+                    }
+                    rating
+                    overview
+                    if !pager.isEmpty {
+                        HStack(spacing: 16) {
+                            ForEach(Array(pager.enumerated()), id: \.offset) { i, n in
+                                credits.row(i) {
+                                    Text(n < e.number ? "← Episode \(n)" : "Episode \(n) →").foregroundStyle(Theme.accent)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            StaleNotice(metadata: e.metadata)
+            if !e.seen {
+                note(e.watched?.state == "unreadable"
+                     ? "Watched marks couldn't be read, so the still, score and summary are hidden. ⌘P to peek."
+                     : model.peeking ? "Peeking at spoilers. ⌘P to hide them again."
+                     : "The still, score and summary are hidden until you've watched it. ⌘P to peek.")
+            }
+            ForEach(crew, id: \.first) { crew in
+                Section(heading: keyCrewHeading(crew.role.role)) {
+                    FlowLayout {
+                        ForEach(Array(crew.role.people.enumerated()), id: \.offset) { i, person in
+                            HStack(spacing: 0) {
+                                credits.row(crew.first + i) { Text(person.name) }
+                                if i < crew.role.people.count - 1 {
+                                    Text("·").foregroundStyle(Theme.muted).padding(.horizontal, 8)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let guestsFirst = pager.count + crewCount
+            Section(heading: "Guest stars") {
+                if e.guestStars.isEmpty {
+                    Text("TMDB lists no guest stars for this episode.").foregroundStyle(Theme.muted)
+                } else {
+                    PeopleList(people: e.guestStars, first: guestsFirst, prefix: "as ", credits: credits)
+                }
+            }
+            Section(heading: "Series cast") {
+                if e.cast.isEmpty {
+                    Text("TMDB lists no series regulars for this episode.").foregroundStyle(Theme.muted)
+                } else {
+                    PeopleList(people: e.cast, first: guestsFirst + e.guestStars.count, prefix: "as ", credits: credits)
+                }
+            }
+        }
+    }
+
+    /// The still, blurred until the spoilers show; a click then opens it full
+    /// size, and before that peeks.
+    @ViewBuilder private var still: some View {
+        if shown {
+            Still(url: episode.stillUrl, width: 240)
+                .fullSize(model, episode.stillUrl, "\(episode.title) still")
+        } else {
+            Still(url: episode.stillUrl, width: 240, blurred: true)
+                .onTapGesture { model.peeking = true }
+                .help("Spoiler: click or ⌘P to peek")
+        }
+    }
+
+    @ViewBuilder private var rating: some View {
+        if let r = episode.rating {
+            Text(shown ? r.label : "IMDb hidden")
+                .font(.callout.bold())
+                .foregroundStyle(shown ? Theme.fg : Theme.muted)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Theme.line, in: Capsule())
+        } else if episode.episodeRatings.state != "unavailable" {
+            Text("No IMDb score").font(.callout).foregroundStyle(Theme.muted)
+        }
+        if let note = episode.episodeRatings.note { self.note(note) }
+    }
+
+    @ViewBuilder private var overview: some View {
+        if let overview = episode.overview, !overview.isEmpty {
+            if shown {
+                Text(overview).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Label("Summary hidden: ⌘P to peek", systemImage: "eye.slash")
+                    .font(.callout).foregroundStyle(Theme.subtle)
+                    .onTapGesture { model.peeking = true }
+            }
+        } else {
+            Text("No summary available.").font(.callout).foregroundStyle(Theme.subtle)
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.callout).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Watched on or off for the page's season or episode, with its shortcut.
+struct WatchedChip: View {
+    let on: Bool
+    let changing: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: on ? "eye.fill" : "eye")
+                Text("Watched")
+                Text("⌘W").foregroundStyle(Theme.subtle)
+            }
+            .font(.callout)
+            .foregroundStyle(on ? Theme.accent : Theme.muted)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .overlay(Capsule().stroke(on ? Theme.accent : Theme.line))
+            if changing { ProgressView().controlSize(.small) }
+        }
+    }
+}
+
 /// A title's backdrop as a banner across the top of its page, as on the web;
 /// nothing when it has none or it can't be loaded.
 struct Backdrop: View {
@@ -897,20 +1075,23 @@ struct Backdrop: View {
     }
 }
 
-/// An episode's still, 16:9.
+/// An episode's still, 16:9; blurred past recognising for a spoiler.
 struct Still: View {
     let url: String?
+    var width: CGFloat = 112
+    var blurred = false
 
     var body: some View {
         AsyncImage(url: url.flatMap(URL.init(string:))) { image in
             image.resizable().aspectRatio(contentMode: .fill)
+                .blur(radius: blurred ? width / 8 : 0, opaque: true)
         } placeholder: {
             Image(systemName: "tv").foregroundStyle(Theme.subtle)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.line)
         }
-        .frame(width: 112, height: 63)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .frame(width: width, height: width * 9 / 16)
+        .clipShape(RoundedRectangle(cornerRadius: width > 150 ? 8 : 4))
     }
 }
 
@@ -1288,6 +1469,10 @@ struct FooterView: View {
     var editingTags = false
     /// Whether the page has an image ⌘Y opens; nil while one is open.
     var image: Bool? = false
+    /// Whether ⌘W marks an episode watched here.
+    var watched = false
+    /// On an unwatched episode: whether ⌘P is peeking; nil elsewhere.
+    var peek: Bool? = nil
 
     var body: some View {
         HStack(spacing: 16) {
@@ -1312,10 +1497,9 @@ struct FooterView: View {
             hint("esc", "Done")
         } else if inDetail {
             if tags { hint("⌘R", "Tag") }
-            if selectedRow?.kind == .episode {
-                hint("⌘W", "Watched")
-                hint("⏎", "Open in browser")
-            } else if selectedRow != nil {
+            if let peek { hint("⌘P", peek ? "Hide spoilers" : "Peek") }
+            if watched { hint("⌘W", "Watched") }
+            if selectedRow != nil {
                 if selectedRow!.isTitle { hint("⌘T ⌘F", "To watch, Favorites") }
                 hint("⏎", "Open")
                 hint("⌘⏎", "Open in browser")

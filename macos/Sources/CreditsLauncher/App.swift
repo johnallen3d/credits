@@ -205,6 +205,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if let image = model.pageImage { model.view(image.url, image.label) }
             return true
         }
+        if commandOnly, Int(event.keyCode) == kVK_ANSI_P, model.canPeek {
+            model.peeking.toggle()
+            return true
+        }
         if commandOnly, Int(event.keyCode) == kVK_ANSI_R, model.detailTags != nil {
             model.focusTags += 1
             return true

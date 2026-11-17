@@ -4,8 +4,8 @@ import Foundation
 
 enum Kind: String, Decodable {
     case movie, tv, person
-    /// Pages inside a show, which the API never sends as a kind: a season, and
-    /// an episode (opened on the web only).
+    /// Pages inside a show, which the API never sends as a kind: a season and
+    /// an episode.
     case season, episode
     /// A movie's or show's full cast and crew; `SearchHit.of` says which.
     case credits
@@ -141,8 +141,9 @@ struct TitleDetail: Decodable {
     var sources: [String]?
     /// TV only: regular seasons first, specials (season 0) last.
     let seasonList: [SeasonSummary]?
-    /// TV only.
-    let watched: WatchedMarks?
+    /// TV only. Replaced by the server's reply when something in the show is
+    /// marked here.
+    var watched: WatchedMarks?
 }
 
 extension TitleDetail {
@@ -225,7 +226,7 @@ struct SeasonDetail: Decodable {
     let previous: SeasonSummary?
     let next: SeasonSummary?
     let metadata: Metadata
-    /// Replaced by the server's reply when an episode is marked here.
+    /// Replaced by the server's reply when something in the show is marked here.
     var watched: WatchedMarks?
 }
 
@@ -237,6 +238,34 @@ struct Episode: Decodable, Hashable {
     let runtimeMinutes: Int?
     let stillUrl: String?
     let rating: Rating?
+}
+
+/// An episode's page: its facts, crew, guest stars and series cast, and the
+/// episodes either side (numbers in the same season).
+struct EpisodeDetail: Decodable {
+    let showId: Int
+    let showTitle: String
+    let seasonNumber: Int
+    let seasonName: String
+    let number: Int
+    let title: String
+    let airDate: String?
+    let overview: String?
+    let runtimeMinutes: Int?
+    let stillUrl: String?
+    let rating: Rating?
+    let episodeRatings: EpisodeRatings
+    let keyCrew: [KeyCrew]
+    /// Series regulars credited on it.
+    let cast: [Credit]
+    let guestStars: [Credit]
+    let previous: Int?
+    let next: Int?
+    let metadata: Metadata
+    /// Replaced by the server's reply when something in the show is marked here.
+    var watched: WatchedMarks?
+
+    var seen: Bool { watched?.episode(seasonNumber, number) ?? false }
 }
 
 struct EpisodeRatings: Decodable {
@@ -476,6 +505,7 @@ enum Detail {
     case title(TitleDetail)
     case person(PersonDetail)
     case season(SeasonDetail)
+    case episode(EpisodeDetail)
     case credits(TitleCredits)
 
     /// How many cast members a title's page lists.
@@ -484,8 +514,9 @@ enum Detail {
     /// The rows a page lists, in order: a title's key crew, seasons, cast and
     /// its cast and crew page; a cast and crew page's cast, then crew by department;
     /// a person's known-for titles, then their credits of `kind` (nil for all) by
-    /// department; or a season's neighbours and episodes. Each opens a page of
-    /// its own, except episodes, which open on the web.
+    /// department; a season's neighbours and episodes; or an episode's
+    /// neighbours, key crew, guest stars and series cast. Each opens a page of
+    /// its own.
     func rows(kind: Kind? = nil) -> [SearchHit] {
         switch self {
         case .title(let t):
@@ -505,6 +536,11 @@ enum Detail {
                 + s.episodes.map {
                     SearchHit(kind: .episode, id: s.showId, title: $0.title, season: s.number, episode: $0.number)
                 }
+        case .episode(let e):
+            let person = { (c: Credit) in SearchHit(kind: .person, id: c.personId, name: c.name) }
+            return [e.previous, e.next].compactMap { $0 }
+                .map { SearchHit(kind: .episode, id: e.showId, season: e.seasonNumber, episode: $0) }
+                + e.keyCrew.flatMap(\.people).map(person) + e.guestStars.map(person) + e.cast.map(person)
         }
     }
 }
@@ -642,7 +678,7 @@ struct CreditsAPI {
         case .movie, .tv: return .title(try await get(url))
         case .season: return .season(try await get(url))
         case .credits: return .credits(try await get(url))
-        case .episode: throw APIError(message: "Episodes open on the web")
+        case .episode: return .episode(try await get(url))
         }
     }
 

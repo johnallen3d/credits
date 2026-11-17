@@ -61,6 +61,8 @@ final class LauncherModel {
     var personSortError: String?
     /// On a person's page: the lists whose marks couldn't be read for its credits.
     var personListsUnread: [ListAction] = []
+    /// On an episode's page: whether its spoilers show though it isn't watched.
+    var peeking = false
     /// The pages behind the one in detail, oldest first.
     var back: [Page] = []
     /// Bumped on every page change, so the view starts each page at its top.
@@ -68,7 +70,7 @@ final class LauncherModel {
 
     struct Page {
         let hit: SearchHit
-        let detail: Detail?
+        var detail: Detail?
         let error: String?
         let row: Int?
         var kind: Kind? = nil
@@ -320,13 +322,8 @@ final class LauncherModel {
     }
 
     /// Opens a row on the page in detail, keeping that page to go back to.
-    /// Episodes have no page here, so they open on the web.
     func openRow(_ index: Int) {
         guard let hit = detailHit, let row = detailRows[safe: index] else { return }
-        if row.kind == .episode {
-            openInBrowser(row)
-            return
-        }
         back.append(Page(hit: hit, detail: detail, error: detailError, row: index, kind: personKind,
                          listsUnread: personListsUnread))
         load(row)
@@ -346,6 +343,7 @@ final class LauncherModel {
         detailTask?.cancel()
         resetPerson()
         viewing = nil
+        peeking = false
         detailHit = page.hit
         detail = page.detail
         detailError = page.error
@@ -372,13 +370,14 @@ final class LauncherModel {
                 let text = [p.knownFor, titles.isEmpty ? nil : "known for " + titles]
                     .compactMap { $0 }.joined(separator: " · ")
                 if !text.isEmpty { summaries[hit] = text.prefix(1).uppercased() + text.dropFirst() }
-            case .season, .credits: break
+            case .season, .episode, .credits: break
             }
         }
     }
 
     private func load(_ hit: SearchHit) {
         viewing = nil
+        peeking = false
         detailTask?.cancel()
         resetPerson()
         tagDraft = ""
@@ -461,6 +460,7 @@ final class LauncherModel {
 
     func backToResults() {
         detailTask?.cancel()
+        peeking = false
         resetPerson()
         detailHit = nil
         detail = nil
@@ -488,21 +488,46 @@ final class LauncherModel {
         return detailHit ?? selection
     }
 
-    /// The episode selected on the season in detail, which ⌘W marks watched.
-    var selectedEpisode: SearchHit? {
-        guard let row = detailRow.flatMap({ detailRows[safe: $0] }), row.kind == .episode else { return nil }
-        return row
+    /// The episode ⌘W marks watched: the one selected on a season's or an
+    /// episode's page, else the episode in detail.
+    var watchedTarget: SearchHit? {
+        let row = detailRow.flatMap { detailRows[safe: $0] }
+        switch detail {
+        case .season:
+            return row?.kind == .episode ? row : nil
+        case .episode(let e):
+            if let row, row.kind == .episode { return row }
+            return SearchHit(kind: .episode, id: e.showId, title: e.title, season: e.seasonNumber, episode: e.number)
+        default:
+            return nil
+        }
+    }
+
+    /// The show's watched marks on the page in detail.
+    private var pageWatched: WatchedMarks? {
+        switch detail {
+        case .title(let t): return t.watched
+        case .season(let s): return s.watched
+        case .episode(let e): return e.watched
+        default: return nil
+        }
+    }
+
+    /// An episode as a flash names it: "3. Title", or "Episode 3" from a pager.
+    private func label(_ hit: SearchHit) -> String {
+        let n = hit.episode ?? 0
+        return hit.title.map { "\(n). \($0)" } ?? "Episode \(n)"
     }
 
     /// Flips a list for `hit`, a credit's button, or else the list shortcut's target.
     func toggle(_ list: ListAction, hit row: SearchHit? = nil) {
-        if row == nil, list == .watched, let episode = selectedEpisode {
-            toggleWatched(episode)
+        if row == nil, list == .watched, let target = watchedTarget {
+            toggleWatched(target)
             return
         }
         guard let hit = row ?? listTarget else { return }
         guard hit.isTitle else {
-            show(hit.kind == .season ? "Go back to the show to change its lists"
+            show(hit.kind == .season || hit.kind == .episode ? "Go back to the show to change its lists"
                  : hit.kind == .credits ? "Go back to the title to change its lists"
                  : "Only movies and shows go on lists",
                  failed: true)
@@ -536,28 +561,45 @@ final class LauncherModel {
         }
     }
 
-    /// Flips an episode's watched mark on the season in detail, then shows the
-    /// show's marks the server answers with.
-    private func toggleWatched(_ episode: SearchHit) {
-        guard case .season(let season) = detail, let number = episode.episode,
-              !changing.contains(episode) else { return }
-        let on = !(season.watched?.episode(season.number, number) ?? false)
-        let page = detailHit
+    /// Flips an episode's watched mark, then shows the show's marks the
+    /// server answers with on every page of the show, here and behind.
+    func toggleWatched(_ episode: SearchHit) {
+        guard let season = episode.season, let number = episode.episode, !changing.contains(episode) else { return }
+        let on = !(pageWatched?.episode(season, number) ?? false)
         changing.insert(episode)
         Task {
             defer { changing.remove(episode) }
             do {
-                let marks = try await api.setEpisodeWatched(season.showId, season.number, number, on)
-                if detailHit == page, case .season(var current) = detail {
-                    current.watched = marks
-                    detail = .season(current)
-                }
-                show("\(on ? "Marked watched" : "Unmarked watched"): \(number). \(episode.displayName)", failed: false)
+                let marks = try await api.setEpisodeWatched(episode.id, season, number, on)
+                applyWatched(marks, show: episode.id)
+                show("\(on ? "Marked watched" : "Unmarked watched"): \(label(episode))", failed: false)
             } catch is CancellationError {
             } catch {
                 show("Couldn't update Watched: \(error.localizedDescription)", failed: true)
             }
         }
+    }
+
+    /// Puts a show's new watched marks on its pages, in detail and behind.
+    private func applyWatched(_ w: WatchedMarks, show id: Int) {
+        func updated(_ d: Detail?) -> Detail? {
+            switch d {
+            case .title(var t) where t.kind == .tv && t.id == id: t.watched = w; return .title(t)
+            case .season(var s) where s.showId == id: s.watched = w; return .season(s)
+            case .episode(var e) where e.showId == id: e.watched = w; return .episode(e)
+            default: return d
+            }
+        }
+        detail = updated(detail)
+        for i in back.indices { back[i].detail = updated(back[i].detail) }
+        let showHit = SearchHit(kind: .tv, id: id)
+        if marks[showHit] != nil { marks[showHit]?.watched = w.show }
+    }
+
+    /// Whether ⌘P can peek at the episode in detail: it isn't watched.
+    var canPeek: Bool {
+        if case .episode(let e) = detail { return !e.seen }
+        return false
     }
 
     /// The page in detail's tags, when it's a title on To watch.
@@ -635,7 +677,8 @@ final class LauncherModel {
     }
 
     /// What ⌘Y opens on the page in detail: the selected episode's still, else
-    /// the page's poster or photo.
+    /// the page's poster, photo or still. An episode's still opens only while
+    /// its spoilers show.
     var pageImage: (url: String, label: String)? {
         switch detail {
         case .title(let t): return t.posterUrl.map { ($0, "\(t.title) poster") }
@@ -646,6 +689,8 @@ final class LauncherModel {
                 return e?.stillUrl.map { ($0, "\(e!.title) still") }
             }
             return s.posterUrl.map { ($0, "\(s.name) poster") }
+        case .episode(let e):
+            return e.seen || peeking ? e.stillUrl.map { ($0, "\(e.title) still") } : nil
         case .credits, nil: return nil
         }
     }
