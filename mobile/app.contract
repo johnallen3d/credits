@@ -15,6 +15,7 @@ routes nav
     watched "/watched"
     releases "/releases/:list"
     playback "/playback"
+    about "/about"
   tab search "/search"
   movie "/movie/:id"
     movieCredits "/movie/:id/credits"
@@ -851,6 +852,8 @@ component App
                 PhotoScreen(navKey=`${e.id}`, url=e.params.url, close=back)
               if e.name == "playback"
                 PlaybackScreen(navKey=`${e.id}`)
+              if e.name == "about"
+                AboutScreen(navKey=`${e.id}`)
       // The tab bar; tapping the tab already shown returns to its start. iOS 26 sets
       // Search apart at the bar's end. The full-size photo hides it.
       row role="tablist" display=(top(nav).name == "photo" ? "none" : "flex") accent-color="accent" testId="tabs"
@@ -892,6 +895,8 @@ component App
                 select value=theme change=pickTheme aria-label="Theme" testId="theme" min-width=0
                   for t in ["rose-pine", "tokyo-night", "catppuccin", "classic"] key=t
                     option themeName(t) value=t
+              button press=open(path("about")) testId="open-about" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                text "About"
           button press=closeMenu aria-label="Close menu" testId="menu-close" flex=1 height="100%" appearance="none"
 
 // The search screen's results or recently viewed pages: people as a strip of round
@@ -2255,3 +2260,50 @@ component PlaybackScreen
           text "Ignore"
         button commandfor="ignore-show" command="close" testId="ignore-cancel"
           text "Cancel"
+
+// What credits is, where its data comes from (with the notice TMDB's terms ask
+// for) and how Home Assistant is doing, as the web's About page shows. The
+// credits never wait on the server; only the Home Assistant line does.
+component AboutScreen
+  props
+    navKey: string
+  resource p = playback() as shape Playback
+  action again
+    refresh p
+  view
+    column navigationKey=navKey navigationScroll="about" position="absolute" inset=0
+      display="flex" flex-direction="column" background-color="surface.page"
+      header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
+        text "About" role="heading" aria-level=2 testId="about-title"
+      list id="about" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+        section
+          text "credits looks up movies, TV shows and people, and shows who made them." background-color="surface.card"
+        section
+          header
+            text "Data Sources"
+          link href="https://www.themoviedb.org/" testId="about-tmdb" background-color="surface.card"
+            text "TMDB"
+          text "This product uses the TMDB API but is not endorsed or certified by TMDB."
+            background-color="surface.card" testId="about-tmdb-notice"
+          link href="https://www.omdbapi.com/" testId="about-omdb" background-color="surface.card"
+            text "Ratings via the OMDb API"
+          link href="https://www.imdb.com" testId="about-imdb" background-color="surface.card"
+            text "Episode ratings OMDb lacks: information courtesy of IMDb. Used with permission."
+          link href="https://www.justwatch.com/" testId="about-justwatch" background-color="surface.card"
+            text "Where to watch data by JustWatch, via TMDB"
+        section
+          header
+            text "Home Assistant"
+          if failed(p)
+            text "Couldn’t load Home Assistant’s status: the server didn’t answer." color="mark.favorite"
+              background-color="surface.card" testId="about-ha-failed"
+            button press=again testId="about-ha-retry" background-color="surface.card"
+              text "Try Again"
+          else if not current(p)
+            progress aria-label="Loading" testId="about-ha-loading"
+          else
+            text liveText(p.live) testId="about-ha" background-color="surface.card"
+              color=(p.live.state == "disconnected" ? "mark.favorite" : "text.primary")
+            if p.live.state != "not_configured"
+              link href=path("playback") testId="about-playback" background-color="surface.card"
+                text "Seen on Apple TV"

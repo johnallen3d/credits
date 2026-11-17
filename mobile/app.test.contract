@@ -936,3 +936,35 @@ test "a season the server can't load offers to try again"
   clock data
   expect tree missing "season-retry"
   expect text "season-title" == "Severance: Season 1"
+
+test "about opens from the menu and credits the data sources"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"connected","since":"2026-11-16T14:46:31Z"},"status":{"state":"ok","at":"2026-11-16T14:46:31Z"},"players":[],"pending":[],"recent":[],"other":[],"unreadable":false}
+  tap "menu"
+  clock settle
+  tap "open-about"
+  clock data
+  expect tree has "about-title"
+  expect text "about-tmdb-notice" == "This product uses the TMDB API but is not endorsed or certified by TMDB."
+  expect tree has "about-omdb"
+  expect tree has "about-imdb"
+  expect tree has "about-justwatch"
+  expect text "about-ha" == "Following Home Assistant live: episodes and movies are marked as soon as they’re watched."
+  expect tree has "about-playback"
+
+test "about says Home Assistant isn't set up, without a Seen on Apple TV link"
+  at "/about"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"not_configured"},"status":{"state":"not_configured"},"players":[],"pending":[],"recent":[],"other":[],"unreadable":false}
+  clock data
+  expect text "about-ha" == "Home Assistant isn’t set up on the server, so nothing is marked automatically."
+  expect tree missing "about-playback"
+
+test "about still credits the sources when the server doesn't answer"
+  at "/about"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  fail fetch "https://credits.jallen7usa.com/api/playback"
+  clock data
+  expect tree has "about-tmdb-notice"
+  expect tree has "about-ha-failed"
+  expect tree has "about-ha-retry"
