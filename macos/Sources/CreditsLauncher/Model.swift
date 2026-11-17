@@ -43,6 +43,11 @@ final class LauncherModel {
         let row: Int?
     }
 
+    /// Summaries for rows whose list didn't carry one (Recently viewed), from each
+    /// page's detail, fetched as the row first shows.
+    var summaries: [SearchHit: String] = [:]
+    private var summaryAsked: Set<SearchHit> = []
+
     /// List state per title, from its detail or the last change.
     var marks: [SearchHit: TitleMarks] = [:]
     /// Titles with a list change in flight.
@@ -126,8 +131,7 @@ final class LauncherModel {
             return HomeList(hits: w.titles.map { t in
                 let services = (t.availability?.services ?? []).map(\.name)
                 let from = t.source.map { "from \($0)" }
-                let info = ([t.year].compactMap { $0 } + services + [from].compactMap { $0 })
-                    .joined(separator: " · ")
+                let info = (services + [from].compactMap { $0 }).joined(separator: " · ")
                 return SearchHit(kind: t.kind, id: t.id, title: t.title, year: t.year,
                                  posterUrl: t.posterUrl, info: info)
             }, notes: notes)
@@ -228,6 +232,27 @@ final class LauncherModel {
         detailError = page.error
         detailRow = page.row
         pageID += 1
+    }
+
+    /// Fetches a row's summary from its page's detail when its list had none.
+    /// A failure leaves the row without one.
+    func fillSummary(_ hit: SearchHit) {
+        guard hit.summary == nil, summaryAsked.insert(hit).inserted else { return }
+        Task {
+            guard let d = try? await api.detail(hit.kind, hit.id) else { return }
+            switch d {
+            case .title(let t):
+                if let m = t.marks, marks[hit] == nil { marks[hit] = m }
+                if let o = t.overview, !o.isEmpty { summaries[hit] = o }
+            case .person(let p):
+                let titles = p.knownForTitles.prefix(3)
+                    .map { c in c.year.map { "\(c.title) (\($0))" } ?? c.title }
+                    .joined(separator: ", ")
+                let text = [p.knownFor, titles.isEmpty ? nil : "known for " + titles]
+                    .compactMap { $0 }.joined(separator: " · ")
+                if !text.isEmpty { summaries[hit] = text.prefix(1).uppercased() + text.dropFirst() }
+            }
+        }
     }
 
     private func load(_ hit: SearchHit) {

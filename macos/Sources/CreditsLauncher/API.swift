@@ -16,29 +16,41 @@ struct SearchHit: Decodable, Identifiable, Hashable {
     let title: String?
     let name: String?
     let year: String?
+    let overview: String?
+    let inTheaters: Bool?
     let posterUrl: String?
     let profileUrl: String?
     let knownForDepartment: String?
     let knownFor: [KnownFor]?
-    /// A list entry's own second line, in place of `details`.
+    /// A list entry's own line under its name, in place of `summary`.
     var info: String? = nil
 
     var displayName: String { title ?? name ?? "Untitled" }
     var imageUrl: String? { posterUrl ?? profileUrl }
 
+    /// The type badge, as on the web's search results.
     var kindLabel: String {
         switch kind {
         case .movie: return "Movie"
-        case .tv: return "TV"
-        case .person: return knownForDepartment ?? "Person"
+        case .tv: return "TV show"
+        case .person: return "Person"
         }
     }
 
-    var details: String {
-        if let info { return info }
+    /// A title's overview, or a person's department and best-known titles, as on the web.
+    var summary: String? {
+        if let info { return info.isEmpty ? nil : info }
         switch kind {
-        case .movie, .tv: return year ?? ""
-        case .person: return (knownFor ?? []).map(\.title).joined(separator: ", ")
+        case .movie, .tv: return overview.flatMap { $0.isEmpty ? nil : $0 }
+        case .person:
+            let titles = (knownFor ?? []).map { k in k.year.map { "\(k.title) (\($0))" } ?? k.title }
+                .joined(separator: ", ")
+            switch (knownForDepartment, titles.isEmpty) {
+            case (let d?, false): return "\(d) · known for \(titles)"
+            case (let d?, true): return d
+            case (nil, false): return "Known for \(titles)"
+            case (nil, true): return nil
+            }
         }
     }
 
@@ -52,6 +64,8 @@ struct SearchHit: Decodable, Identifiable, Hashable {
         self.year = year
         self.posterUrl = posterUrl
         self.info = info
+        overview = nil
+        inTheaters = nil
         profileUrl = nil
         knownForDepartment = nil
         knownFor = nil
@@ -63,6 +77,7 @@ struct SearchHit: Decodable, Identifiable, Hashable {
 
 struct KnownFor: Decodable {
     let title: String
+    let year: String?
 }
 
 struct Metadata: Decodable {

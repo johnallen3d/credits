@@ -148,14 +148,16 @@ struct HitList: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVStack(spacing: 8) {
                     ForEach(hits) { hit in
-                        ResultRow(hit: hit, selected: hit == model.selection, marks: model.marks[hit])
+                        ResultRow(hit: hit, summary: hit.summary ?? model.summaries[hit],
+                                  selected: hit == model.selection, marks: model.marks[hit])
                             .id(hit)
+                            .onAppear { model.fillSummary(hit) }
                             .onTapGesture { model.open(hit) }
                     }
                 }
-                .padding(6)
+                .padding(10)
             }
             .onChange(of: model.selection) { _, hit in
                 if let hit { proxy.scrollTo(hit) }
@@ -164,21 +166,42 @@ struct HitList: View {
     }
 }
 
+/// A hit as a card, laid out like the web's search results: poster, type badge,
+/// name with year, and a short summary.
 struct ResultRow: View {
     let hit: SearchHit
+    let summary: String?
     let selected: Bool
     let marks: TitleMarks?
 
     var body: some View {
-        HStack(spacing: 12) {
-            Poster(url: hit.imageUrl, width: 34, kind: hit.kind)
+        HStack(alignment: .top, spacing: 12) {
+            Poster(url: hit.imageUrl, width: 44, kind: hit.kind)
             VStack(alignment: .leading, spacing: 2) {
-                Text(hit.displayName).font(.headline).lineLimit(1)
-                (Text(hit.kindLabel).foregroundColor(Theme.color(for: hit.kind))
-                    + Text(hit.details.isEmpty ? "" : " · " + hit.details).foregroundColor(Theme.muted))
-                    .font(.subheadline).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(hit.kindLabel.uppercased())
+                        .font(.caption2.bold()).kerning(0.5)
+                        .foregroundStyle(Theme.color(for: hit.kind))
+                    if hit.inTheaters == true {
+                        Text("IN THEATERS")
+                            .font(.caption2.bold()).kerning(0.5)
+                            .foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 4)
+                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.accent))
+                    }
+                }
+                (Text(hit.displayName).font(.headline)
+                    + Text(hit.year.map { "  (\($0))" } ?? "").foregroundColor(Theme.muted))
+                    .lineLimit(1)
+                if let summary {
+                    Text(summary)
+                        .font(.callout)
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            Spacer()
+            Spacer(minLength: 0)
             if let marks {
                 HStack(spacing: 6) {
                     ForEach(ListAction.allCases, id: \.self) { list in
@@ -190,10 +213,11 @@ struct ResultRow: View {
                 .font(.callout)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(selected ? Theme.line : .clear,
-                    in: RoundedRectangle(cornerRadius: 8))
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .stroke(selected ? Theme.accent : Theme.line, lineWidth: selected ? 2 : 1))
         .contentShape(Rectangle())
     }
 }
