@@ -5,22 +5,25 @@ use EmptyState from "exact:content"
 // The web host reaches the API through tools/cors-proxy.ts; a phone would name the
 // server itself.
 
+// Two tabs, Home and Search, each its own stack. The menu's screens belong to Home;
+// a title, person or photo is pushed onto whichever tab opened it.
 routes nav
-  search "/"
+  tab home "/"
     services "/services"
     watchlist "/watchlist"
     favorites "/favorites"
     watched "/watched"
-    movie "/movie/:id"
-      movieCredits "/movie/:id/credits"
-    tv "/tv/:id"
-      tvCredits "/tv/:id/credits"
-      season "/tv/:id/season/:n"
-        episode "/tv/:id/season/:n/episode/:e"
     releases "/releases/:list"
-    person "/person/:id"
-    photo "/photo/:url"
     playback "/playback"
+  tab search "/search"
+  movie "/movie/:id"
+    movieCredits "/movie/:id/credits"
+  tv "/tv/:id"
+    tvCredits "/tv/:id/credits"
+    season "/tv/:id/season/:n"
+      episode "/tv/:id/season/:n/episode/:e"
+  person "/person/:id"
+  photo "/photo/:url"
 
 shape Hit
   kind: string
@@ -622,6 +625,8 @@ component App
     refresh hits
   action back
     nav = back(nav)
+  action pick(name: string)
+    nav = select(nav, name)
   action follow(url: string)
     nav = go(nav, url)
   action closeMenu
@@ -646,95 +651,117 @@ component App
 
   view
     main navigationKey=`${top(nav).id}` navigate=follow testId="app" width="100%" height="100%"
-      -exact-mode=`palette=${theme}`
+      -exact-mode=`palette=${theme}` display="flex" flex-direction="column"
       background-color="surface.page" color="text.primary"
-      for e in stack(nav) key=e.id
-        if e.name == "search"
-          column navigationKey=`${e.id}` navigationScroll="hits" position="absolute" inset=0
-            display="flex" flex-direction="column"
-            header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px" background-color="surface.page"
-              button command="show-modal" commandfor="drawer" aria-label="Menu" testId="menu"
-                image "symbol:menu" color="accent"
-              text "Credits" role="heading" aria-level=1 flex=1
-              input type="search" value=query input=edit placeholder="Movies, shows, people"
-                aria-label="Search" testId="search" width="100%"
-            if asked == "" and recents.length > 0
-              scroll id="hits" testId="recent" flex=1 min-height=0 background-color="surface.page"
-                Shelves(prefix="recent", people=recents.filter(r => r.kind == "person").map(r => fromRecent(r)),
-                  titles=recents.filter(r => r.kind != "person").map(r => fromRecent(r)), peopleHeading="Recent People", titlesHeading="Recently Viewed")
-            else if asked == ""
-              EmptyState(symbol="symbol:search", title="Search", message="Find a movie, show or person.")
-            else if failed(hits)
-              EmptyState(symbol="symbol:alert", title="Can’t Reach Credits", message="The server didn’t answer.")
-                button press=retry testId="retry"
-                  text "Try Again"
-            else if hits.length == 0 and not pending(hits)
-              EmptyState(symbol="symbol:search", title=`No Results for “${asked}”`, message="Check the spelling or try a new search.")
-            else
-              scroll id="hits" flex=1 min-height=0 background-color="surface.page"
-                Shelves(prefix="hit", people=hits.filter(h => h.kind == "person").map(h => fromHit(h)),
-                  titles=hits.filter(h => h.kind != "person").map(h => fromHit(h)), peopleHeading="People", titlesHeading="Movies & TV")
-            // The menu: every destination and the theme, slid in from the left.
-            // A full-window dialog painting its own dim: iOS centres a top-layer dialog's box,
-            // so the panel sits at its start and the dim beside it closes the menu.
-            dialog id="drawer" width="100%" height="100%" background-color="drawer.dim" testId="drawer"
-              ::backdrop
-                background-color="transparent"
-              row width="100%" height="100%"
-                scroll width="18rem" max-width="85%" height="100%" background-color="surface.card" color="text.primary"
-                  animation="drawer-in 240ms ease-out"
-                  column padding="64px 0 24px"
-                    text "Browse" role="heading" aria-level=2 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
-                    for l in ["now-playing", "coming-soon"] key=l
-                      button press=browse(l) testId=`browse-${l}` padding="12px 24px" text-align="start" width="100%" color="text.primary"
-                        text releaseList(l)
-                    text "Lists" role="heading" aria-level=2 margin-top=20 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
-                    button press=open(path("watchlist")) testId="open-watchlist" padding="12px 24px" text-align="start" width="100%" color="text.primary"
-                      text "To Watch"
-                    button press=open(path("favorites")) testId="open-favorites" padding="12px 24px" text-align="start" width="100%" color="text.primary"
-                      text "Favorites"
-                    button press=open(path("watched")) testId="open-watched" padding="12px 24px" text-align="start" width="100%" color="text.primary"
-                      text "Watched"
-                    button press=open(path("playback")) testId="open-playback" padding="12px 24px" text-align="start" width="100%" color="text.primary"
-                      text "Seen on Apple TV"
-                    text "Settings" role="heading" aria-level=2 margin-top=20 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
-                    button press=open(path("services")) testId="open-services" padding="12px 24px" text-align="start" width="100%" color="text.primary"
-                      text "My Services"
-                    text "Theme" role="heading" aria-level=2 margin-top=20 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
-                    for t in ["rose-pine", "tokyo-night", "catppuccin", "classic"] key=t
-                      button press=pickTheme(t) aria-pressed=(theme == t) testId=`theme-${t}` width="100%" appearance="none"
-                        row align-items="center" gap=12 padding="12px 24px"
-                          text themeName(t) flex=1 text-align="start"
-                          if theme == t
-                            image "symbol:checkmark" color="accent"
-                button press=closeMenu aria-label="Close menu" testId="menu-close" flex=1 height="100%" appearance="none"
-        if e.name == "services"
-          ServicesScreen(navKey=`${e.id}`)
-        if e.name == "movie"
-          TitleScreen(navKey=`${e.id}`, kind="movie", id=e.params.id)
-        if e.name == "tv"
-          TitleScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
-        if e.name == "movieCredits"
-          CreditsScreen(navKey=`${e.id}`, kind="movie", id=e.params.id)
-        if e.name == "tvCredits"
-          CreditsScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
-        if e.name == "season"
-          SeasonScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n)
-        if e.name == "episode"
-          EpisodeScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n, e=e.params.e)
-        if e.name == "person"
-          PersonScreen(navKey=`${e.id}`, id=e.params.id)
-        if e.name == "watchlist" or e.name == "favorites"
-          SavedListScreen(navKey=`${e.id}`, list=e.name)
-        if e.name == "watched"
-          WatchedScreen(navKey=`${e.id}`)
-        if e.name == "releases"
-          ReleasesScreen(navKey=`${e.id}`, list=e.params.list, loaded=releasesLoaded, pages=releasesPages,
-            pending=pending(releasesLoaded), failed=failed(releasesLoaded), more=releasesMore, retry=releasesRetry)
-        if e.name == "photo"
-          PhotoScreen(navKey=`${e.id}`, url=e.params.url, close=back)
-        if e.name == "playback"
-          PlaybackScreen(navKey=`${e.id}`)
+      column flex=1 min-height=0 position="relative"
+        for t in nav.tabs key=t.name
+          column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
+            for e in t.stack key=e.id
+              // Home: the menu and what was viewed lately.
+              if e.name == "home"
+                column navigationKey=`${e.id}` navigationScroll="recent" position="absolute" inset=0
+                  display="flex" flex-direction="column"
+                  header display="flex" align-items="center" gap=8 padding="8px 16px" background-color="surface.page"
+                    button command="show-modal" commandfor="drawer" aria-label="Menu" testId="menu"
+                      image "symbol:menu" color="accent"
+                    text "Credits" role="heading" aria-level=1 flex=1
+                  if recents.length > 0
+                    scroll id="recent" testId="recent" flex=1 min-height=0 background-color="surface.page"
+                      Shelves(prefix="recent", people=recents.filter(r => r.kind == "person").map(r => fromRecent(r)),
+                        titles=recents.filter(r => r.kind != "person").map(r => fromRecent(r)), peopleHeading="Recent People", titlesHeading="Recently Viewed")
+                  else
+                    EmptyState(symbol="symbol:play", title="Nothing Viewed Yet", message="Titles and people you open show up here.")
+                      button press=pick("search") testId="home-search"
+                        text "Search"
+              // Search: the field in the bar, and its results.
+              if e.name == "search"
+                column navigationKey=`${e.id}` navigationScroll="hits" position="absolute" inset=0
+                  display="flex" flex-direction="column"
+                  header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px" background-color="surface.page"
+                    text "Search" role="heading" aria-level=1 flex=1
+                    input type="search" value=query input=edit placeholder="Movies, shows, people" autofocus=true
+                      aria-label="Search" testId="search" width="100%"
+                  if asked == ""
+                    EmptyState(symbol="symbol:search", title="Find Anything", message="Search for a movie, show or person.")
+                  else if failed(hits)
+                    EmptyState(symbol="symbol:alert", title="Can’t Reach Credits", message="The server didn’t answer.")
+                      button press=retry testId="retry"
+                        text "Try Again"
+                  else if hits.length == 0 and not pending(hits)
+                    EmptyState(symbol="symbol:search", title=`No Results for “${asked}”`, message="Check the spelling or try a new search.")
+                  else
+                    scroll id="hits" flex=1 min-height=0 background-color="surface.page"
+                      Shelves(prefix="hit", people=hits.filter(h => h.kind == "person").map(h => fromHit(h)),
+                        titles=hits.filter(h => h.kind != "person").map(h => fromHit(h)), peopleHeading="People", titlesHeading="Movies & TV")
+              if e.name == "services"
+                ServicesScreen(navKey=`${e.id}`)
+              if e.name == "movie"
+                TitleScreen(navKey=`${e.id}`, kind="movie", id=e.params.id)
+              if e.name == "tv"
+                TitleScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
+              if e.name == "movieCredits"
+                CreditsScreen(navKey=`${e.id}`, kind="movie", id=e.params.id)
+              if e.name == "tvCredits"
+                CreditsScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
+              if e.name == "season"
+                SeasonScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n)
+              if e.name == "episode"
+                EpisodeScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n, e=e.params.e)
+              if e.name == "person"
+                PersonScreen(navKey=`${e.id}`, id=e.params.id)
+              if e.name == "watchlist" or e.name == "favorites"
+                SavedListScreen(navKey=`${e.id}`, list=e.name)
+              if e.name == "watched"
+                WatchedScreen(navKey=`${e.id}`)
+              if e.name == "releases"
+                ReleasesScreen(navKey=`${e.id}`, list=e.params.list, loaded=releasesLoaded, pages=releasesPages,
+                  pending=pending(releasesLoaded), failed=failed(releasesLoaded), more=releasesMore, retry=releasesRetry)
+              if e.name == "photo"
+                PhotoScreen(navKey=`${e.id}`, url=e.params.url, close=back)
+              if e.name == "playback"
+                PlaybackScreen(navKey=`${e.id}`)
+      // The tab bar; tapping the tab already shown returns to its start. iOS 26 sets
+      // Search apart at the bar's end. The full-size photo hides it.
+      row role="tablist" display=(top(nav).name == "photo" ? "none" : "flex") accent-color="accent" testId="tabs"
+        button role="tab" aria-controls="panel-home" aria-selected=(nav.tab == "home") press=pick("home") testId="tab-home"
+          image "symbol:home"
+          text "Home"
+        button role="tab" rel="search" aria-controls="panel-search" aria-selected=(nav.tab == "search") press=pick("search") testId="tab-search"
+          image "symbol:search"
+          text "Search"
+      // The menu: every destination and the theme, slid in from the left.
+      // A full-window dialog painting its own dim: iOS centres a top-layer dialog's box,
+      // so the panel sits at its start and the dim beside it closes the menu.
+      dialog id="drawer" width="100%" height="100%" background-color="drawer.dim" testId="drawer"
+        ::backdrop
+          background-color="transparent"
+        row width="100%" height="100%"
+          scroll width="18rem" max-width="85%" height="100%" background-color="surface.card" color="text.primary"
+            accent-color="accent" animation="drawer-in 240ms ease-out"
+            column padding="64px 0 24px"
+              text "Browse" role="heading" aria-level=2 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
+              for l in ["now-playing", "coming-soon"] key=l
+                button press=browse(l) testId=`browse-${l}` padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                  text releaseList(l)
+              text "Lists" role="heading" aria-level=2 margin-top=20 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
+              button press=open(path("watchlist")) testId="open-watchlist" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                text "To Watch"
+              button press=open(path("favorites")) testId="open-favorites" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                text "Favorites"
+              button press=open(path("watched")) testId="open-watched" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                text "Watched"
+              button press=open(path("playback")) testId="open-playback" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                text "Seen on Apple TV"
+              text "Settings" role="heading" aria-level=2 margin-top=20 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
+              button press=open(path("services")) testId="open-services" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                text "My Services"
+              // One row for the theme: its pop-up lists them all.
+              row align-items="center" flex-wrap="wrap" column-gap=12 padding="8px 24px"
+                text "Theme" flex=1
+                select value=theme change=pickTheme aria-label="Theme" testId="theme" min-width=0
+                  for t in ["rose-pine", "tokyo-night", "catppuccin", "classic"] key=t
+                    option themeName(t) value=t
+          button press=closeMenu aria-label="Close menu" testId="menu-close" flex=1 height="100%" appearance="none"
 
 // The search screen's results or recently viewed pages: people as a strip of round
 // portraits, then titles as a grid of posters.

@@ -1,8 +1,28 @@
 test "search starts empty"
   fail fetch "https://credits.jallen7usa.com/api/recent"
   expect tree has "app"
-  expect tree has "search"
   expect tree missing "recent"
+  tap "tab-search"
+  clock settle
+  expect tree has "search"
+  expect tree missing "hits"
+
+test "the tabs reach Home and Search from deep in a stack"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  tap "recent-movie-603"
+  clock data
+  clock settle
+  expect text "title" == "The Matrix"
+  tap "tab-search"
+  clock settle
+  expect tree has "search"
+  tap "tab-home"
+  clock settle
+  expect tree has "title"
+  tap "tab-home"
+  clock settle
+  expect tree missing "title"
 
 test "start screen lists recently viewed titles"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null},{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
@@ -14,7 +34,7 @@ test "the theme starts as Rosé Pine and survives a relaunch"
   expect state theme == "rose-pine"
   tap "menu"
   clock settle
-  tap "theme-tokyo-night"
+  type "theme" "tokyo-night"
   expect state theme == "tokyo-night"
   reload
   expect state theme == "tokyo-night"
