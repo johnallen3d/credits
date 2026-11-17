@@ -980,6 +980,51 @@
         }
       }
     },
+    "/api/playback/decide": {
+      "post": {
+        "summary": "Sets which TMDB show or movie a pending show is, or ignores it, as the\nplayback page's choice does; its waiting episodes are then marked.\nAnswers with the playback page's new state.",
+        "operationId": "api_decide_playback",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/now-playing": {
       "get": {
         "summary": "Movies now playing in the region's theaters, most popular first, with\ntheir ratings.",
@@ -2964,6 +3009,36 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PlaybackDecision": {
+        "type": "object",
+        "description": "Which TMDB show or movie something seen on the Apple TV is.",
+        "required": [
+          "app",
+          "kind",
+          "show_key"
+        ],
+        "properties": {
+          "app": {
+            "$ref": "#/components/schemas/App"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "show_key": {
+            "type": "string",
+            "description": "The pending show's `show_key`."
+          },
+          "tmdb_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The TMDB TV or movie ID it is; missing or null ignores it.",
+            "minimum": 0
           }
         }
       },

@@ -4547,6 +4547,55 @@ async fn ambiguous_shows_wait_for_a_choice_that_then_applies_to_later_episodes()
 }
 
 #[tokio::test]
+async fn json_api_decides_and_ignores_pending_shows() {
+    let p = PlaybackApp::new().await;
+    p.ha.set_rows(vec![
+        tv_app_row(200, "playing", "Dark Matter", "A0052201001", 2920),
+        tv_app_row(150, "paused", "Dark Matter", "A0052201001", 2920),
+        infuse_row(100, "playing", "Beach Trip 2019", 1800),
+        infuse_row(60, "paused", "Beach Trip 2019", 1800),
+    ]);
+    p.sync().await.unwrap();
+    let (_, json) = get_json(p.t.app(), "/api/playback").await;
+    assert_eq!(json["pending"].as_array().unwrap().len(), 2);
+
+    let (status, _) = post_json(
+        p.t.app(),
+        "/api/playback/decide",
+        json!({"app": "nope", "kind": "episode", "show_key": "dark matter"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // The iOS app sends every number as a float.
+    let (status, json) = post_json(
+        p.t.app(),
+        "/api/playback/decide",
+        json!({"app": "tv", "kind": "episode", "show_key": "dark matter", "tmdb_id": 196322.0}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(p.t.catalog.watched(196322).await.episode(1, 1));
+    assert_eq!(json["pending"].as_array().unwrap().len(), 1);
+
+    let (status, json) = post_json(
+        p.t.app(),
+        "/api/playback/decide",
+        json!({"app": "infuse", "kind": "movie", "show_key": "beach trip 2019", "tmdb_id": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(json["pending"].as_array().unwrap().is_empty());
+    assert!(
+        json["recent"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["show_title"] == "Beach Trip 2019" && d["status"] == "ignored")
+    );
+}
+
+#[tokio::test]
 async fn ignored_and_unknown_shows_are_not_marked() {
     let p = PlaybackApp::new().await;
     p.ha.set_rows(vec![

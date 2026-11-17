@@ -20,6 +20,7 @@ routes nav
     releases "/releases/:list"
     person "/person/:id"
     photo "/photo/:url"
+    playback "/playback"
 
 shape Hit
   kind: string
@@ -298,6 +299,58 @@ shape WatchedList
   titles: WatchedTitle[]
   stale_since: option<string>
 
+// Seen on Apple TV: what Home Assistant reports playing, and shows waiting on
+// a choice of TMDB show or movie.
+shape LiveStatus
+  state: string
+  since: option<string>
+  error: option<string>
+
+shape SyncStatus
+  state: string
+  at: option<string>
+  error: option<string>
+  last_ok: option<string>
+
+shape Candidate
+  id: number
+  name: string
+  year: option<string>
+  overview: option<string>
+
+shape PendingShow
+  app: string
+  kind: string
+  show_key: string
+  show_title: string
+  note: option<string>
+  episodes: string[]
+  candidates: option<Candidate[]>
+
+shape Detection
+  app: string
+  item_key: string
+  kind: string
+  show_title: string
+  title: string
+  season: number
+  episode: number
+  duration: option<number>
+  playing_seconds: number
+  max_position: option<number>
+  last_seen: string
+  status: string
+  tmdb_id: option<number>
+  note: option<string>
+
+shape Playback
+  live: LiveStatus
+  status: SyncStatus
+  players: string[]
+  pending: PendingShow[]
+  recent: Detection[]
+  unreadable: bool
+
 source search(q: string) as shape Hit[]
   url "https://credits.jallen7usa.com/api/search?q={q}"
   pointer "/results"
@@ -390,6 +443,18 @@ source savedList(list: string, sort: string) as shape SavedList
 
 source watchedList(sort: string) as shape WatchedList
   url "https://credits.jallen7usa.com/api/watched?sort={sort}"
+source playback() as shape Playback
+  url "https://credits.jallen7usa.com/api/playback"
+
+source decidePlayback(app: string, kind: string, show_key: string, tmdb_id: number) as shape Playback
+  url "https://credits.jallen7usa.com/api/playback/decide"
+  method "POST"
+  body json
+
+source ignorePlayback(app: string, kind: string, show_key: string) as shape Playback
+  url "https://credits.jallen7usa.com/api/playback/decide"
+  method "POST"
+  body json
 
 fn text(o: option<string>): string = match o { case some(s) => s, case none => "" }
 fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(h.name) }
@@ -596,6 +661,9 @@ component App
                 button press=follow(path("services")) role="menuitem"
                   popovertarget="browse-menu" popovertargetaction="hide" testId="open-services"
                   text "My Services"
+                button press=follow(path("playback")) role="menuitem"
+                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-playback"
+                  text "Seen on Apple TV"
               input type="search" value=query input=edit placeholder="Movies, shows, people"
                 aria-label="Search" testId="search" width="100%"
             if asked == "" and recents.length > 0
@@ -643,6 +711,8 @@ component App
             pending=pending(releasesLoaded), failed=failed(releasesLoaded), more=releasesMore, retry=releasesRetry)
         if e.name == "photo"
           PhotoScreen(navKey=`${e.id}`, url=e.params.url, close=back)
+        if e.name == "playback"
+          PlaybackScreen(navKey=`${e.id}`)
 
 // A search hit or recently viewed page, linking to its title or person screen.
 component Entry
@@ -1545,3 +1615,159 @@ component ListRow
         if notes != ""
           text notes font="-exact-footnote" color="mark.watched" testId=`${testId}-notes`
       image "symbol:forward-chevron" color="text.muted"
+// Seen on Apple TV, as the web's /playback page: whether Home Assistant is
+// followed, shows waiting on a choice of TMDB show or movie, and what played.
+fn civilDays(y: number, m: number, d: number): number = eraDays(m <= 2 ? y - 1 : y, m, d)
+fn eraDays(y: number, m: number, d: number): number = floor(y / 400) * 146097 + yearDays(y - floor(y / 400) * 400, m, d) - 719468
+fn yearDays(yoe: number, m: number, d: number): number = yoe * 365 + floor(yoe / 4) - floor(yoe / 100) + floor((153 * (m > 2 ? m - 3 : m + 9) + 2) / 5) + d - 1
+fn part(s: string, from: number, to: number): number = numberOf(s.slice(from, to))
+// An RFC 3339 instant in UTC ("2026-11-16T14:46:31.03Z"), as epoch milliseconds.
+fn instant(s: string): number = (civilDays(part(s, 0, 4), part(s, 5, 7), part(s, 8, 10)) * 86400 + part(s, 11, 13) * 3600 + part(s, 14, 16) * 60 + part(s, 17, 19)) * 1000
+fn appName(a: string): string = a == "infuse" ? "Infuse" : "TV app"
+fn noun(k: string): string = k == "movie" ? "movie" : "show"
+fn played(d: Detection): string = d.kind == "movie" ? d.title : `${d.show_title} S${d.season} E${d.episode}`
+fn statusName(s: string): string = s == "watching" ? "Watching" : s == "marked" ? "Marked watched" : s == "needs_confirmation" ? "Needs confirmation" : s == "no_match" ? "No TMDB match" : "Ignored"
+fn progressOf(d: Detection): number = max(d.playing_seconds, match d.max_position { case some(p) => p, case none => 0 })
+fn percentText(d: Detection): string = match d.duration {
+  case some(n) => n > 0 ? `${min(100, floor(progressOf(d) * 100 / n))}% played` : "",
+  case none => "" }
+// "media_player.living_room_appletv" as "living room appletv".
+fn playerName(id: string): string = id.replaceAll("media_player.", "").replaceAll("_", " ")
+fn yearText(c: Candidate): string = match c.year { case some(y) => ` (${y})`, case none => "" }
+fn pendingKey(p: PendingShow): string = `${p.app}-${p.show_key}`
+fn waiting(p: PendingShow): string = `${match p.note { case some(n) => `${n}.`, case none => "" }}${p.episodes.length > 0 ? ` Waiting: ${p.episodes.join(", ")}.` : ""}`.trim()
+fn liveText(l: LiveStatus): string = (l.state == "not_configured" ? "Home Assistant isn’t set up on the server, so nothing is marked automatically."
+  : l.state == "connecting" ? "Connecting to Home Assistant…"
+  : l.state == "connected" ? "Following Home Assistant live: episodes and movies are marked as soon as they’re watched."
+  : `Disconnected from Home Assistant: ${text(l.error)}. Retrying; meanwhile its history is read at least every 5 minutes.`)
+fn syncText(s: SyncStatus): string = s.state == "failed" ? `Couldn’t read Home Assistant’s history: ${text(s.error)}. Episodes and movies already played are still marked.` : ""
+
+component PlaybackScreen
+  props
+    navKey: string
+  state aimedKey = ""
+  state aimedApp = ""
+  state aimedKind = ""
+  state aimedShow = ""
+  state aimedTitle = ""
+  state aimedId = 0
+  state aimedName = ""
+  state typed = ""
+  resource p = playback() as shape Playback
+  mutation decided as shape Playback refreshes p
+
+  action again
+    refresh p
+  action aim(s: PendingShow)
+    aimedKey = pendingKey(s)
+    aimedApp = s.app
+    aimedKind = s.kind
+    aimedShow = s.show_key
+    aimedTitle = s.show_title
+  action choose(s: PendingShow, c: Candidate)
+    aim(s)
+    aimedId = c.id
+    aimedName = `${c.name}${yearText(c)}`
+    showModal("use-candidate")
+  action askId(s: PendingShow)
+    aim(s)
+    typed = ""
+    showModal("use-id")
+  action askIgnore(s: PendingShow)
+    aim(s)
+    showModal("ignore-show")
+  action editId(v: string)
+    typed = v
+  action use
+    send decided = decidePlayback(aimedApp, aimedKind, aimedShow, aimedId)
+  action useTyped
+    match parseNumber(typed.trim())
+      case some(n)
+        send decided = decidePlayback(aimedApp, aimedKind, aimedShow, n)
+      case none
+        typed = ""
+  action ignore
+    send decided = ignorePlayback(aimedApp, aimedKind, aimedShow)
+
+  view
+    column navigationKey=navKey navigationScroll="playback" position="absolute" inset=0
+      display="flex" flex-direction="column" background-color="surface.page"
+      header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
+        text "Seen on Apple TV" role="heading" aria-level=2 testId="playback-title"
+      if failed(p)
+        EmptyState(symbol="symbol:alert", title="Can’t Load Playback", message="The server didn’t answer.")
+          button press=again testId="playback-retry"
+            text "Try Again"
+      else if not current(p)
+        progress aria-label="Loading" testId="playback-loading"
+      else if p.live.state == "not_configured"
+        EmptyState(symbol="symbol:sf/appletv", title="Home Assistant Isn’t Set Up", message="Set HA_URL and HA_TOKEN on the server and restart it to mark what plays on the Apple TV.")
+          text "" testId="playback-not-configured"
+      else
+        list id="playback" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+          section
+            text liveText(p.live) testId="playback-live" background-color="surface.card"
+              color=(p.live.state == "disconnected" ? "mark.favorite" : "text.primary")
+            if syncText(p.status) != ""
+              text syncText(p.status) testId="playback-sync" color="mark.favorite" background-color="surface.card"
+            if p.unreadable
+              text "The playback history couldn’t be read from the database." testId="playback-unreadable" color="mark.favorite" background-color="surface.card"
+            if failed(decided) and not pending(decided)
+              text "Couldn’t save your choice. Try again." testId="decide-error" color="mark.favorite" background-color="surface.card"
+          for s in p.pending key=pendingKey(s)
+            section testId=`pending-${pendingKey(s)}`
+              header
+                text `${s.show_title} · ${s.kind == "movie" ? "Movie in " : ""}${appName(s.app)}`
+              match s.candidates
+                case some(cs)
+                  for c in cs key=`${c.id}`
+                    button press=choose(s, c) testId=`candidate-${pendingKey(s)}-${c.id}` background-color="surface.card"
+                      display="flex" flex-direction="column" align-items="flex-start" gap=2
+                      text `${c.name}${yearText(c)}`
+                      text text(c.overview) font="-exact-footnote" color="text.muted"
+                  if cs.length == 0
+                    text `TMDB found no ${noun(s.kind)}s by that name.` color="text.muted" background-color="surface.card"
+                case none
+                  text `Couldn’t search TMDB right now. You can still enter the ${noun(s.kind)}’s TMDB ID.` color="mark.favorite" background-color="surface.card"
+              button press=askId(s) testId=`enter-id-${pendingKey(s)}` background-color="surface.card"
+                text "Enter a TMDB ID…"
+              button press=askIgnore(s) destructive=true testId=`ignore-${pendingKey(s)}` background-color="surface.card"
+                text `Ignore This ${s.kind == "movie" ? "Movie" : "Show"}`
+              footer
+                text waiting(s)
+          section
+            header
+              text "Recently Played"
+            if p.recent.length == 0
+              text "Nothing yet." color="text.muted" testId="playback-empty" background-color="surface.card"
+            for d in p.recent key=`${d.app}-${d.item_key}`
+              column gap=2 testId=`played-${d.item_key}` background-color="surface.card"
+                text played(d)
+                text statusName(d.status) font="-exact-footnote"
+                  color=(d.status == "marked" ? "mark.watched" : "text.muted")
+                text font="-exact-footnote" color="text.muted"
+                  time datetime=instant(d.last_seen) format="relative"
+                  text ` · ${appName(d.app)}${percentText(d) == "" ? "" : ` · ${percentText(d)}`}`
+                if text(d.note) != ""
+                  text text(d.note) font="-exact-footnote" color="text.muted"
+            footer
+              text `${p.players.length > 0 ? `Home Assistant reports what plays on ${p.players.map(x => playerName(x)).join(", ")}. ` : ""}Episodes are marked once 90% has played, or 80% if you moved on to a later one; movies once 90% has played.`
+      dialog id="use-candidate" role="alertdialog" aria-label=`Use ${aimedName}?`
+        text (aimedKind == "movie" ? `${aimedTitle} is marked watched as ${aimedName}.` : `Episodes of ${aimedTitle} that played are marked watched in ${aimedName}, and later ones are matched to it.`)
+        button press=use commandfor="use-candidate" command="close" testId="use-confirm"
+          text `Use This ${aimedKind == "movie" ? "Movie" : "Show"}`
+        button commandfor="use-candidate" command="close" testId="use-cancel"
+          text "Cancel"
+      dialog id="use-id" role="alertdialog" aria-label=`TMDB ${aimedKind == "movie" ? "Movie" : "TV"} ID for ${aimedTitle}`
+        text (aimedKind == "movie" ? "The number in its TMDB address, like the 105 in themoviedb.org/movie/105." : "The number in its TMDB address, like the 1396 in themoviedb.org/tv/1396.")
+        input value=typed input=editId inputmode="numeric" placeholder=(aimedKind == "movie" ? "105" : "1396") aria-label="TMDB ID" testId="tmdb-id"
+        button press=useTyped disabled=(parseNumber(typed.trim()) == none) commandfor="use-id" command="close" testId="use-id-confirm"
+          text "Use"
+        button commandfor="use-id" command="close"
+          text "Cancel"
+      dialog id="ignore-show" role="alertdialog" aria-label=`Ignore ${aimedTitle}?`
+        text `What played of it stays unmarked, and it won’t be asked about again.`
+        button press=ignore destructive=true commandfor="ignore-show" command="close" testId="ignore-confirm"
+          text "Ignore"
+        button commandfor="ignore-show" command="close" testId="ignore-cancel"
+          text "Cancel"

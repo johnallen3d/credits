@@ -493,3 +493,61 @@ test "Watched lists how each title was marked and filters by it"
   type "list-marked" "apple_tv"
   expect tree has "watched-tv-1420"
   expect tree missing "watched-movie-9"
+
+test "Seen on Apple TV opens from the start screen's menu"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"connected","since":"2026-11-16T14:46:31Z"},"status":{"state":"ok","at":"2026-11-16T14:46:31Z"},"players":["media_player.living_room"],"pending":[],"recent":[],"other":[],"unreadable":false}
+  tap "browse"
+  tap "open-playback"
+  clock data
+  expect tree has "playback-title"
+  expect text "playback-live" == "Following Home Assistant live: episodes and movies are marked as soon as they’re watched."
+  expect tree has "playback-empty"
+
+test "playback explains when Home Assistant isn't set up"
+  at "/playback"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"not_configured"},"status":{"state":"not_configured"},"players":[],"pending":[],"recent":[],"other":[],"unreadable":false}
+  expect tree has "playback-not-configured"
+  expect tree missing "playback"
+
+test "playback says when Home Assistant or the server fails"
+  at "/playback"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"disconnected","since":"2026-11-16T14:46:31Z","error":"connection refused"},"status":{"state":"failed","at":"2026-11-16T14:46:31Z","error":"timed out","last_ok":null},"players":[],"pending":[],"recent":[{"player":"media_player.living_room","app":"infuse","item_key":"dark matter|1|1","kind":"episode","show_key":"dark matter","show_title":"Dark Matter","title":"Dark Matter - S1 E1","season":1,"episode":1,"duration":2920,"playing_seconds":2700,"max_position":null,"last_seen":"2026-11-16T14:46:31Z","status":"marked","tmdb_id":196322,"note":null}],"other":[],"unreadable":true}
+  expect text "playback-live" == "Disconnected from Home Assistant: connection refused. Retrying; meanwhile its history is read at least every 5 minutes."
+  expect text "playback-sync" == "Couldn’t read Home Assistant’s history: timed out. Episodes and movies already played are still marked."
+  expect tree has "playback-unreadable"
+  expect tree has "played-dark matter|1|1"
+
+test "playback offers a retry when the server doesn't answer"
+  at "/playback"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  fail fetch "https://credits.jallen7usa.com/api/playback"
+  expect tree has "playback-retry"
+
+test "a pending show is decided by picking a TMDB show"
+  at "/playback"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"connected","since":"2026-11-16T14:46:31Z"},"status":{"state":"ok","at":"2026-11-16T14:46:31Z"},"players":[],"pending":[{"app":"tv","kind":"episode","show_key":"dark matter","show_title":"Dark Matter","note":"2 TMDB shows named “Dark Matter” fit S1 E1","episodes":["S1 E1"],"candidates":[{"id":196322,"name":"Dark Matter","year":"2024","overview":"A physicist is abducted."},{"id":62425,"name":"Dark Matter","year":"2015","overview":null}]}],"recent":[],"other":[],"unreadable":false}
+  answer fetch "https://credits.jallen7usa.com/api/playback/decide" with 200 {"live":{"state":"connected","since":"2026-11-16T14:46:31Z"},"status":{"state":"ok","at":"2026-11-16T14:46:31Z"},"players":[],"pending":[],"recent":[],"other":[],"unreadable":false}
+  expect tree has "pending-tv-dark matter"
+  tap "candidate-tv-dark matter-196322"
+  clock settle
+  answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"connected","since":"2026-11-16T14:46:31Z"},"status":{"state":"ok","at":"2026-11-16T14:46:31Z"},"players":[],"pending":[],"recent":[],"other":[],"unreadable":false}
+  tap "use-confirm"
+  clock data
+  expect tree missing "pending-tv-dark matter"
+  expect tree missing "decide-error"
+
+test "a refused choice says so and keeps the show waiting"
+  at "/playback"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"connected","since":"2026-11-16T14:46:31Z"},"status":{"state":"ok","at":"2026-11-16T14:46:31Z"},"players":[],"pending":[{"app":"infuse","kind":"movie","show_key":"beach trip 2019","show_title":"Beach Trip 2019","note":"No TMDB movie is named “Beach Trip 2019”","episodes":[],"candidates":null}],"recent":[],"other":[],"unreadable":false}
+  answer fetch "https://credits.jallen7usa.com/api/playback/decide" with 500 {"error":"the choice couldn't be saved"}
+  tap "ignore-infuse-beach trip 2019"
+  clock settle
+  tap "ignore-confirm"
+  clock data
+  expect tree has "decide-error"
+  expect tree has "pending-infuse-beach trip 2019"

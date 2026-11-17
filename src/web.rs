@@ -158,6 +158,7 @@ fn api() -> OpenApiRouter<Catalog> {
         .routes(routes!(api_watched))
         .routes(routes!(api_services, api_choose_service))
         .routes(routes!(api_playback))
+        .routes(routes!(api_decide_playback))
         .routes(routes!(api_now_playing))
         .routes(routes!(api_coming_soon))
         .routes(routes!(api_movie_watchlist))
@@ -253,6 +254,26 @@ struct ServiceBody {
     chosen: bool,
 }
 
+/// `whole_number`, for a field that may be missing or null.
+fn optional_whole_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    #[derive(Deserialize)]
+    struct Whole(#[serde(deserialize_with = "whole_number")] u64);
+    Ok(Option::<Whole>::deserialize(d)?.map(|Whole(n)| n))
+}
+
+/// Which TMDB show or movie something seen on the Apple TV is.
+#[derive(Deserialize, ToSchema)]
+struct PlaybackDecision {
+    app: App,
+    kind: Kind,
+    /// The pending show's `show_key`.
+    show_key: String,
+    /// The TMDB TV or movie ID it is; missing or null ignores it.
+    #[serde(default, deserialize_with = "optional_whole_number")]
+    #[schema(value_type = Option<u64>)]
+    tmdb_id: Option<u64>,
+}
+
 /// Marks something watched or not.
 #[derive(Deserialize, ToSchema)]
 struct WatchedBody {
@@ -263,6 +284,14 @@ struct WatchedBody {
 #[derive(IntoResponses)]
 #[allow(dead_code)] // Only describes responses for the spec.
 enum ReadError {
+    #[response(status = 500)]
+    Database(#[to_schema] ApiError),
+}
+
+/// The database couldn't be updated; nothing was saved.
+#[derive(IntoResponses)]
+#[allow(dead_code)] // Only describes responses for the spec.
+enum SaveError {
     #[response(status = 500)]
     Database(#[to_schema] ApiError),
 }
@@ -2260,6 +2289,38 @@ fn api_result(result: Result<impl Serialize, CatalogError>, what: &'static str) 
 )]
 async fn api_playback(State(catalog): State<Catalog>) -> Json<PlaybackDetail> {
     Json(catalog.playback().await)
+}
+
+/// Sets which TMDB show or movie a pending show is, or ignores it, as the
+/// playback page's choice does; its waiting episodes are then marked.
+/// Answers with the playback page's new state.
+#[utoipa::path(
+    post,
+    path = "/api/playback/decide",
+    request_body = PlaybackDecision,
+    responses((status = OK, body = PlaybackDetail), SaveError)
+)]
+async fn api_decide_playback(
+    State(catalog): State<Catalog>,
+    body: Result<Json<PlaybackDecision>, JsonRejection>,
+) -> Response {
+    let body = match body {
+        Ok(Json(body)) => body,
+        Err(e) => return api_error(e.status(), &e.body_text()),
+    };
+    match catalog
+        .decide_playback_show(body.app, body.kind, &body.show_key, body.tmdb_id)
+        .await
+    {
+        Ok(()) => Json(catalog.playback().await).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "api playback choice save failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the choice couldn't be saved",
+            )
+        }
+    }
 }
 
 fn api_not_found() -> Response {

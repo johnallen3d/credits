@@ -50,7 +50,7 @@ pub struct PlaybackEvent {
 }
 
 /// Apps whose titles say which episode is playing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum App {
     Infuse,
@@ -83,7 +83,7 @@ impl App {
 }
 
 /// Whether something seen playing is a TV episode or a movie.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Episode,
