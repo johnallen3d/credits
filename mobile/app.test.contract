@@ -596,3 +596,15 @@ test "search results show a title's overview and a person's department and known
   expect tree missing "hit-tv-9-summary"
   expect text "hit-person-6384-summary" == "Acting · known for The Matrix (1999), John Wick"
   expect tree missing "hit-person-7-summary"
+
+test "a movie in theaters says so on search results"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/search?q=night" with 200 {"query":"night","results":[{"kind":"movie","id":7,"title":"Opening Night","year":"2026","overview":null,"poster_url":null,"in_theaters":true},{"kind":"movie","id":8,"title":"Old Night","year":"1990","overview":null,"poster_url":null,"in_theaters":false},{"kind":"tv","id":9,"title":"Night Show","year":"2001","overview":null,"poster_url":null,"in_theaters":false}]}
+  tap "tab-search"
+  clock settle
+  type "search" "night"
+  clock data
+  clock settle
+  expect text "hit-movie-7-in-theaters" == "In theaters"
+  expect tree missing "hit-movie-8-in-theaters"
+  expect tree missing "hit-tv-9-in-theaters"

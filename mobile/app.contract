@@ -36,6 +36,7 @@ shape Hit
   overview: option<string>
   known_for_department: option<string>
   known_for: option<HitKnownFor[]>
+  in_theaters: option<bool>
 
 // A title TMDB associates with a person in search.
 shape HitKnownFor
@@ -840,7 +841,8 @@ component TileLink
           text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-caption1" color="text.muted"
 
 // A section of search results: each hit's artwork, name, type and year, and its
-// overview or known-for line, as the web and macOS results show them.
+// overview or known-for line, as the web and macOS results show them, with In theaters
+// on a movie playing now.
 component HitList
   props
     heading: string
@@ -850,20 +852,21 @@ component HitList
       text heading role="heading" aria-level=2 padding="0 16px" font="-exact-title3" font-weight=700
       column gap=16 padding="0 16px"
         for h in hits key=`${h.kind}-${h.id}`
-          HitRow(testId=`hit-${h.kind}-${h.id}`, tile=fromHit(h), summary=hitSummary(h))
+          HitRow(testId=`hit-${h.kind}-${h.id}`, tile=fromHit(h), summary=hitSummary(h), inTheaters=yes(h.in_theaters))
 
 component HitRow
   props
     testId: string
     tile: Tile
     summary: string
+    inTheaters: bool
   derive kind = tile.kind
   derive id = tile.id
   derive year = tile.year
   view
     link href=(kind == "movie" ? path("movie", id) : kind == "tv" ? path("tv", id) : path("person", id))
       display="flex" align-items="flex-start" gap=12 testId=testId
-      aria-label=(year == "" ? `${tile.label}, ${kindName(kind)}` : `${tile.label}, ${kindName(kind)}, ${year}`)
+      aria-label=[tile.label, kindName(kind), year, inTheaters ? "in theaters" : ""].filter(x => x != "").join(", ")
       if tile.picture == ""
         column width=60 height=(kind == "person" ? 60 : 90) flex-shrink=0 border-radius=(kind == "person" ? "50%" : "8px")
           background-color="surface.thumb" align-items="center" justify-content="center"
@@ -874,6 +877,8 @@ component HitRow
       column flex=1 min-width=0 gap=2
         text tile.label font="-exact-subheadline" font-weight=600 line-clamp=2
         text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-caption1" color="text.muted"
+        if inTheaters
+          text "In theaters" font="-exact-caption1" color="accent" testId=`${testId}-in-theaters`
         if summary != ""
           text summary font="-exact-footnote" color="text.muted" line-clamp=3 testId=`${testId}-summary`
 
