@@ -78,7 +78,8 @@
     });
 
     // Photos and posters open full size over the page; the smaller copy
-    // already shown fills in until the original loads, or if it can't.
+    // already shown fills in until the original loads, or if it can't. An
+    // episode's still stays shut while the episode is unwatched, as on iOS.
     (function () {
       var images = document.querySelectorAll("img[data-full]");
       if (!images.length || !window.HTMLDialogElement) return;
@@ -91,8 +92,13 @@
       images.forEach(function (img) {
         img.tabIndex = 0;
         img.setAttribute("role", "button");
-        img.title = "View full size";
+        function shut() { return img.matches(".detail-body:has(.spoiler) img"); }
+        function label() { img.title = shut() ? "Spoiler: mark the episode watched to view it full size" : "View full size"; }
+        label();
+        img.addEventListener("pointerenter", label);
+        img.addEventListener("focus", label);
         function open() {
+          if (shut()) return;
           big.src = img.currentSrc || img.src;
           big.alt = img.alt;
           var full = new Image();

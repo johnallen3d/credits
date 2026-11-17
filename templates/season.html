@@ -35,7 +35,7 @@
       {% call watch::toggle(show_action, watched.show, "Show watched", page, "episodes", "Show") %}{% endcall %}
       {% call watch::toggle(season_action, revealed, "Season watched", page, "episodes", "Season") %}{% endcall %}
       {% if !revealed %}
-      <p class="muted">Summaries and ratings of unwatched episodes are blurred. Select one to peek, or use its eye to mark it watched.</p>
+      <p class="muted">Stills, summaries and ratings of unwatched episodes are blurred. Select one to peek, or use its eye to mark it watched.</p>
       {% endif %}
     </div>
     {% if !s.episodes.is_empty() %}

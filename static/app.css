@@ -282,6 +282,11 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .spoiler .overview:not(.muted), .spoiler .episode-rating :is(.ring, .rating-note) { filter: blur(5px); user-select: none; cursor: pointer; transition: filter .15s; }
 .spoiler .overview:focus, .spoiler .episode-rating:focus :is(.ring, .rating-note) { filter: none; user-select: auto; cursor: auto; }
 .spoiler .overview:focus, .spoiler .episode-rating:focus { outline: none; }
+/* An unwatched episode's still blurs too, clipped so the blur keeps its edges; peeking at the summary shows it.
+   On the episode page the still sits beside the spoiler block, so it keys off that (live after HTMX swaps). */
+.spoiler .still:not(.missing), .detail-body:has(#episode.spoiler) .still:not(.missing) { filter: blur(14px); clip-path: inset(0 round 4px); transition: filter .15s; }
+.spoiler:has(.overview:focus) .still, .detail-body:has(#episode.spoiler .overview:focus) .still { filter: none; }
+.detail-body:has(#episode.spoiler) img[data-full] { cursor: default; }
 .still { flex: none; width: 200px; height: 113px; object-fit: cover; border-radius: 4px; background: var(--line); }
 .still.missing { display: flex; align-items: center; justify-content: center; font-size: .8rem; color: var(--muted); }
 .still-link { flex: none; }
