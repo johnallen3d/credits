@@ -65,9 +65,11 @@ test "marking a season watched unblurs and marks its episodes"
   at "/tv/95396/season/1"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
   answer fetch "https://credits.jallen7usa.com/api/tv/95396" with 200 {"kind":"tv","id":95396,"title":"Severance","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
-  answer fetch "https://credits.jallen7usa.com/api/tv/95396/season/1" with 200 {"show_title":"Severance","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Good News About Hell"},{"number":2,"title":"Half Loop"}],"watched":{"show":false,"seasons":[],"episodes":[]}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396/season/1" with 200 {"show_title":"Severance","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Good News About Hell","air_date":"2022-02-18","runtime_minutes":57},{"number":2,"title":"Half Loop","air_date":null}],"watched":{"show":false,"seasons":[],"episodes":[]}}
   answer fetch "https://credits.jallen7usa.com/api/tv/95396/season/1/watched" with 200 {"state":"read","show":false,"seasons":[1],"episodes":[]}
   expect text "season-state" == "Season not watched"
+  expect text "episode-facts-1" == "Feb 18, 2022 · 57 min"
+  expect text "episode-facts-2" == "Air date not announced"
   expect text "mark-episode-1" == "Mark Watched"
   tap "mark-season"
   clock data
@@ -381,6 +383,7 @@ test "tapping an episode in a season opens its screen"
   fail fetch "https://credits.jallen7usa.com/api/recent"
   answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1" with 200 {"show_title":"Breaking Bad","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Pilot","air_date":"2008-01-20","overview":"A teacher turns.","still_url":null}],"watched":{"state":"read","show":false,"seasons":[],"episodes":[]}}
   answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1/episode/1" with 200 {"show_title":"Breaking Bad","season_number":1,"season_name":"Season 1","number":1,"title":"Pilot","air_date":"2008-01-20","overview":"A teacher turns.","runtime_minutes":59,"still_url":null,"rating":{"source":"imdb","score":9.0,"scale":10},"episode_ratings":{"state":"fresh","unavailable_reason":null},"key_crew":[{"role":"director","people":[{"person_id":66633,"name":"Vince Gilligan","role":"Director","profile_url":null}]}],"cast":[{"person_id":17419,"name":"Bryan Cranston","role":"Walter White","profile_url":null}],"guest_stars":[],"previous":null,"next":2,"watched":{"state":"read","show":false,"seasons":[],"episodes":[]}}
+  expect text "episode-facts-1" == "Jan 20, 2008"
   tap "episode-open-1"
   expect text "episode-title" == "Pilot"
   expect text "facts" == "Jan 20, 2008 · 59 min"
