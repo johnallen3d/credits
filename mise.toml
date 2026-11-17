@@ -43,17 +43,6 @@ pkill -x CreditsLauncher || true
 open "macos/build/Credits Launcher.app"
 '''
 
-[tasks."mac:install"]
-description = "Build the macOS launcher, install it to ~/Applications and relaunch it"
-depends = ["mac:build"]
-run = '''
-pkill -x CreditsLauncher || true
-mkdir -p ~/Applications
-rm -rf ~/Applications/"Credits Launcher.app"
-ditto "macos/build/Credits Launcher.app" ~/Applications/"Credits Launcher.app"
-open ~/Applications/"Credits Launcher.app"
-'''
-
 # The Exact iOS spike in mobile/. Exact is a source checkout, not a package:
 # mobile:setup clones it into mobile/.exact-sdk at the commit the app was built
 # against.
