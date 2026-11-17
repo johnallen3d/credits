@@ -156,7 +156,7 @@ test "coming soon says so when the server doesn't answer"
   tap "browse"
   tap "browse-coming-soon"
   expect text "releases-title" == "Coming Soon"
-  expect tree missing "releases"
+  expect tree missing "title-releases"
 
 test "my services opens from the start screen's menu, grouped, with the chosen first"
   fail fetch "https://credits.jallen7usa.com/api/recent"
@@ -216,3 +216,21 @@ test "without TMDB's list only the chosen services are listed, and it says why"
   expect tree has "services-unavailable"
   expect tree missing "services-partial"
   expect tree has "service-8"
+test "a movie in theaters shows its release dates, rating and showtimes"
+  at "/movie/7"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/7" with 200 {"kind":"movie","id":7,"title":"Opening Night","genres":[],"ratings":{"preferred":null},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false},"releases":{"region":"US","certification":"PG-13","dates":[{"kind":"theatrical","date":"2026-11-06","upcoming":false},{"kind":"digital","date":"2027-01-20","upcoming":true}]},"in_theaters":true,"showtimes_url":"https://www.fandango.com/search?q=Opening%20Night"}
+  expect tree has "in-theaters"
+  expect tree has "showtimes"
+  expect tree has "release-theatrical"
+  expect tree has "release-digital"
+  expect tree has "certification"
+
+test "a movie without dates or theaters shows none of them"
+  at "/movie/8"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/8" with 200 {"kind":"movie","id":8,"title":"Old Film","genres":[],"ratings":{"preferred":null},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false},"releases":null,"in_theaters":false,"showtimes_url":null}
+  expect tree has "title"
+  expect tree missing "in-theaters"
+  expect tree missing "showtimes"
+  expect tree missing "title-releases"

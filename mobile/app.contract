@@ -75,6 +75,17 @@ shape WhereToWatch
   fetched_at: option<string>
   my_services: string
 
+// When a movie comes out in the server's region, and its age rating there.
+shape ReleaseDate
+  kind: string
+  date: string
+  upcoming: bool
+
+shape TitleReleases
+  region: string
+  certification: option<string>
+  dates: ReleaseDate[]
+
 shape Title
   kind: string
   id: number
@@ -92,6 +103,8 @@ shape Title
   marks: Marks
   in_theaters: option<bool>
   where_to_watch: option<WhereToWatch>
+  releases: option<TitleReleases>
+  showtimes_url: option<string>
 
 shape Episode
   number: number
@@ -238,6 +251,8 @@ fn offerLabel(k: string): string = k == "stream" ? "Stream" : k == "free" ? "Fre
 fn uniq(xs: string[]): string[] = range(xs.length).filter(i => xs.indexOf(text(xs.at(i))) == i).map(i => text(xs.at(i)))
 fn myServices(w: WhereToWatch): string[] = uniq(w.offers.map(g => g.providers.filter(p => p.mine).map(p => p.name)).flat())
 fn listedOn(w: WhereToWatch): string = match w.fetched_at { case some(t) => formatDate(t.slice(0, 10), 0, "medium"), case none => "" }
+fn releaseLabel(d: ReleaseDate): string = d.kind == "theatrical" ? "In theaters" : d.kind == "digital" ? "Digital" : d.kind == "physical" ? "Physical" : d.upcoming ? "Release" : "Released"
+fn releaseDay(d: ReleaseDate): string = d.upcoming ? `Coming ${formatDate(d.date, 0, "medium")}` : formatDate(d.date, 0, "medium")
 
 component App
   // The web's theme picker, remembered on the phone. The dark themes keep the
@@ -410,8 +425,13 @@ component TitleScreen
                 text `${text(t.year)}${t.genres.length > 0 ? " · " : ""}${t.genres.join(", ")}` color="text.muted"
                 if scoreText(t.ratings) != ""
                   text scoreText(t.ratings) font="-exact-headline" testId="score"
+                if theatersOf(t)
+                  text "In theaters" font="-exact-footnote" color="accent" testId="in-theaters"
                 if marks.favorite
                   text "★ Favorite" color="mark.favorite" testId="favorite-badge"
+                if text(t.showtimes_url) != ""
+                  link href=text(t.showtimes_url) testId="showtimes"
+                    text "Showtimes"
                 if text(t.tagline) != ""
                   text text(t.tagline) font="-exact-footnote" color="text.muted"
             if text(t.overview) != ""
@@ -422,6 +442,10 @@ component TitleScreen
           match t.where_to_watch
             case some(w)
               WhereToWatchSection(w=w, inTheaters=theatersOf(t))
+            case none
+          match t.releases
+            case some(r)
+              ReleaseSection(info=r)
             case none
           if seasonsOf(t).length > 0
             section
@@ -504,6 +528,26 @@ component Provider
         if p.mine
           image "symbol:checkmark" color="accent" font="-exact-caption-1" aria-label="Your service"
         text p.name font="-exact-caption-1" text-align="center" color=(p.mine ? "accent" : "text.primary")
+
+// A movie's release dates in the server's region, then its rating there, as the
+// web's detail list shows them.
+component ReleaseSection
+  props
+    info: TitleReleases
+  view
+    section testId="title-releases"
+      header
+        text `Release · ${info.region}`
+      for d in info.dates key=d.kind
+        row gap=12 background-color="surface.card" testId=`release-${d.kind}`
+          text releaseLabel(d) flex=1
+          text releaseDay(d) color=(d.upcoming ? "accent" : "text.muted")
+      match info.certification
+        case some(c)
+          row gap=12 background-color="surface.card" testId="certification"
+            text "Rated" flex=1
+            text c color="text.muted"
+        case none
 
 // A season's episodes. An episode not yet watched keeps its summary and still
 // blurred, as the web's spoiler guard does.
