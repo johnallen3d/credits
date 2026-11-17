@@ -14,9 +14,23 @@ final class LauncherModel {
     var searching = false
     var searchError: String?
 
+    /// The page in detail: a result, or a credit opened from another page.
     var detailHit: SearchHit?
     var detail: Detail?
     var detailError: String?
+    /// The selected credit on the page in detail, an index into `detail.rows`.
+    var detailRow: Int?
+    /// The pages behind the one in detail, oldest first.
+    var back: [Page] = []
+    /// Bumped on every page change, so the view starts each page at its top.
+    var pageID = 0
+
+    struct Page {
+        let hit: SearchHit
+        let detail: Detail?
+        let error: String?
+        let row: Int?
+    }
 
     /// List state per title, from its detail or the last change.
     var marks: [SearchHit: TitleMarks] = [:]
@@ -73,17 +87,59 @@ final class LauncherModel {
     }
 
     func move(_ delta: Int) {
-        guard detailHit == nil, !results.isEmpty else { return }
+        if detailHit != nil {
+            // Up from the first credit returns to the top of the page.
+            let count = detail?.rows.count ?? 0
+            guard count > 0 else { return }
+            let next = (detailRow ?? -1) + delta
+            detailRow = next < 0 ? nil : min(count - 1, next)
+            return
+        }
+        guard !results.isEmpty else { return }
         let index = selection.flatMap { results.firstIndex(of: $0) } ?? -1
         selection = results[max(0, min(results.count - 1, index + delta))]
     }
 
+    /// Opens a result's detail, starting a fresh back stack.
     func open(_ hit: SearchHit) {
-        detailTask?.cancel()
         selection = hit
+        back = []
+        load(hit)
+    }
+
+    /// Opens a credit on the page in detail, keeping that page to go back to.
+    func openRow(_ index: Int) {
+        guard let hit = detailHit, let row = detail?.rows[safe: index] else { return }
+        back.append(Page(hit: hit, detail: detail, error: detailError, row: index))
+        load(row)
+    }
+
+    /// Returns to the previous page, or to the results from the first one.
+    func goBack() {
+        guard let page = back.popLast() else {
+            backToResults()
+            return
+        }
+        if page.detail == nil {
+            // It never finished loading, so try again.
+            load(page.hit)
+            return
+        }
+        detailTask?.cancel()
+        detailHit = page.hit
+        detail = page.detail
+        detailError = page.error
+        detailRow = page.row
+        pageID += 1
+    }
+
+    private func load(_ hit: SearchHit) {
+        detailTask?.cancel()
         detailHit = hit
         detail = nil
         detailError = nil
+        detailRow = nil
+        pageID += 1
         detailTask = Task {
             do {
                 let d = try await api.detail(hit.kind, hit.id)
@@ -103,6 +159,8 @@ final class LauncherModel {
         detailHit = nil
         detail = nil
         detailError = nil
+        detailRow = nil
+        back = []
     }
 
     func openInBrowser(_ kind: Kind, _ id: Int) {
@@ -157,7 +215,13 @@ final class LauncherModel {
 
     func handleReturn(command: Bool) -> Bool {
         if let hit = detailHit {
-            openInBrowser(hit.kind, hit.id)
+            // ⏎ opens the selected credit's page here; with none selected, and
+            // with ⌘, it opens the selected credit, or the page itself, on the web.
+            if let index = detailRow, let row = detail?.rows[safe: index] {
+                if command { openInBrowser(row.kind, row.id) } else { openRow(index) }
+            } else {
+                openInBrowser(hit.kind, hit.id)
+            }
             return true
         }
         guard let hit = selection else { return false }
@@ -166,6 +230,10 @@ final class LauncherModel {
     }
 
     func handleEscape() {
-        if detailHit != nil { backToResults() } else { close() }
+        if detailHit != nil { goBack() } else { close() }
     }
+}
+
+extension Collection {
+    subscript(safe index: Index) -> Element? { indices.contains(index) ? self[index] : nil }
 }

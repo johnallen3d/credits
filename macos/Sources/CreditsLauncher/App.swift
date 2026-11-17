@@ -143,7 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
-        if event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+        let commandOnly = event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command
+        if commandOnly, Int(event.keyCode) == kVK_ANSI_LeftBracket, model.detailHit != nil {
+            model.goBack()
+            return true
+        }
+        if commandOnly,
            let list = ListAction.allCases.first(where: { $0.key == event.charactersIgnoringModifiers?.lowercased() }) {
             model.toggle(list)
             return true

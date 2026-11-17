@@ -39,6 +39,19 @@ struct SearchHit: Decodable, Identifiable, Hashable {
         }
     }
 
+    /// A credit on a detail page, to open as a page of its own.
+    init(kind: Kind, id: Int, title: String? = nil, name: String? = nil, year: String? = nil) {
+        self.kind = kind
+        self.id = id
+        self.title = title
+        self.name = name
+        self.year = year
+        posterUrl = nil
+        profileUrl = nil
+        knownForDepartment = nil
+        knownFor = nil
+    }
+
     static func == (a: SearchHit, b: SearchHit) -> Bool { a.kind == b.kind && a.id == b.id }
     func hash(into h: inout Hasher) { h.combine(kind); h.combine(id) }
 }
@@ -213,6 +226,21 @@ struct PersonCredit: Decodable, Hashable {
 enum Detail {
     case title(TitleDetail)
     case person(PersonDetail)
+
+    /// How many cast members a title's page lists.
+    static let castShown = 8
+
+    /// The credits a page lists, in order: a title's key crew then cast, or
+    /// a person's titles. Each opens a page of its own.
+    var rows: [SearchHit] {
+        switch self {
+        case .title(let t):
+            return (t.keyCrew.flatMap(\.people) + t.cast.prefix(Self.castShown))
+                .map { SearchHit(kind: .person, id: $0.personId, name: $0.name) }
+        case .person(let p):
+            return p.knownForTitles.map { SearchHit(kind: $0.kind, id: $0.id, title: $0.title, year: $0.year) }
+        }
+    }
 }
 
 private struct ErrorBody: Decodable { let error: String }

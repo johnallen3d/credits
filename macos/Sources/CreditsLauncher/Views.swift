@@ -10,7 +10,7 @@ struct LauncherView: View {
                 Image(systemName: model.detailHit == nil ? "magnifyingglass" : "chevron.left")
                     .font(.title2)
                     .foregroundStyle(Theme.muted)
-                    .onTapGesture { model.backToResults() }
+                    .onTapGesture { model.goBack() }
                 TextField("Search movies, TV and people", text: $model.query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 22))
@@ -41,6 +41,8 @@ struct LauncherView: View {
 
             Rule()
             FooterView(inDetail: model.detailHit != nil,
+                       rowSelected: model.detailRow != nil,
+                       canGoBack: !model.back.isEmpty,
                        lists: model.listTarget.map { $0.kind != .person } ?? false)
         }
         .frame(width: 720, height: 480)
@@ -127,21 +129,48 @@ struct DetailContainer: View {
         if let error = model.detailError {
             Notice(icon: "exclamationmark.triangle", text: error, tint: Theme.love)
         } else if let detail = model.detail {
-            ScrollView {
-                Group {
-                    switch detail {
-                    case .title(let t):
-                        TitleDetailView(title: t, marks: model.marks[hit] ?? t.marks,
-                                        changing: model.changing.contains(hit))
-                    case .person(let p): PersonDetailView(person: p)
+            let credits = Credits(selected: model.detailRow, open: { model.openRow($0) })
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Group {
+                        switch detail {
+                        case .title(let t):
+                            TitleDetailView(title: t, marks: model.marks[hit] ?? t.marks,
+                                            changing: model.changing.contains(hit), credits: credits)
+                        case .person(let p): PersonDetailView(person: p, credits: credits)
+                        }
                     }
+                    .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(18)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .onChange(of: model.detailRow, initial: true) { _, row in
+                    if let row { proxy.scrollTo(Credits.id(row)) }
+                }
             }
+            .id(model.pageID)
         } else {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+/// The credits on a detail page: which one is selected, and how to open one.
+/// Rows are numbered as in `Detail.rows`.
+struct Credits {
+    let selected: Int?
+    let open: (Int) -> Void
+
+    static func id(_ row: Int) -> String { "credit-\(row)" }
+
+    /// A credit's row, highlighted when selected, opening its page on click.
+    func row(_ index: Int, @ViewBuilder _ content: () -> some View) -> some View {
+        content()
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(index == selected ? Theme.line : .clear, in: RoundedRectangle(cornerRadius: 5))
+            .padding(.horizontal, -5).padding(.vertical, -1)
+            .contentShape(Rectangle())
+            .onTapGesture { open(index) }
+            .id(Self.id(index))
     }
 }
 
@@ -149,6 +178,16 @@ struct TitleDetailView: View {
     let title: TitleDetail
     let marks: TitleMarks?
     let changing: Bool
+    let credits: Credits
+
+    /// Each key crew role with the row number of its first person.
+    private var crew: [(role: KeyCrew, first: Int)] {
+        var next = 0
+        return title.keyCrew.map { role in
+            defer { next += role.people.count }
+            return (role, next)
+        }
+    }
 
     private var facts: String {
         var parts: [String] = []
@@ -199,19 +238,32 @@ struct TitleDetailView: View {
             }
             StaleNotice(metadata: title.metadata)
             WhereToWatchView(whereToWatch: title.whereToWatch)
-            ForEach(title.keyCrew, id: \.self) { crew in
-                Section(heading: crewHeading(crew.role)) {
-                    Text(crew.people.map(\.name).joined(separator: ", "))
+            ForEach(crew, id: \.first) { crew in
+                Section(heading: crewHeading(crew.role.role)) {
+                    FlowLayout {
+                        ForEach(Array(crew.role.people.enumerated()), id: \.offset) { i, person in
+                            HStack(spacing: 0) {
+                                credits.row(crew.first + i) { Text(person.name) }
+                                if i < crew.role.people.count - 1 {
+                                    // Wider than a selected name's highlight spills.
+                                    Text("·").foregroundStyle(Theme.muted).padding(.horizontal, 8)
+                                }
+                            }
+                        }
+                    }
                 }
             }
             if !title.cast.isEmpty {
+                let first = title.keyCrew.reduce(0) { $0 + $1.people.count }
                 Section(heading: "Cast") {
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(title.cast.prefix(8), id: \.self) { c in
-                            HStack(spacing: 4) {
-                                Text(c.name)
-                                if let role = c.role, !role.isEmpty {
-                                    Text("as \(role)").foregroundStyle(Theme.muted)
+                        ForEach(Array(title.cast.prefix(Detail.castShown).enumerated()), id: \.offset) { i, c in
+                            credits.row(first + i) {
+                                HStack(spacing: 4) {
+                                    Text(c.name)
+                                    if let role = c.role, !role.isEmpty {
+                                        Text("as \(role)").foregroundStyle(Theme.muted)
+                                    }
                                 }
                             }
                         }
@@ -307,6 +359,7 @@ struct WhereToWatchView: View {
 
 struct PersonDetailView: View {
     let person: PersonDetail
+    let credits: Credits
 
     private var born: String? {
         let parts = [person.birthday.map { "Born \($0)" }, person.placeOfBirth].compactMap { $0 }
@@ -332,12 +385,17 @@ struct PersonDetailView: View {
             if !person.knownForTitles.isEmpty {
                 Section(heading: "Known for") {
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(person.knownForTitles, id: \.self) { c in
-                            HStack(spacing: 4) {
-                                Text(c.title)
-                                if let year = c.year { Text("(\(year))").foregroundStyle(Theme.muted) }
-                                if let role = c.role, !role.isEmpty {
-                                    Text("· \(role)").foregroundStyle(Theme.muted)
+                        ForEach(Array(person.knownForTitles.enumerated()), id: \.offset) { i, c in
+                            credits.row(i) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: c.kind == .tv ? "tv" : "film")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.color(for: c.kind))
+                                    Text(c.title)
+                                    if let year = c.year { Text("(\(year))").foregroundStyle(Theme.muted) }
+                                    if let role = c.role, !role.isEmpty {
+                                        Text("· \(role)").foregroundStyle(Theme.muted)
+                                    }
                                 }
                             }
                         }
@@ -345,6 +403,40 @@ struct PersonDetailView: View {
                 }
             }
         }
+    }
+}
+
+/// Lays its children out in rows, wrapping to the width it's given.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 0
+    var lineSpacing: CGFloat = 3
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(proposal.width ?? .infinity, subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, point) in zip(subviews, arrange(bounds.width, subviews).points) {
+            subview.place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y), proposal: .unspecified)
+        }
+    }
+
+    private func arrange(_ width: CGFloat, _ subviews: Subviews) -> (points: [CGPoint], size: CGSize) {
+        var points: [CGPoint] = []
+        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0, widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += lineHeight + lineSpacing
+                lineHeight = 0
+            }
+            points.append(CGPoint(x: x, y: y))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+            widest = max(widest, x - spacing)
+        }
+        return (points, CGSize(width: widest, height: y + lineHeight))
     }
 }
 
@@ -416,6 +508,8 @@ struct Notice: View {
 
 struct FooterView: View {
     let inDetail: Bool
+    let rowSelected: Bool
+    let canGoBack: Bool
     let lists: Bool
 
     var body: some View {
@@ -423,8 +517,14 @@ struct FooterView: View {
             Spacer()
             if lists && !inDetail { hint("⌘T ⌘F ⌘W", "To watch, Favorites, Watched") }
             if inDetail {
-                hint("⏎", "Open in browser")
-                hint("esc", "Back")
+                if rowSelected {
+                    hint("⏎", "Open")
+                    hint("⌘⏎", "Open in browser")
+                } else {
+                    hint("↑↓", "Select")
+                    hint("⏎", "Open in browser")
+                }
+                hint("esc", canGoBack ? "Back" : "Results")
             } else {
                 hint("⏎", "Details")
                 hint("⌘⏎", "Open in browser")
