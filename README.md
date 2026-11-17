@@ -25,7 +25,6 @@ watch, and keep track of what you've watched, without spoilers.
 - **Survives outages:** serves stale cached data, and says when
   something can't be loaded rather than showing it empty
 - **Themes:** Rosé Pine, Tokyo Night, Catppuccin, Classic
-- **Terminal client** (`credits`) with the same features over the API
 - **JSON API** under `/api/…` for every page, described by
   [`openapi.json`](openapi.json)
 
@@ -35,7 +34,6 @@ watch, and keep track of what you've watched, without spoilers.
 doppler secrets set TMDB_API_TOKEN --project credits --config dev
 doppler secrets set OMDB_API_KEY --project credits --config dev   # optional
 mise run dev   # web on http://127.0.0.1:3000
-mise run tui   # terminal client
 ```
 
 | Variable | Default | Purpose |
@@ -48,11 +46,11 @@ mise run tui   # terminal client
 | `HA_URL`, `HA_TOKEN` | unset | Home Assistant, enables Seen on Apple TV |
 | `CREDITS_HA_PLAYERS` | `media_player.living_room_appletv` | Players to follow |
 
-The terminal client reads `~/.config/credits/config.toml`:
+The macOS launcher reads `~/.config/credits/config.toml`:
 
 ```toml
 url = "https://credits.jallen7usa.com"
-theme = "rose-pine"   # optional; press ? in the app for keys
+theme = "rose-pine"   # optional
 ```
 
 ## Develop

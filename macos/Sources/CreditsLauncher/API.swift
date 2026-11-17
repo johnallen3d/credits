@@ -456,7 +456,7 @@ struct APIError: LocalizedError {
 struct CreditsAPI {
     let base: URL
 
-    /// The server in the terminal client's config file, else the hosted one.
+    /// The server in the config file, else the hosted one.
     static func fromConfig() -> CreditsAPI {
         let fallback = URL(string: "https://credits.jallen7usa.com")!
         return CreditsAPI(base: CreditsConfig.value("url").flatMap(URL.init(string:)) ?? fallback)

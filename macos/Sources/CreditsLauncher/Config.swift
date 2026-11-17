@@ -1,9 +1,8 @@
 import Foundation
 
-/// The terminal client's config file, shared with it: `url` names the
-/// server and `theme` the palette. Found the same way (`$CREDITS_CONFIG`,
-/// else `$XDG_CONFIG_HOME/credits/config.toml`, else
-/// `~/.config/credits/config.toml`).
+/// The config file: `url` names the server and `theme` the palette.
+/// Found at `$CREDITS_CONFIG`, else `$XDG_CONFIG_HOME/credits/config.toml`,
+/// else `~/.config/credits/config.toml`.
 enum CreditsConfig {
     static var path: URL {
         let env = ProcessInfo.processInfo.environment.filter { !$0.value.isEmpty }

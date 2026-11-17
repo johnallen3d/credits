@@ -1692,7 +1692,7 @@ pub fn seasons_label(seasons: &[u32]) -> Option<String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WatchedSource {
-    /// Marked in the web UI or terminal client, or by favoriting a show.
+    /// Marked in the web UI or over the API, or by favoriting a show.
     Manual,
     /// Marked from what played on an Apple TV.
     AppleTv,

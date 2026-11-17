@@ -74,7 +74,7 @@ struct Palette {
 }
 
 /// The chosen theme: the menu bar menu's pick, else the config file's
-/// `theme` key (Rosé Pine if absent or unknown, as in the terminal client).
+/// `theme` key (Rosé Pine if absent or unknown).
 /// The pick is a launcher preference rather than a write to the config file,
 /// which may be generated (e.g. by Nix) and read-only.
 @Observable

@@ -233,8 +233,8 @@ impl Catalog {
         }
     }
 
-    /// Records a page that a client such as the terminal client opened from
-    /// the JSON API, looking up its name and artwork; answers with the list.
+    /// Records a page that a client opened from the JSON API, looking up its
+    /// name and artwork; answers with the list.
     pub async fn view(&self, kind: RecentKind, id: u64) -> Result<Vec<RecentView>, RecentError> {
         let view = match kind.title() {
             Some(kind) => RecentView::of_title(&self.title_detail(kind, id).await?),

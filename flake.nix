@@ -48,14 +48,12 @@
           doCheck = false;
           nativeBuildInputs = [pkgs.makeBinaryWrapper];
           postInstall = ''
-            for bin in credits credits-web; do
-              wrapProgram "$out/bin/$bin" --set-default SSL_CERT_FILE ${caBundle}
-            done
+            wrapProgram "$out/bin/credits-web" --set-default SSL_CERT_FILE ${caBundle}
           '';
           meta = {
             description = "Movie and TV browser";
             license = lib.licenses.mit;
-            # The server, which Home Manager runs; `credits` is the terminal client.
+            # The server, which Home Manager runs.
             mainProgram = "credits-web";
           };
         });
