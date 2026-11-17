@@ -584,6 +584,9 @@ fn entryNotes(e: ListEntry): string = [yes(e.in_theaters) ? "In theaters" : "", 
 fn watchedNotes(t: WatchedTitle): string = [progressText(t.progress), `Watched ${day(t.last_watched_at)}`, t.sources.includes("apple_tv") ? "Apple TV" : ""].filter(x => x != "").join(" · ")
 fn watchedTitle(t: WatchedTitle): string = match t.title { case some(s) => s, case none => `${kindName(t.kind)} #${t.id}` }
 
+keyframes drawer-in
+  from translate="-100% 0px"
+
 component App
   // The web's theme picker, remembered on the phone. The dark themes keep the
   // system chrome dark; Classic follows the phone's light or dark.
@@ -611,7 +614,13 @@ component App
     nav = back(nav)
   action follow(url: string)
     nav = go(nav, url)
+  action closeMenu
+    close("drawer")
+  action open(url: string)
+    close("drawer")
+    nav = go(nav, url)
   action browse(l: string)
+    close("drawer")
     releasesPages = 1
     nav = go(nav, path("releases", l))
   action releasesMore
@@ -634,36 +643,9 @@ component App
           column navigationKey=`${e.id}` navigationScroll="hits" position="absolute" inset=0
             display="flex" flex-direction="column"
             header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px" background-color="surface.page"
+              button command="show-modal" commandfor="drawer" aria-label="Menu" testId="menu"
+                image "symbol:menu" color="accent"
               text "Credits" role="heading" aria-level=1 flex=1
-              button popovertarget="theme-menu" aria-label="Theme" testId="theme"
-                image "symbol:icon.theme" color="accent"
-              column id="theme-menu" popover="auto" role="menu"
-                for t in ["rose-pine", "tokyo-night", "catppuccin", "classic"] key=t
-                  button press=pickTheme(t) role="menuitemradio" aria-checked=(theme == t)
-                    popovertarget="theme-menu" popovertargetaction="hide" testId=`theme-${t}`
-                    text themeName(t)
-              button popovertarget="browse-menu" aria-label="Browse" testId="browse"
-                image "symbol:more" color="accent"
-              column id="browse-menu" popover="auto" role="menu"
-                for l in ["now-playing", "coming-soon"] key=l
-                  button press=browse(l) popovertarget="browse-menu" popovertargetaction="hide"
-                    testId=`browse-${l}`
-                    text releaseList(l)
-                button press=follow(path("watchlist")) role="menuitem"
-                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-watchlist"
-                  text "To Watch"
-                button press=follow(path("favorites")) role="menuitem"
-                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-favorites"
-                  text "Favorites"
-                button press=follow(path("watched")) role="menuitem"
-                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-watched"
-                  text "Watched"
-                button press=follow(path("services")) role="menuitem"
-                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-services"
-                  text "My Services"
-                button press=follow(path("playback")) role="menuitem"
-                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-playback"
-                  text "Seen on Apple TV"
               input type="search" value=query input=edit placeholder="Movies, shows, people"
                 aria-label="Search" testId="search" width="100%"
             if asked == "" and recents.length > 0
@@ -686,6 +668,40 @@ component App
                 section
                   for h in hits key=`${h.kind}-${h.id}`
                     Entry(testId=`hit-${h.kind}-${h.id}`, kind=h.kind, id=`${h.id}`, label=label(h), picture=picture(h), year=text(h.year))
+            // The menu: every destination and the theme, slid in from the left.
+            // A full-window dialog painting its own dim: iOS centres a top-layer dialog's box,
+            // so the panel sits at its start and the dim beside it closes the menu.
+            dialog id="drawer" width="100%" height="100%" background-color="drawer.dim" testId="drawer"
+              ::backdrop
+                background-color="transparent"
+              row width="100%" height="100%"
+                scroll width="18rem" max-width="85%" height="100%" background-color="surface.card" color="text.primary"
+                  animation="drawer-in 240ms ease-out"
+                  column padding="64px 0 24px"
+                    text "Browse" role="heading" aria-level=2 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
+                    for l in ["now-playing", "coming-soon"] key=l
+                      button press=browse(l) testId=`browse-${l}` padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                        text releaseList(l)
+                    text "Lists" role="heading" aria-level=2 margin-top=20 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
+                    button press=open(path("watchlist")) testId="open-watchlist" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                      text "To Watch"
+                    button press=open(path("favorites")) testId="open-favorites" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                      text "Favorites"
+                    button press=open(path("watched")) testId="open-watched" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                      text "Watched"
+                    button press=open(path("playback")) testId="open-playback" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                      text "Seen on Apple TV"
+                    text "Settings" role="heading" aria-level=2 margin-top=20 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
+                    button press=open(path("services")) testId="open-services" padding="12px 24px" text-align="start" width="100%" color="text.primary"
+                      text "My Services"
+                    text "Theme" role="heading" aria-level=2 margin-top=20 padding="0 24px 4px" color="text.muted" font-size=13 font-weight=600
+                    for t in ["rose-pine", "tokyo-night", "catppuccin", "classic"] key=t
+                      button press=pickTheme(t) aria-pressed=(theme == t) testId=`theme-${t}` width="100%" appearance="none"
+                        row align-items="center" gap=12 padding="12px 24px"
+                          text themeName(t) flex=1 text-align="start"
+                          if theme == t
+                            image "symbol:checkmark" color="accent"
+                button press=closeMenu aria-label="Close menu" testId="menu-close" flex=1 height="100%" appearance="none"
         if e.name == "services"
           ServicesScreen(navKey=`${e.id}`)
         if e.name == "movie"

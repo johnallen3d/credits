@@ -12,7 +12,8 @@ test "start screen lists recently viewed titles"
 test "the theme starts as Rosé Pine and survives a relaunch"
   fail fetch "https://credits.jallen7usa.com/api/recent"
   expect state theme == "rose-pine"
-  tap "theme"
+  tap "menu"
+  clock settle
   tap "theme-tokyo-night"
   expect state theme == "tokyo-night"
   reload
@@ -136,7 +137,8 @@ test "now playing lists movies with their dates and ratings, linking to their sc
   fail fetch "https://credits.jallen7usa.com/api/recent"
   answer fetch "https://credits.jallen7usa.com/api/now-playing?page=1" with 200 {"page":1,"total_pages":2,"titles":[{"id":603,"title":"The Matrix","release_date":"1999-03-31","poster_url":null,"rating":{"source":"imdb","score":8.7,"scale":10}},{"id":604,"title":"Unrated","release_date":null,"poster_url":null,"rating":null}]}
   answer fetch "https://credits.jallen7usa.com/api/now-playing?page=2" with 200 {"page":2,"total_pages":2,"titles":[{"id":605,"title":"The Matrix Revolutions","release_date":"2003-11-05","poster_url":null,"rating":null}]}
-  tap "browse"
+  tap "menu"
+  clock settle
   tap "browse-now-playing"
   expect text "releases-title" == "Now Playing"
   expect tree has "release-603"
@@ -153,7 +155,8 @@ test "now playing lists movies with their dates and ratings, linking to their sc
 test "coming soon says so when the server doesn't answer"
   fail fetch "https://credits.jallen7usa.com/api/recent"
   fail fetch "https://credits.jallen7usa.com/api/coming-soon?page=1"
-  tap "browse"
+  tap "menu"
+  clock settle
   tap "browse-coming-soon"
   expect text "releases-title" == "Coming Soon"
   expect tree missing "title-releases"
@@ -161,7 +164,8 @@ test "coming soon says so when the server doesn't answer"
 test "my services opens from the start screen's menu, grouped, with the chosen first"
   fail fetch "https://credits.jallen7usa.com/api/recent"
   answer fetch "https://credits.jallen7usa.com/api/services" with 200 {"region":"US","chosen":[{"id":8,"name":"Netflix","logo_url":null}],"options":[{"id":8,"name":"Netflix","logo_url":null,"chosen":true,"group":"mine"},{"id":337,"name":"Disney Plus","logo_url":null,"chosen":false,"group":"popular"},{"id":2,"name":"Apple TV Store","logo_url":null,"chosen":false,"group":"more"}],"state":"fresh","complete":true,"fetched_at":null}
-  tap "browse"
+  tap "menu"
+  clock settle
   tap "open-services"
   clock settle
   clock data
@@ -438,7 +442,8 @@ test "the browse menu opens To Watch, with its filters counting and a release to
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
   answer fetch "https://credits.jallen7usa.com/api/movie/1" with 200 {"kind":"movie","id":1,"title":"Soon","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false}}
   answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"sort":"added","release_unknown":1,"titles":[{"kind":"movie","id":1,"title":"Soon","year":"2026","next_release":{"kind":"digital","date":"2026-12-05","upcoming":true},"release_status":"coming_soon"},{"kind":"tv","id":2,"title":"Out","year":"2011","release_status":"out_now"},{"kind":"movie","id":3,"title":"Unknown","year":null}]}
-  tap "browse"
+  tap "menu"
+  clock settle
   tap "open-watchlist"
   clock settle
   expect text "list-title" == "To Watch"
@@ -497,7 +502,8 @@ test "Watched lists how each title was marked and filters by it"
 test "Seen on Apple TV opens from the start screen's menu"
   fail fetch "https://credits.jallen7usa.com/api/recent"
   answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"connected","since":"2026-11-16T14:46:31Z"},"status":{"state":"ok","at":"2026-11-16T14:46:31Z"},"players":["media_player.living_room"],"pending":[],"recent":[],"other":[],"unreadable":false}
-  tap "browse"
+  tap "menu"
+  clock settle
   tap "open-playback"
   clock data
   expect tree has "playback-title"
