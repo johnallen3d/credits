@@ -691,14 +691,15 @@ final class LauncherModel {
     }
 
     /// What ⌘Y opens on the page in detail: the selected episode's still, else
-    /// the page's poster, photo or still. An episode's still opens only while
-    /// its spoilers show.
+    /// the page's poster, photo or still. An episode's still opens only once
+    /// it's watched, or on its own page while peeking.
     var pageImage: (url: String, label: String)? {
         switch detail {
         case .title(let t): return t.posterUrl.map { ($0, "\(t.title) poster") }
         case .person(let p): return p.profileUrl.map { ($0, p.name) }
         case .season(let s):
             if let row = detailRow.flatMap({ detailRows[safe: $0] }), row.kind == .episode {
+                guard s.watched?.episode(s.number, row.episode ?? 0) ?? false else { return nil }
                 let e = s.episodes.first { $0.number == row.episode }
                 return e?.stillUrl.map { ($0, "\(e!.title) still") }
             }

@@ -773,8 +773,9 @@ struct ProviderChip: View {
 }
 
 /// A season: its facts, the seasons either side, and its episodes, with
-/// unwatched episodes' summaries and scores hidden until selected, as the
-/// web blurs them until you peek.
+/// unwatched episodes' stills blurred and summaries and scores hidden until
+/// selected, as the web blurs them until you peek. An unwatched episode's
+/// still doesn't open full size, as on iOS.
 struct SeasonDetailView: View {
     let season: SeasonDetail
     let credits: Credits
@@ -828,8 +829,8 @@ struct SeasonDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if !seasonWatched && !season.episodes.isEmpty {
                         note(season.watched?.state == "unreadable"
-                             ? "Watched marks couldn't be read, so unwatched episodes' summaries and scores are hidden. Select one to peek."
-                             : "Summaries and scores of unwatched episodes are hidden. Select one to peek.")
+                             ? "Watched marks couldn't be read, so unwatched episodes' stills, summaries and scores are hidden. Select one to peek."
+                             : "Stills, summaries and scores of unwatched episodes are hidden. Select one to peek.")
                     }
                     if let ratings = season.episodeRatings.note, !season.episodes.isEmpty {
                         note(ratings)
@@ -860,8 +861,8 @@ struct SeasonDetailView: View {
                      (watched?.fromAppleTV(season.number, e.number) ?? false) ? "Watched on Apple TV" : nil]
             .compactMap { $0 }.joined(separator: " · ")
         return HStack(alignment: .top, spacing: 12) {
-            Still(url: e.stillUrl)
-                .fullSize(model, e.stillUrl, "\(e.title) still")
+            Still(url: e.stillUrl, blurred: !shown)
+                .fullSize(model, seen ? e.stillUrl : nil, "\(e.title) still")
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     (Text("\(e.number). ").foregroundColor(Theme.muted) + Text(e.title).bold())
