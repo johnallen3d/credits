@@ -534,6 +534,7 @@ fn seen(w: SeasonWatched, season: number, ep: number): bool =
   seasonSeen(w, season) or w.episodes.filter(e => e.season == season and e.number == ep).length > 0
 fn episodeScore(e: EpisodeDetail): string = scoreOf(e.rating) != "" ? scoreOf(e.rating) : e.episode_ratings.state == "unavailable" ? "Ratings unavailable" : "No IMDb score"
 fn episodeFacts(e: EpisodeDetail): string = [match e.air_date { case some(d) => formatDate(d, 0, "medium"), case none => "Not announced" }, match e.runtime_minutes { case some(m) => `${m} min`, case none => "" }].filter(x => x != "").join(" · ")
+fn titleFacts(t: Title): string = [text(t.year), match t.runtime_minutes { case some(m) => `${m} min`, case none => "" }, t.genres.join(", ")].filter(x => x != "").join(" · ")
 fn offerLabel(k: string): string = k == "stream" ? "Stream" : k == "free" ? "Free" : k == "ads" ? "Free with ads" : k == "rent" ? "Rent" : "Buy"
 fn uniq(xs: string[]): string[] = range(xs.length).filter(i => xs.indexOf(text(xs.at(i))) == i).map(i => text(xs.at(i)))
 fn myServices(w: WhereToWatch): string[] = uniq(w.offers.map(g => g.providers.filter(p => p.mine).map(p => p.name)).flat())
@@ -874,7 +875,7 @@ component TitleScreen
                 link href=photoPath(text(t.poster_url)) aria-label=`Poster for ${t.title}, full size` testId="poster"
                   image text(t.poster_url) aria-label="" width=110 height=165 border-radius=8 object-fit="cover"
               column flex=1 min-width=0 gap=6
-                text `${text(t.year)}${t.genres.length > 0 ? " · " : ""}${t.genres.join(", ")}` color="text.muted"
+                text titleFacts(t) color="text.muted" testId="title-facts"
                 if theatersOf(t)
                   text "In theaters" font="-exact-footnote" color="accent" testId="in-theaters"
                 if ratingsNote(t.ratings) != ""

@@ -256,6 +256,7 @@ test "a movie without dates or theaters shows none of them"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
   answer fetch "https://credits.jallen7usa.com/api/movie/8" with 200 {"kind":"movie","id":8,"title":"Old Film","genres":[],"ratings":{"preferred":null},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false},"releases":null,"in_theaters":false,"showtimes_url":null}
   expect tree has "title"
+  expect text "title-facts" == ""
   expect tree missing "in-theaters"
   expect tree missing "showtimes"
   expect tree missing "title-releases"
@@ -343,6 +344,7 @@ test "a title served stale from the cache says so, and its ratings note why they
   answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":"Neo wakes up.","year":"1999","genres":["Action"],"runtime_minutes":136,"poster_url":null,"backdrop_url":null,"ratings":{"state":"unavailable","unavailable_reason":"provider_error","preferred":null,"fetched_at":null},"cast":[],"season_list":[],"marks":{"to_watch":null,"favorite":null,"watched":null},"metadata":{"state":"stale","fetched_at":"2026-10-16T08:00:00Z"}}
   tap "recent-movie-603"
   expect text "title" == "The Matrix"
+  expect text "title-facts" == "1999 · 136 min · Action"
   expect text "stale" == "TMDB isn’t responding, so this page shows details saved on Oct 16, 2026. They may be out of date."
   expect text "ratings-note" == "Ratings couldn’t be loaded right now."
   expect tree has "favorites-note"
