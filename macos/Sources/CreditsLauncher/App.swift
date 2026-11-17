@@ -186,6 +186,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             model.toggle(list)
             return true
         }
+        // Emacs-style ⌃N / ⌃P, as in other macOS lists and text fields.
+        if event.modifierFlags.intersection([.command, .shift, .option, .control]) == .control {
+            switch Int(event.keyCode) {
+            case kVK_ANSI_N: model.move(1); return true
+            case kVK_ANSI_P: model.move(-1); return true
+            default: break
+            }
+        }
         switch Int(event.keyCode) {
         case kVK_Tab where model.showingHome && model.detailHit == nil:
             model.switchTab(event.modifierFlags.contains(.shift) ? -1 : 1)
