@@ -284,8 +284,42 @@ enum ListAction: CaseIterable {
     }
 }
 
+/// When a movie comes out in the server's region.
 struct Releases: Decodable {
     let certification: String?
+    /// In theaters, digital, then physical, each its earliest date; or just
+    /// TMDB's primary date when the region has none of those.
+    let dates: [ReleaseDate]?
+}
+
+struct ReleaseDate: Decodable, Hashable {
+    /// `theatrical`, `digital`, `physical` or `primary`.
+    let kind: String
+    /// "2010-07-16".
+    let date: String
+    let upcoming: Bool
+
+    /// As the web labels it.
+    var label: String {
+        switch kind {
+        case "theatrical": return "In theaters"
+        case "digital": return "Digital"
+        case "physical": return "Physical"
+        default: return upcoming ? "Release" : "Released"
+        }
+    }
+
+    /// "Jul 16, 2010", or "Coming Oct 16" for a date still to come, as on the web.
+    var display: String {
+        guard upcoming else { return shortDate(date) }
+        let day = ISO8601DateFormatter()
+        day.formatOptions = [.withFullDate]
+        day.timeZone = .current
+        guard let d = day.date(from: date) else { return date }
+        let thisYear = Calendar.current.isDate(d, equalTo: .now, toGranularity: .year)
+        return "Coming " + d.formatted(thisYear ? .dateTime.month(.abbreviated).day()
+                                                : .dateTime.month(.abbreviated).day().year())
+    }
 }
 
 struct Ratings: Decodable {

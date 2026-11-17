@@ -384,6 +384,7 @@ struct TitleDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(title.title).font(.title.bold())
                     Text(facts).foregroundStyle(Theme.muted)
+                    ReleaseDatesView(dates: title.releases?.dates ?? [])
                     ListMarksView(marks: marks, changing: changing)
                     RecommendedByView(model: model, changing: changing)
                     if !ratings.isEmpty {
@@ -478,6 +479,26 @@ struct TitleDetailView: View {
         case "director": return "Directed by"
         case "writer": return "Written by"
         default: return role.capitalized
+        }
+    }
+}
+
+/// A movie's release dates by type, as the web's facts list them, upcoming
+/// ones in the accent.
+struct ReleaseDatesView: View {
+    let dates: [ReleaseDate]
+
+    var body: some View {
+        if !dates.isEmpty {
+            FlowLayout(spacing: 14, lineSpacing: 3) {
+                ForEach(dates, id: \.self) { r in
+                    HStack(spacing: 5) {
+                        Text(r.label).foregroundStyle(Theme.muted)
+                        Text(r.display).foregroundStyle(r.upcoming ? Theme.accent : Theme.fg)
+                    }
+                }
+            }
+            .font(.callout)
         }
     }
 }
