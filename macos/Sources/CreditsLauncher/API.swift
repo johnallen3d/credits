@@ -671,7 +671,7 @@ enum WatchedSort: String, CaseIterable {
     var name: String { self == .recent ? "Last watched" : "Title" }
 }
 
-/// A page of Now playing: movies with a theatrical date in the region.
+/// A page of Now playing or Coming soon: movies with a theatrical date in the region.
 struct ReleasesPage: Decodable {
     /// From 1; a page past the end gives the last one.
     let page: Int
@@ -794,7 +794,16 @@ struct CreditsAPI {
 
     /// A page of Now playing, 20 movies each, from 1.
     func nowPlaying(page: Int) async throws -> ReleasesPage {
-        var url = URLComponents(url: base.appendingPathComponent("api/now-playing"), resolvingAgainstBaseURL: false)!
+        try await releases("api/now-playing", page: page)
+    }
+
+    /// A page of Coming soon, soonest first, 20 movies each, from 1.
+    func comingSoon(page: Int) async throws -> ReleasesPage {
+        try await releases("api/coming-soon", page: page)
+    }
+
+    private func releases(_ path: String, page: Int) async throws -> ReleasesPage {
+        var url = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         url.queryItems = [URLQueryItem(name: "page", value: String(page))]
         return try await get(url.url!)
     }

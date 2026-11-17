@@ -243,8 +243,9 @@ final class LauncherModel {
             }
             watched = w
             return watchedList(w)
-        case .nowPlaying:
-            let n = try await api.nowPlaying(page: pages[tab] ?? 1)
+        case .nowPlaying, .comingSoon:
+            let page = pages[tab] ?? 1
+            let n = try await tab == .nowPlaying ? api.nowPlaying(page: page) : api.comingSoon(page: page)
             pages[tab] = n.page
             var notes: [String] = []
             if let since = n.ratings.staleSince { notes.append("Ratings saved from \(shortDate(since)): OMDb isn't responding") }
@@ -257,7 +258,9 @@ final class LauncherModel {
                 notes.append("\(n.unchecked) movie\(n.unchecked == 1 ? "" : "s") left out: release dates couldn't be loaded")
             }
             return HomeList(hits: n.titles.map { m in
-                let opened = m.releaseDate.map { "In theaters since \(shortDate($0))" }
+                let opened = m.releaseDate.map {
+                    tab == .nowPlaying ? "In theaters since \(shortDate($0))" : releaseDay($0)
+                }
                 let info = [opened, m.rating?.label].compactMap { $0 }.joined(separator: " · ")
                 return SearchHit(kind: .movie, id: m.id, title: m.title, posterUrl: m.posterUrl, info: info)
             }, notes: notes, pager: Pager(page: n.page, totalPages: n.totalPages, total: n.total))
@@ -859,7 +862,7 @@ final class LauncherModel {
 }
 
 enum HomeTab: CaseIterable {
-    case recent, toWatch, favorites, watched, nowPlaying
+    case recent, toWatch, favorites, watched, nowPlaying, comingSoon
 
     var name: String {
         switch self {
@@ -868,6 +871,7 @@ enum HomeTab: CaseIterable {
         case .favorites: return "Favorites"
         case .watched: return "Watched"
         case .nowPlaying: return "Now playing"
+        case .comingSoon: return "Coming soon"
         }
     }
 
@@ -878,6 +882,7 @@ enum HomeTab: CaseIterable {
         case .favorites: return "heart"
         case .watched: return "eye"
         case .nowPlaying: return "ticket"
+        case .comingSoon: return "calendar"
         }
     }
 
@@ -888,6 +893,7 @@ enum HomeTab: CaseIterable {
         case .favorites: return "No favorites yet: ⌘F on a movie or show adds it"
         case .watched: return "Nothing watched yet: ⌘W on a movie or show marks it"
         case .nowPlaying: return "Nothing playing in theaters"
+        case .comingSoon: return "No movies coming to theaters"
         }
     }
 }
@@ -957,6 +963,18 @@ func fullSize(_ url: URL) -> URL {
     let sized = url.deletingLastPathComponent()
     guard sized.deletingLastPathComponent().lastPathComponent == "p" else { return url }
     return sized.deletingLastPathComponent().appendingPathComponent("original").appendingPathComponent(url.lastPathComponent)
+}
+
+/// A theatrical date as the web's release lists show it: "Coming Nov 20" (with
+/// the year when it isn't this one) while it's to come, else "Nov 6, 2026".
+func releaseDay(_ date: String) -> String {
+    let day = ISO8601DateFormatter()
+    day.formatOptions = [.withFullDate]
+    day.timeZone = .current
+    guard let d = day.date(from: date), d > Calendar.current.startOfDay(for: .now) else { return shortDate(date) }
+    let thisYear = Calendar.current.isDate(d, equalTo: .now, toGranularity: .year)
+    return "Coming " + d.formatted(thisYear ? .dateTime.month(.abbreviated).day()
+                                            : .dateTime.month(.abbreviated).day().year())
 }
 
 func shortDate(_ iso: String) -> String {

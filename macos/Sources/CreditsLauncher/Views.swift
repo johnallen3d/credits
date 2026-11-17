@@ -87,7 +87,7 @@ struct ResultsView: View {
     }
 }
 
-/// With no query: Recently viewed, the lists and Now playing as tabs. Tabs
+/// With no query: Recently viewed, the lists, Now playing and Coming soon as tabs. Tabs
 /// other than the one shown are icons, to fit them all.
 struct HomeView: View {
     @Bindable var model: LauncherModel
