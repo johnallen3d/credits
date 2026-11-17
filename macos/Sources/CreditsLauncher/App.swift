@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         menu.addItem(withTitle: "Theme", action: nil, keyEquivalent: "").submenu = themeMenu
         menu.delegate = self
         loginItem = menu.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
+        loginItem.isHidden = loginItemManaged
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
@@ -120,7 +121,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         enableLoginItemOnFirstInstall()
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
 
-        if !launchedAsLoginItem { show() }
+        if !launchedAsLoginItem && !loginItemManaged { show() }
+    }
+
+    /// Set in the Info.plist of Nix builds, which an installer starts at login
+    /// with launchd: SMAppService would register a store path that goes stale
+    /// on the next rebuild.
+    private var loginItemManaged: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "CreditsLoginItemManaged") as? Bool ?? false
     }
 
     /// Turns on Open at Login the first time the app runs from an
@@ -128,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// left to the menu's toggle.
     private func enableLoginItemOnFirstInstall() {
         let key = "loginItemConfigured"
-        guard !UserDefaults.standard.bool(forKey: key),
+        guard !loginItemManaged, !UserDefaults.standard.bool(forKey: key),
               Bundle.main.bundlePath.contains("/Applications/") else { return }
         do {
             try SMAppService.mainApp.register()

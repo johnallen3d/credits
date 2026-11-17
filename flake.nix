@@ -62,13 +62,53 @@
 
       tests = craneLib.cargoTest (commonArgs // {inherit cargoArtifacts;});
     };
+
+    # The macOS launcher (Option-Space search), built from macos/ alone.
+    launcher = pkgs:
+      pkgs.swiftPackages.stdenv.mkDerivation {
+        pname = "credits-launcher";
+        version = "0.1";
+        src = pkgs.lib.fileset.toSource {
+          root = ./macos;
+          fileset = pkgs.lib.fileset.unions [
+            ./macos/Package.swift
+            ./macos/Sources
+            ./macos/Info.plist
+            ./macos/AppIcon.icns
+          ];
+        };
+        nativeBuildInputs = with pkgs; [swift swiftpm swiftPackages.swiftpmHook rcodesign];
+        # The swiftpm hook runs `swift build -c release`. The Info.plist key
+        # tells the app it's started at login by the installer (launchd), so it
+        # hides Open at Login, whose registered store path would go stale.
+        installPhase = ''
+          runHook preInstall
+          app="$out/Applications/Credits Launcher.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          sed 's|^</dict>|\t<key>CreditsLoginItemManaged</key><true/>\n</dict>|' Info.plist > "$app/Contents/Info.plist"
+          cp AppIcon.icns "$app/Contents/Resources/"
+          cp "$(swiftpmBinPath)/CreditsLauncher" "$app/Contents/MacOS/"
+          runHook postInstall
+        '';
+        # Sign last: fixup strips the binary, which would break the signature.
+        postFixup = ''
+          rcodesign sign "$out/Applications/Credits Launcher.app"
+        '';
+        meta = {
+          description = "Option-Space search for Credits";
+          license = pkgs.lib.licenses.mit;
+          platforms = ["aarch64-darwin"];
+        };
+      };
   in {
     packages = forAllSystems (pkgs: let
       inherit (build pkgs) credits;
-    in {
-      inherit credits;
-      default = credits;
-    });
+    in
+      {
+        inherit credits;
+        default = credits;
+      }
+      // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {launcher = launcher pkgs;});
 
     checks = forAllSystems (pkgs: {inherit (build pkgs) tests;});
   };
