@@ -124,6 +124,7 @@ enum Theme {
         case .movie: return movie
         case .tv, .season, .episode: return tv
         case .person: return person
+        case .credits: return muted
         }
     }
 

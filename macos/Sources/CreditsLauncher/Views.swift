@@ -303,6 +303,7 @@ struct DetailContainer: View {
                                             model: model)
                         case .person(let p): PersonDetailView(person: p, credits: credits, model: model)
                         case .season(let s): SeasonDetailView(season: s, credits: credits, model: model)
+                        case .credits(let c): CreditsDetailView(titleCredits: c, credits: credits)
                         }
                     }
                     .padding(18)
@@ -461,11 +462,12 @@ struct TitleDetailView: View {
                     }
                 }
             }
-            if !title.cast.isEmpty {
+            let castShown = Array(title.cast.prefix(Detail.castShown))
+            if !castShown.isEmpty || title.hasMoreCredits {
                 let first = crewCount + seasons.count
                 Section(heading: "Cast") {
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(title.cast.prefix(Detail.castShown).enumerated()), id: \.offset) { i, c in
+                        ForEach(Array(castShown.enumerated()), id: \.offset) { i, c in
                             credits.row(first + i) {
                                 HStack(spacing: 4) {
                                     Text(c.name)
@@ -474,6 +476,17 @@ struct TitleDetailView: View {
                                     }
                                 }
                             }
+                        }
+                        if title.hasMoreCredits {
+                            credits.row(first + castShown.count) {
+                                HStack(spacing: 4) {
+                                    Text("Full cast & crew →").foregroundStyle(Theme.accent)
+                                    if let cast = title.castTotal, let crew = title.crewTotal {
+                                        Text("(\(cast) cast, \(crew) crew)").foregroundStyle(Theme.muted)
+                                    }
+                                }
+                            }
+                            .padding(.top, castShown.isEmpty ? 0 : 3)
                         }
                     }
                 }
@@ -493,6 +506,69 @@ struct TitleDetailView: View {
         case "director": return "Directed by"
         case "writer": return "Written by"
         default: return role.capitalized
+        }
+    }
+}
+
+/// A title's whole cast, then its crew by department, as the web's cast and
+/// crew page. Rows follow `Detail.rows`: the cast, then each department's people.
+struct CreditsDetailView: View {
+    let titleCredits: TitleCredits
+    let credits: Credits
+
+    /// Each department with the row number of its first person.
+    private var departments: [(dept: CrewDepartment, first: Int)] {
+        var next = titleCredits.cast.count
+        return titleCredits.crew.map { d in
+            defer { next += d.people.count }
+            return (d, next)
+        }
+    }
+
+    var body: some View {
+        let c = titleCredits
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("CAST & CREW").font(.caption2.bold()).kerning(0.5).foregroundStyle(Theme.color(for: c.kind))
+                (Text(c.title).font(.title.bold())
+                    + Text(c.year.map { "  (\($0))" } ?? "").font(.title).foregroundColor(Theme.muted))
+                Text("\(c.cast.count) cast · \(c.crew.reduce(0) { $0 + $1.people.count }) crew")
+                    .foregroundStyle(Theme.muted)
+            }
+            StaleNotice(metadata: c.metadata)
+            Section(heading: "Cast (\(c.cast.count))") {
+                if c.cast.isEmpty {
+                    Text("TMDB has no cast listed for this title.").foregroundStyle(Theme.muted)
+                } else {
+                    people(c.cast, first: 0, prefix: "as ")
+                }
+            }
+            ForEach(departments, id: \.first) { d in
+                Section(heading: "\(d.dept.name) (\(d.dept.people.count))") {
+                    people(d.dept.people, first: d.first, prefix: "")
+                }
+            }
+            if c.crew.isEmpty {
+                Section(heading: "Crew") {
+                    Text("TMDB has no crew listed for this title.").foregroundStyle(Theme.muted)
+                }
+            }
+        }
+    }
+
+    private func people(_ list: [Credit], first: Int, prefix: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(list.enumerated()), id: \.offset) { i, p in
+                credits.row(first + i) {
+                    HStack(spacing: 4) {
+                        Text(p.name)
+                        let detail = [p.role.flatMap { $0.isEmpty ? nil : prefix + $0 },
+                                      p.episodeCount.map { "\($0) episode\($0 == 1 ? "" : "s")" }]
+                            .compactMap { $0 }.joined(separator: " · ")
+                        if !detail.isEmpty { Text(detail).foregroundStyle(Theme.muted).lineLimit(1) }
+                    }
+                }
+            }
         }
     }
 }

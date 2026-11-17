@@ -7,6 +7,8 @@ enum Kind: String, Decodable {
     /// Pages inside a show, which the API never sends as a kind: a season, and
     /// an episode (opened on the web only).
     case season, episode
+    /// A movie's or show's full cast and crew; `SearchHit.of` says which.
+    case credits
 }
 
 struct SearchResults: Decodable {
@@ -31,6 +33,8 @@ struct SearchHit: Decodable, Identifiable, Hashable {
     var season: Int? = nil
     /// For an episode, its number within the season.
     var episode: Int? = nil
+    /// For a cast and crew page, whether it's a movie's or a show's.
+    var of: Kind? = nil
 
     var displayName: String { title ?? name ?? "Untitled" }
     var imageUrl: String? { posterUrl ?? profileUrl }
@@ -45,6 +49,7 @@ struct SearchHit: Decodable, Identifiable, Hashable {
         case .person: return "Person"
         case .season: return "TV season"
         case .episode: return "Episode"
+        case .credits: return "Cast & crew"
         }
     }
 
@@ -52,7 +57,7 @@ struct SearchHit: Decodable, Identifiable, Hashable {
     var summary: String? {
         if let info { return info.isEmpty ? nil : info }
         switch kind {
-        case .movie, .tv, .season, .episode: return overview.flatMap { $0.isEmpty ? nil : $0 }
+        case .movie, .tv, .season, .episode, .credits: return overview.flatMap { $0.isEmpty ? nil : $0 }
         case .person:
             let titles = (knownFor ?? []).map { k in k.year.map { "\(k.title) (\($0))" } ?? k.title }
                 .joined(separator: ", ")
@@ -67,7 +72,8 @@ struct SearchHit: Decodable, Identifiable, Hashable {
 
     /// A credit on a detail page, to open as a page of its own.
     init(kind: Kind, id: Int, title: String? = nil, name: String? = nil, year: String? = nil,
-         posterUrl: String? = nil, info: String? = nil, season: Int? = nil, episode: Int? = nil) {
+         posterUrl: String? = nil, info: String? = nil, season: Int? = nil, episode: Int? = nil,
+         of: Kind? = nil) {
         self.kind = kind
         self.id = id
         self.title = title
@@ -77,6 +83,7 @@ struct SearchHit: Decodable, Identifiable, Hashable {
         self.info = info
         self.season = season
         self.episode = episode
+        self.of = of
         overview = nil
         inTheaters = nil
         profileUrl = nil
@@ -85,9 +92,11 @@ struct SearchHit: Decodable, Identifiable, Hashable {
     }
 
     static func == (a: SearchHit, b: SearchHit) -> Bool {
-        a.kind == b.kind && a.id == b.id && a.season == b.season && a.episode == b.episode
+        a.kind == b.kind && a.id == b.id && a.season == b.season && a.episode == b.episode && a.of == b.of
     }
-    func hash(into h: inout Hasher) { h.combine(kind); h.combine(id); h.combine(season); h.combine(episode) }
+    func hash(into h: inout Hasher) {
+        h.combine(kind); h.combine(id); h.combine(season); h.combine(episode); h.combine(of)
+    }
 }
 
 struct KnownFor: Decodable {
@@ -121,7 +130,11 @@ struct TitleDetail: Decodable {
     /// Movies in theaters only: where to look up showtimes.
     let showtimesUrl: String?
     let keyCrew: [KeyCrew]
+    /// Top-billed cast only; the rest are on the cast and crew page.
     let cast: [Credit]
+    /// Everyone on the cast and crew page.
+    let castTotal: Int?
+    let crewTotal: Int?
     let metadata: Metadata
     let marks: TitleMarks?
     /// On To watch only: tags naming who or what recommended it.
@@ -130,6 +143,32 @@ struct TitleDetail: Decodable {
     let seasonList: [SeasonSummary]?
     /// TV only.
     let watched: WatchedMarks?
+}
+
+extension TitleDetail {
+    /// Whether the cast and crew page lists more than this page does, as the web
+    /// offers it.
+    var hasMoreCredits: Bool {
+        (castTotal ?? cast.count) > min(cast.count, Detail.castShown) || (crewTotal ?? 0) > 0
+    }
+
+    var creditsHit: SearchHit { SearchHit(kind: .credits, id: id, title: title, year: year, of: kind) }
+}
+
+/// Everyone credited on a title, crew grouped by department.
+struct TitleCredits: Decodable {
+    let kind: Kind
+    let id: Int
+    let title: String
+    let year: String?
+    let cast: [Credit]
+    let crew: [CrewDepartment]
+    let metadata: Metadata
+}
+
+struct CrewDepartment: Decodable, Hashable {
+    let name: String
+    let people: [Credit]
 }
 
 struct SeasonSummary: Decodable, Hashable {
@@ -368,7 +407,10 @@ struct KeyCrew: Decodable, Hashable {
 struct Credit: Decodable, Hashable {
     let personId: Int
     let name: String
+    /// A character for cast, job titles for crew.
     let role: String?
+    /// TV only: episodes they're credited on.
+    let episodeCount: Int?
 }
 
 struct PersonDetail: Decodable {
@@ -434,11 +476,13 @@ enum Detail {
     case title(TitleDetail)
     case person(PersonDetail)
     case season(SeasonDetail)
+    case credits(TitleCredits)
 
     /// How many cast members a title's page lists.
     static let castShown = 8
 
-    /// The rows a page lists, in order: a title's key crew, seasons and cast;
+    /// The rows a page lists, in order: a title's key crew, seasons, cast and
+    /// its cast and crew page; a cast and crew page's cast, then crew by department;
     /// a person's known-for titles, then their credits of `kind` (nil for all) by
     /// department; or a season's neighbours and episodes. Each opens a page of
     /// its own, except episodes, which open on the web.
@@ -449,6 +493,10 @@ enum Detail {
             return t.keyCrew.flatMap(\.people).map(person)
                 + (t.seasonList ?? []).map { SearchHit(kind: .season, id: t.id, title: $0.name, season: $0.number) }
                 + t.cast.prefix(Self.castShown).map(person)
+                + (t.hasMoreCredits ? [t.creditsHit] : [])
+        case .credits(let c):
+            let person = { (c: Credit) in SearchHit(kind: .person, id: c.personId, name: c.name) }
+            return c.cast.map(person) + c.crew.flatMap(\.people).map(person)
         case .person(let p):
             return p.knownForTitles.map(\.hit) + p.groups(kind).flatMap(\.entries).map(\.hit)
         case .season(let s):
@@ -564,6 +612,7 @@ struct CreditsAPI {
         switch hit.kind {
         case .movie, .tv, .person: return "\(hit.kind.rawValue)/\(hit.id)"
         case .season: return "tv/\(hit.id)/season/\(hit.season ?? 0)"
+        case .credits: return "\((hit.of ?? .movie).rawValue)/\(hit.id)/credits"
         case .episode: return "tv/\(hit.id)/season/\(hit.season ?? 0)/episode/\(hit.episode ?? 0)"
         }
     }
@@ -592,6 +641,7 @@ struct CreditsAPI {
         case .person: return .person(try await get(url))
         case .movie, .tv: return .title(try await get(url))
         case .season: return .season(try await get(url))
+        case .credits: return .credits(try await get(url))
         case .episode: throw APIError(message: "Episodes open on the web")
         }
     }

@@ -372,7 +372,7 @@ final class LauncherModel {
                 let text = [p.knownFor, titles.isEmpty ? nil : "known for " + titles]
                     .compactMap { $0 }.joined(separator: " · ")
                 if !text.isEmpty { summaries[hit] = text.prefix(1).uppercased() + text.dropFirst() }
-            case .season: break
+            case .season, .credits: break
             }
         }
     }
@@ -502,7 +502,9 @@ final class LauncherModel {
         }
         guard let hit = row ?? listTarget else { return }
         guard hit.isTitle else {
-            show(hit.kind == .season ? "Go back to the show to change its lists" : "Only movies and shows go on lists",
+            show(hit.kind == .season ? "Go back to the show to change its lists"
+                 : hit.kind == .credits ? "Go back to the title to change its lists"
+                 : "Only movies and shows go on lists",
                  failed: true)
             return
         }
@@ -644,7 +646,7 @@ final class LauncherModel {
                 return e?.stillUrl.map { ($0, "\(e!.title) still") }
             }
             return s.posterUrl.map { ($0, "\(s.name) poster") }
-        case nil: return nil
+        case .credits, nil: return nil
         }
     }
 
