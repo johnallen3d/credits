@@ -333,6 +333,76 @@ test "sorting a person's credits by rating shows each score"
   expect text "score-movie-603" == "83%"
   expect text "rating-note" == "Credits without a Rotten Tomatoes or IMDb score are listed last, newest first."
 
+test "a person's credits show All, Movies or TV, counting each"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"},{"kind":"tv","id":1,"title":"A Show","year":null,"role":"Self","episode_count":2}]},{"department":"Production","entries":[{"kind":"movie","id":9,"title":"A Film","year":"2020","role":"Producer"}]}],"sort":"date","sort_ratings":{"unrated":0}}
+  tap "recent-person-6384"
+  clock data
+  expect text "kind-all" == "All 3"
+  expect text "kind-movie" == "Movies 2"
+  expect text "kind-tv" == "TV 1"
+  tap "kind-tv"
+  expect tree has "Acting-tv-1"
+  expect tree missing "Acting-movie-603"
+  expect tree missing "Production-movie-9"
+  tap "kind-movie"
+  expect tree missing "Acting-tv-1"
+  expect tree has "Production-movie-9"
+  tap "kind-all"
+  expect tree has "Acting-tv-1"
+  expect tree has "Acting-movie-603"
+
+test "a person with no credits of a kind says so"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
+  tap "recent-person-6384"
+  clock data
+  expect tree missing "no-kind-credits"
+  tap "kind-tv"
+  expect text "no-kind-credits" == "No TV credits listed for this person."
+
+test "a person's credits add to To Watch and Favorites"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[{"kind":"movie","id":603,"title":"The Matrix"}]}
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"},{"kind":"tv","id":1,"title":"A Show","year":null,"role":"Self"}]}],"sort":"date"}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1/favorite" with 200 {"marks":{"to_watch":false,"favorite":true,"watched":false}}
+  tap "recent-person-6384"
+  clock data
+  clock settle
+  expect tree has "Acting-movie-603-to-watch-on"
+  expect tree has "Acting-tv-1-to-watch-off"
+  expect tree has "Acting-tv-1-favorite-off"
+  expect tree missing "marks-unread"
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[{"kind":"tv","id":1,"title":"A Show"}]}
+  tap "Acting-tv-1-favorite"
+  clock data
+  clock settle
+  expect tree has "Acting-tv-1-favorite-on"
+  expect enabled "Acting-tv-1-favorite"
+  expect tree missing "credit-mark-error"
+
+test "a person's credits hold Favorite when Favorites can't be read, and say when a mark fails"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[]}
+  fail fetch "https://credits.jallen7usa.com/api/favorites?sort=added"
+  fail fetch "https://credits.jallen7usa.com/api/movie/603/watchlist"
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
+  tap "recent-person-6384"
+  clock data
+  clock settle
+  expect disabled "Acting-movie-603-favorite"
+  expect enabled "Acting-movie-603-to-watch"
+  expect text "marks-unread" == "Favorites couldn’t be read yet, so its buttons wait."
+  tap "Acting-movie-603-to-watch"
+  clock data
+  clock settle
+  expect tree has "credit-mark-error"
+
 test "a person page the server can't answer says so"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
   fail fetch "https://credits.jallen7usa.com/api/person/6384?sort=date"

@@ -582,6 +582,10 @@ fn filmLine(c: FilmCredit, acting: bool): string = [
   text(c.role) == "" ? "" : acting ? `as ${text(c.role)}` : text(c.role),
   match c.episode_count { case some(n) => `${n} ${n == 1 ? "episode" : "episodes"}`, case none => "" }
   ].filter(x => x != "").join(" · ")
+// A person's credits of one kind ("all", "movie" or "tv"), as the web's Show filter keeps them.
+fn creditKept(c: FilmCredit, kind: string): bool = kind == "all" or c.kind == kind
+fn creditCount(p: Person, kind: string): number = p.filmography.map(g => g.entries.filter(c => creditKept(c, kind))).flat().length
+fn keptGroups(p: Person, kind: string): CreditGroup[] = p.filmography.map(g => CreditGroup(department=g.department, entries=g.entries.filter(c => creditKept(c, kind)))).filter(g => g.entries.length > 0)
 fn paragraphs(o: option<string>): string[] = text(o).split("\n").map(l => l.trim()).filter(l => l != "")
 fn bornText(p: Person): string = match p.birthday {
   case some(d) => p.place_of_birth == none ? formatDate(d, 0, "medium") : `${formatDate(d, 0, "medium")} in ${text(p.place_of_birth)}`,
@@ -696,11 +700,14 @@ component App
   state query = ""
   state asked = ""
   resource hits = search(asked) when asked != "" as shape Hit[] else empty()
-  // To Watch and Favorites, read while searching to mark each title result, as the
-  // web's results are. Each is asked again whenever the search screen comes back.
-  resource toWatchList = savedList("watchlist", "added") when asked != "" as shape SavedList
-  resource favoritesList = savedList("favorites", "added") when asked != "" as shape SavedList
+  // To Watch and Favorites, read while searching or on a person's page to mark each
+  // title result or credit, as the web's are. Each is asked again whenever the search
+  // screen or a person's page comes back.
+  derive marksWanted = asked != "" or stack(nav).filter(e => e.name == "person").length > 0
+  resource toWatchList = savedList("watchlist", "added") when marksWanted as shape SavedList
+  resource favoritesList = savedList("favorites", "added") when marksWanted as shape SavedList
   mutation hitMarked as shape Marks queue refreshes toWatchList, favoritesList
+  mutation creditMarked as shape Marks queue refreshes toWatchList, favoritesList
   derive toWatchKnown = current(toWatchList) and not failed(toWatchList)
   derive favoritesKnown = current(favoritesList) and not failed(favoritesList)
   derive toWatchKeys = toWatchKnown ? entryKeys(toWatchList) : []
@@ -714,6 +721,8 @@ component App
   task scheme when theme != "" key=theme
     change(applyScheme)
   task searchShown when top(nav).name == "search" key="search"
+    change(refreshMarks)
+  task personShown when top(nav).name == "person" key=top(nav).id
     change(refreshMarks)
   task opened when top(nav).name == "movie" or top(nav).name == "tv" or top(nav).name == "person" key=top(nav).id
     change(record)
@@ -730,6 +739,10 @@ component App
     send hitMarked = setToWatch(kind, id, listed)
   action markFavorite(kind: string, id: string, listed: bool)
     send hitMarked = setFavorite(kind, id, listed)
+  action markCreditToWatch(kind: string, id: string, listed: bool)
+    send creditMarked = setToWatch(kind, id, listed)
+  action markCreditFavorite(kind: string, id: string, listed: bool)
+    send creditMarked = setFavorite(kind, id, listed)
   action back
     nav = back(nav)
   action pick(name: string)
@@ -824,7 +837,9 @@ component App
               if e.name == "episode"
                 EpisodeScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n, e=e.params.e)
               if e.name == "person"
-                PersonScreen(navKey=`${e.id}`, id=e.params.id)
+                PersonScreen(navKey=`${e.id}`, id=e.params.id, toWatchKeys=toWatchKeys, favoriteKeys=favoriteKeys,
+                  toWatchKnown=toWatchKnown, favoritesKnown=favoritesKnown, busy=pending(creditMarked),
+                  markFailed=(failed(creditMarked) and not pending(creditMarked)), toWatch=markCreditToWatch, favorite=markCreditFavorite)
               if e.name == "watchlist" or e.name == "favorites"
                 SavedListScreen(navKey=`${e.id}`, list=e.name)
               if e.name == "watched"
@@ -1607,18 +1622,32 @@ component ServicesScreen
 
 // A person: photo, known for, born and died, a biography that opens past its first
 // paragraph, known-for titles and the filmography by department in the web's Date or
-// Rating order, each credit linking to its title.
+// Rating order, each credit linking to its title. The filmography shows All, Movies or
+// TV, counting each, and each credit has To Watch and Favorite beside it, as on the
+// web; each waits for its list to be read (`toWatchKeys`, `favoriteKeys`), and all
+// wait while a mark is saving.
 component PersonScreen
   props
     navKey: string
     id: string
+    toWatchKeys: string[]
+    favoriteKeys: string[]
+    toWatchKnown: bool
+    favoritesKnown: bool
+    busy: bool
+    markFailed: bool
+    toWatch: action
+    favorite: action
   state sort = "date"
+  state kind = "all"
   state more = false
   resource p = person(id, sort) as shape Person
   action retry
     refresh p
   action pickSort(s: string)
     sort = s
+  action pickKind(k: string)
+    kind = k
   action toggleMore
     more = not more
   view
@@ -1661,7 +1690,7 @@ component PersonScreen
               header
                 text "Known For"
               for c in p.known_for_titles key=`${c.kind}-${c.id}`
-                FilmRow(c=c, acting=true, prefix="known")
+                FilmRow(c=c, acting=true, prefix="known", chevron=true)
           if p.filmography.length == 0
             section
               text "TMDB has no credits listed for this person." color="text.muted" background-color="surface.card" testId="no-credits"
@@ -1677,26 +1706,50 @@ component PersonScreen
                     text "Rating"
                 if not current(p)
                   progress aria-label="Sorting" testId="sorting"
+              row gap=8 align-items="center" background-color="surface.card"
+                row role="radiogroup" aria-label="Show credits" flex=1
+                  button role="radio" aria-checked=(kind == "all") press=pickKind("all") testId="kind-all" flex=1
+                    text `All ${creditCount(p, "all")}`
+                  button role="radio" aria-checked=(kind == "movie") press=pickKind("movie") testId="kind-movie" flex=1
+                    text `Movies ${creditCount(p, "movie")}`
+                  button role="radio" aria-checked=(kind == "tv") press=pickKind("tv") testId="kind-tv" flex=1
+                    text `TV ${creditCount(p, "tv")}`
+              if not toWatchKnown or not favoritesKnown
+                text `${not toWatchKnown and not favoritesKnown ? "To Watch and Favorites" : not toWatchKnown ? "To Watch" : "Favorites"} couldn’t be read yet, so ${not toWatchKnown and not favoritesKnown ? "their" : "its"} buttons wait.`
+                  font="-exact-footnote" color="text.muted" background-color="surface.card" testId="marks-unread"
+              if markFailed
+                text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite"
+                  background-color="surface.card" role="status" testId="credit-mark-error"
               if failed(p)
                 text "Couldn’t load that order. Showing the last one." font="-exact-footnote" color="text.muted" background-color="surface.card" testId="sort-failed"
               else if ratingNote(p) != ""
                 text ratingNote(p) font="-exact-footnote" color="text.muted" background-color="surface.card" testId="rating-note"
-            for g in p.filmography key=g.department
+            if keptGroups(p, kind).length == 0
+              section
+                text `No ${kind == "tv" ? "TV" : "movie"} credits listed for this person.` color="text.muted"
+                  background-color="surface.card" testId="no-kind-credits"
+            for g in keptGroups(p, kind) key=g.department
               section
                 header
                   text `${g.department} (${g.entries.length})`
                 for c in g.entries key=`${c.kind}-${c.id}-${text(c.role)}`
-                  FilmRow(c=c, acting=(g.department == "Acting"), prefix=g.department)
+                  row align-items="center" gap=4 background-color="surface.card"
+                    FilmRow(c=c, acting=(g.department == "Acting"), prefix=g.department, chevron=false)
+                    CreditMarks(testId=`${g.department}-${c.kind}-${c.id}`, kind=c.kind, id=`${c.id}`, label=c.title,
+                      onToWatch=toWatchKeys.includes(`${c.kind}-${c.id}`), onFavorites=favoriteKeys.includes(`${c.kind}-${c.id}`),
+                      toWatchKnown=toWatchKnown, favoritesKnown=favoritesKnown, busy=busy, toWatch=toWatch, favorite=favorite)
 
 // A credit row on a person screen: poster, title, year, kind and role, and the score
-// when sorted by rating. It links to the title's screen.
+// when sorted by rating. It links to the title's screen; a chevron says so when no
+// toggles follow it.
 component FilmRow
   props
     c: FilmCredit
     acting: bool
     prefix: string
+    chevron: bool
   view
-    link href=creditPath(c) display="flex" align-items="center" gap=12
+    link href=creditPath(c) display="flex" align-items="center" gap=12 flex=1 min-width=0
       testId=`${prefix}-${c.kind}-${c.id}` background-color="surface.card"
       Thumb(url=text(c.poster_url))
       column flex=1 min-width=0
@@ -1704,7 +1757,33 @@ component FilmRow
         text filmLine(c, acting) font="-exact-footnote" color="text.muted"
       if creditScore(c.rating) != ""
         text creditScore(c.rating) font="-exact-footnote" color="text.muted" testId=`score-${c.kind}-${c.id}`
-      image "symbol:forward-chevron" color="text.muted"
+      if chevron
+        image "symbol:forward-chevron" color="text.muted"
+
+// A credit's To Watch and Favorite toggles, as on a search result.
+component CreditMarks
+  props
+    testId: string
+    kind: string
+    id: string
+    label: string
+    onToWatch: bool
+    onFavorites: bool
+    toWatchKnown: bool
+    favoritesKnown: bool
+    busy: bool
+    toWatch: action
+    favorite: action
+  view
+    row gap=0 flex-shrink=0
+      button press=toWatch(kind, id, not onToWatch) aria-pressed=onToWatch disabled=(busy or not toWatchKnown)
+        aria-label=`To Watch: ${label}` testId=`${testId}-to-watch` padding=6
+        image (onToWatch ? "symbol:bookmark-fill" : "symbol:bookmark") color="accent" width=22 height=22
+          testId=`${testId}-to-watch-${onToWatch ? "on" : "off"}`
+      button press=favorite(kind, id, not onFavorites) aria-pressed=onFavorites disabled=(busy or not favoritesKnown)
+        aria-label=`Favorite: ${label}` testId=`${testId}-favorite` padding=6
+        image (onFavorites ? "symbol:heart-fill" : "symbol:heart") color=(onFavorites ? "mark.favorite" : "accent") width=22 height=22
+          testId=`${testId}-favorite-${onFavorites ? "on" : "off"}`
 
 // A degraded-state notice at the top of a screen: data served stale from the
 // cache, or a part that couldn't be read.
