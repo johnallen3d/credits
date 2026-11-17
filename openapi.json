@@ -918,6 +918,49 @@
             }
           }
         }
+      },
+      "post": {
+        "summary": "Chooses one streaming service or unchooses it, as ticking its box on the\nservices page does. A service not in TMDB's list for the region (nor\nalready chosen) is ignored. Answers with the new services page.",
+        "operationId": "api_choose_service",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServicesDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/playback": {
@@ -3571,6 +3614,25 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "ServiceBody": {
+        "type": "object",
+        "description": "Adds a streaming service to the user's choice or takes it off.",
+        "required": [
+          "id",
+          "chosen"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "TMDB provider ID, as in `ServicesDetail.options`.",
+            "minimum": 0
+          },
+          "chosen": {
+            "type": "boolean"
           }
         }
       },

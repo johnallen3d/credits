@@ -7,6 +7,7 @@ use EmptyState from "exact:content"
 
 routes nav
   search "/"
+    services "/services"
     movie "/movie/:id"
     tv "/tv/:id"
       season "/tv/:id/season/:n"
@@ -115,6 +116,26 @@ shape Season
   episodes: Episode[]
   watched: SeasonWatched
 
+// The web's "My services" page: TMDB's streaming services for the region,
+// grouped, with the ones chosen. Choosing one answers with the new page.
+shape ServiceOption
+  id: number
+  name: string
+  logo_url: option<string>
+  chosen: bool
+  group: string
+
+shape ServicesChosen
+  name: string
+
+shape Services
+  region: string
+  chosen: ServicesChosen[]
+  options: ServiceOption[]
+  state: string
+  complete: bool
+  fetched_at: option<string>
+
 source search(q: string) as shape Hit[]
   url "https://credits.jallen7usa.com/api/search?q={q}"
   pointer "/results"
@@ -147,6 +168,14 @@ shape Releases
 
 source releases(list: string, page: number) as shape Releases
   url "https://credits.jallen7usa.com/api/{list}?page={page}"
+
+source services() as shape Services
+  url "https://credits.jallen7usa.com/api/services"
+
+source chooseService(id: number, chosen: bool) as shape Services
+  url "https://credits.jallen7usa.com/api/services"
+  method "POST"
+  body json
 
 source title(kind: string, id: string) as shape Title
   url "https://credits.jallen7usa.com/api/{kind}/{id}"
@@ -275,6 +304,9 @@ component App
                   button press=browse(l) popovertarget="browse-menu" popovertargetaction="hide"
                     testId=`browse-${l}`
                     text releaseList(l)
+                button press=follow(path("services")) role="menuitem"
+                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-services"
+                  text "My Services"
               input type="search" value=query input=edit placeholder="Movies, shows, people"
                 aria-label="Search" testId="search" width="100%"
             if asked == "" and recents.length > 0
@@ -297,6 +329,8 @@ component App
                 section
                   for h in hits key=`${h.kind}-${h.id}`
                     Entry(testId=`hit-${h.kind}-${h.id}`, kind=h.kind, id=`${h.id}`, label=label(h), picture=picture(h), year=text(h.year))
+        if e.name == "services"
+          ServicesScreen(navKey=`${e.id}`)
         if e.name == "movie"
           TitleScreen(navKey=`${e.id}`, kind="movie", id=e.params.id)
         if e.name == "tv"
@@ -597,3 +631,68 @@ component ReleasesScreen
             else if pages < lastPage
               button press=more testId="more" background-color="surface.page"
                 text "More"
+
+fn groupName(g: string): string = g == "mine" ? "Your Services" : g == "popular" ? "Popular" : "More Services"
+fn chosenNames(s: Services): string = s.chosen.map(c => c.name).join(", ")
+
+// Choose the streaming services you subscribe to, as the web's services page
+// does; where to watch highlights them. Each switch saves at once: the reply is
+// the new page, and until it lands the flipped switch shows what was asked.
+component ServicesScreen
+  props
+    navKey: string
+  resource svc = services() as shape Services
+  mutation chose as shape Services queue
+  state flipId = -1
+  state flipOn = false
+  derive page = match chose { case some(r) => r, case none => svc }
+  action retry
+    refresh svc
+  action choose(id: number, on: bool)
+    flipId = id
+    flipOn = on
+    send chose = chooseService(id, on)
+  view
+    column navigationKey=navKey navigationScroll="services" position="absolute" inset=0
+      display="flex" flex-direction="column" background-color="surface.page"
+      header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
+        text "My Services" role="heading" aria-level=2 testId="services-title"
+      if failed(svc)
+        EmptyState(symbol="symbol:alert", title="Can’t Load Services", message="The server didn’t answer.")
+          button press=retry testId="services-retry"
+            text "Try Again"
+      else if not current(svc)
+        progress aria-label="Loading" testId="services-loading"
+      else
+        list id="services" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+          section
+            text (page.chosen.length == 0 ? "No services chosen yet." : `Your services: ${chosenNames(page)}.`)
+              background-color="surface.card" testId="services-status"
+            if failed(chose) and not pending(chose)
+              text "Couldn’t save your services. Try again." color="mark.favorite" background-color="surface.card" testId="services-error"
+            if page.state == "unavailable"
+              text (page.chosen.length == 0 ? "TMDB’s list of services couldn’t be loaded right now." : "TMDB’s list of services couldn’t be loaded right now, so only your services are listed. You can still remove them.")
+                font="-exact-footnote" color="text.muted" background-color="surface.card" testId="services-unavailable"
+            else if page.state == "stale"
+              text "Couldn’t refresh TMDB’s list of services; showing an older copy."
+                font="-exact-footnote" color="text.muted" background-color="surface.card" testId="services-stale"
+            if not page.complete and page.state != "unavailable"
+              text "Only part of TMDB’s list of services could be loaded, so some may be missing."
+                font="-exact-footnote" color="text.muted" background-color="surface.card" testId="services-partial"
+            footer
+              text `Movie and TV pages highlight these in ${page.region}.`
+          for g in ["mine", "popular", "more"] key=g
+            if page.options.filter(o => o.group == g).length > 0
+              section
+                header
+                  text groupName(g)
+                for o in page.options.filter(o => o.group == g) key=`${o.id}`
+                  row gap=12 background-color="surface.card"
+                    if text(o.logo_url) == ""
+                      column width=32 height=32 border-radius=6 background-color="surface.thumb"
+                    else
+                      image text(o.logo_url) aria-label="" width=32 height=32 border-radius=6 object-fit="cover"
+                    text o.name flex=1
+                    input type="checkbox" switch change=choose(o.id) aria-label=o.name
+                      checked=(pending(chose) and flipId == o.id ? flipOn : o.chosen)
+                      testId=`service-${o.id}`

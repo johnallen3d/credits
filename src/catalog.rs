@@ -828,6 +828,25 @@ impl Catalog {
             .map_err(ServicesError::Write)
     }
 
+    /// Adds service `id` to the user's choice, or with `chosen` false takes
+    /// it off, keeping the rest.
+    pub async fn choose_service(&self, id: u64, chosen: bool) -> Result<(), ServicesError> {
+        let mut ids: HashSet<u64> = self
+            .services
+            .list()
+            .await
+            .map_err(ServicesError::Read)?
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        if chosen {
+            ids.insert(id);
+        } else {
+            ids.remove(&id);
+        }
+        self.set_services(&ids).await
+    }
+
     /// TMDB's movie and TV service lists for the region, merged in display
     /// priority order, with how fresh and complete they are.
     async fn service_list(&self) -> (Vec<Service>, WhereToWatchState, bool, Option<Timestamp>) {

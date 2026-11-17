@@ -3610,6 +3610,27 @@ async fn services_are_chosen_and_highlighted_on_title_pages() {
     post_form(t.app(), "/services", "").await;
     let (_, json) = get_json(t.app(), "/api/services").await;
     assert_eq!(json["chosen"], json!([]));
+
+    // The JSON twin chooses or unchooses one service and answers with the
+    // page; the iOS app sends ids as floats. Unknown ids are ignored.
+    let (status, json) =
+        post_json(t.app(), "/api/services", json!({"id": 8.0, "chosen": true})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(chosen_names(&json), ["Netflix"]);
+    assert_eq!(json["options"][0]["group"], "mine");
+    let (_, json) = post_json(t.app(), "/api/services", json!({"id": 300, "chosen": true})).await;
+    assert_eq!(chosen_names(&json), ["Netflix", "Pluto TV"]);
+    let (_, json) = post_json(
+        t.app(),
+        "/api/services",
+        json!({"id": 99999, "chosen": true}),
+    )
+    .await;
+    assert_eq!(chosen_names(&json), ["Netflix", "Pluto TV"]);
+    let (_, json) = post_json(t.app(), "/api/services", json!({"id": 8, "chosen": false})).await;
+    assert_eq!(chosen_names(&json), ["Pluto TV"]);
+    let (status, _) = post_json(t.app(), "/api/services", json!({"id": 8.5, "chosen": true})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

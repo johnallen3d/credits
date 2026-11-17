@@ -156,7 +156,7 @@ fn api() -> OpenApiRouter<Catalog> {
         .routes(routes!(api_watchlist))
         .routes(routes!(api_favorites))
         .routes(routes!(api_watched))
-        .routes(routes!(api_services))
+        .routes(routes!(api_services, api_choose_service))
         .routes(routes!(api_playback))
         .routes(routes!(api_now_playing))
         .routes(routes!(api_coming_soon))
@@ -242,6 +242,15 @@ fn whole_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error>
                 .map(|f| f as u64)
         })
         .ok_or_else(|| serde::de::Error::custom(format!("expected a whole number, found {n}")))
+}
+
+/// Adds a streaming service to the user's choice or takes it off.
+#[derive(Deserialize, ToSchema)]
+struct ServiceBody {
+    /// TMDB provider ID, as in `ServicesDetail.options`.
+    #[serde(deserialize_with = "whole_number")]
+    id: u64,
+    chosen: bool,
 }
 
 /// Marks something watched or not.
@@ -1685,6 +1694,42 @@ async fn api_services(State(catalog): State<Catalog>) -> Response {
             api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "your services couldn't be read",
+            )
+        }
+    }
+}
+
+/// Chooses one streaming service or unchooses it, as ticking its box on the
+/// services page does. A service not in TMDB's list for the region (nor
+/// already chosen) is ignored. Answers with the new services page.
+#[utoipa::path(
+    post,
+    path = "/api/services",
+    request_body = ServiceBody,
+    responses((status = OK, body = ServicesDetail), ReadError)
+)]
+async fn api_choose_service(
+    State(catalog): State<Catalog>,
+    body: Result<Json<ServiceBody>, JsonRejection>,
+) -> Response {
+    let body = match body {
+        Ok(Json(body)) => body,
+        Err(e) => return api_error(e.status(), &e.body_text()),
+    };
+    if let Err(e) = catalog.choose_service(body.id, body.chosen).await {
+        tracing::warn!(error = %e, id = body.id, "api service save failed");
+        return api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "your services couldn't be updated, so nothing was saved",
+        );
+    }
+    match catalog.services().await {
+        Ok(s) => Json(s).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "api saved services read failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "your services were saved but couldn't be read back",
             )
         }
     }

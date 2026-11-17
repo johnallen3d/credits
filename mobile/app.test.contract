@@ -157,3 +157,62 @@ test "coming soon says so when the server doesn't answer"
   tap "browse-coming-soon"
   expect text "releases-title" == "Coming Soon"
   expect tree missing "releases"
+
+test "my services opens from the start screen's menu, grouped, with the chosen first"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/services" with 200 {"region":"US","chosen":[{"id":8,"name":"Netflix","logo_url":null}],"options":[{"id":8,"name":"Netflix","logo_url":null,"chosen":true,"group":"mine"},{"id":337,"name":"Disney Plus","logo_url":null,"chosen":false,"group":"popular"},{"id":2,"name":"Apple TV Store","logo_url":null,"chosen":false,"group":"more"}],"state":"fresh","complete":true,"fetched_at":null}
+  tap "browse"
+  tap "open-services"
+  clock settle
+  clock data
+  expect tree has "services-title"
+  expect text "services-status" == "Your services: Netflix."
+  expect tree has "service-8"
+  expect tree has "service-337"
+  expect tree has "service-2"
+  expect tree missing "services-unavailable"
+
+test "flipping a switch saves the choice and shows the new services"
+  at "/services"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/services" with 200 {"region":"US","chosen":[],"options":[{"id":8,"name":"Netflix","logo_url":null,"chosen":false,"group":"popular"},{"id":337,"name":"Disney Plus","logo_url":null,"chosen":false,"group":"popular"}],"state":"fresh","complete":true,"fetched_at":null}
+  clock data
+  expect text "services-status" == "No services chosen yet."
+  answer fetch "https://credits.jallen7usa.com/api/services" with 200 {"region":"US","chosen":[{"id":337,"name":"Disney Plus","logo_url":null}],"options":[{"id":337,"name":"Disney Plus","logo_url":null,"chosen":true,"group":"mine"},{"id":8,"name":"Netflix","logo_url":null,"chosen":false,"group":"popular"}],"state":"fresh","complete":true,"fetched_at":null}
+  type "service-337" "true"
+  clock data
+  expect text "services-status" == "Your services: Disney Plus."
+  expect tree missing "services-error"
+
+test "a save that fails says so"
+  at "/services"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/services" with 200 {"region":"US","chosen":[],"options":[{"id":8,"name":"Netflix","logo_url":null,"chosen":false,"group":"popular"}],"state":"fresh","complete":true,"fetched_at":null}
+  clock data
+  fail fetch "https://credits.jallen7usa.com/api/services"
+  type "service-8" "true"
+  clock data
+  expect tree has "services-error"
+  expect text "services-status" == "No services chosen yet."
+
+test "services that can't be loaded offer to try again"
+  at "/services"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  fail fetch "https://credits.jallen7usa.com/api/services"
+  clock data
+  expect tree has "services-retry"
+  pass fetch "https://credits.jallen7usa.com/api/services"
+  answer fetch "https://credits.jallen7usa.com/api/services" with 200 {"region":"US","chosen":[],"options":[],"state":"fresh","complete":true,"fetched_at":null}
+  tap "services-retry"
+  clock data
+  expect tree missing "services-retry"
+  expect text "services-status" == "No services chosen yet."
+
+test "without TMDB's list only the chosen services are listed, and it says why"
+  at "/services"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/services" with 200 {"region":"US","chosen":[{"id":8,"name":"Netflix","logo_url":null}],"options":[{"id":8,"name":"Netflix","logo_url":null,"chosen":true,"group":"mine"}],"state":"unavailable","complete":false,"fetched_at":null}
+  clock data
+  expect tree has "services-unavailable"
+  expect tree missing "services-partial"
+  expect tree has "service-8"
