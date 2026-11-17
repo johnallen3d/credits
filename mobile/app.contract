@@ -300,6 +300,22 @@ shape ListEntry
   next_release: option<ReleaseDate>
   release_status: option<string>
   sources: option<string[]>
+  availability: option<ListAvailability>
+
+// To Watch only, once services are chosen: which of them include a title.
+shape ListAvailability
+  state: string
+  services: ListService[]
+
+shape ListService
+  name: string
+
+// To Watch only: whether the user's services are chosen, and how many titles'
+// offers couldn't be loaded or were served stale.
+shape ListServices
+  state: string
+  unknown: number
+  stale_since: option<string>
 
 shape ListSortRatings
   unrated: number
@@ -310,6 +326,12 @@ shape SavedList
   titles: ListEntry[]
   sort_ratings: option<ListSortRatings>
   release_unknown: option<number>
+  services: option<ListServices>
+
+// A To Watch title's tags naming who or what recommended it, and the tags used
+// on To Watch so far (most recent first), offered when tagging.
+shape SourceTags
+  sources: string[]
 
 shape ShowProgress
   show: bool
@@ -472,6 +494,16 @@ source person(id: string, sort: string) as shape Person
 source savedList(list: string, sort: string) as shape SavedList
   url "https://credits.jallen7usa.com/api/{list}?sort={sort}"
 
+// Replaces a To Watch title's tags; the server tidies each (no `#`, words
+// hyphenated) and answers with the tags as saved.
+source setSources(kind: string, id: string, sources: string[]) as shape SourceTags
+  url "https://credits.jallen7usa.com/api/{kind}/{id}/watchlist/sources"
+  method "PUT"
+  body json
+
+source watchlistSources() as shape SourceTags
+  url "https://credits.jallen7usa.com/api/watchlist/sources"
+
 source watchedList(sort: string) as shape WatchedList
   url "https://credits.jallen7usa.com/api/watched?sort={sort}"
 source playback() as shape Playback
@@ -490,6 +522,11 @@ source ignorePlayback(app: string, kind: string, show_key: string) as shape Play
 fn text(o: option<string>): string = match o { case some(s) => s, case none => "" }
 // Source tags as "#one #two"; "" when there are none.
 fn hashtags(o: option<string[]>): string = match o { case some(xs) => xs.map(s => `#${s}`).join(" "), case none => "" }
+fn sourceList(o: option<string[]>): string[] = match o { case some(xs) => xs, case none => [] }
+// Tags typed in one field, split at spaces; the server drops a leading `#`.
+fn typedTags(draft: string): string[] = draft.split(" ").filter(x => x.trim() != "" and x.trim() != "#")
+// Tags used before that the title doesn't have yet, most recent first.
+fn tagSuggestions(known: string[], has: string[]): string[] = known.filter(k => not has.map(h => h.toLowerCase()).includes(k.toLowerCase())).slice(0, 8)
 fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(h.name) }
 fn picture(h: Hit): string = match h.poster_url { case some(u) => u, case none => text(h.profile_url) }
 fn numberOf(s: string): number = match parseNumber(s) { case some(n) => n, case none => 0 }
@@ -597,7 +634,26 @@ fn listKindWord(k: string): string = k == "movie" ? "movies" : k == "tv" ? "TV s
 fn kindMatches(k: string, filter: string): bool = filter == "all" or k == filter
 fn releaseFilterLabel(r: string): string = r == "out_now" ? "Out now" : r == "coming_soon" ? "Coming soon" : "All"
 fn releaseMatches(e: ListEntry, filter: string): bool = filter == "all" or text(e.release_status) == filter
-fn shownEntries(xs: ListEntry[], kind: string, release: string): ListEntry[] = xs.filter(e => kindMatches(e.kind, kind) and releaseMatches(e, release))
+// The user's services that include a title; none when its offers couldn't be loaded.
+fn servicesOf(e: ListEntry): string[] = match e.availability { case some(a) => a.services.map(x => x.name), case none => [] }
+fn servicesMatch(e: ListEntry, filter: string): bool = filter != "mine" or servicesOf(e).length > 0
+fn tagsOf(e: ListEntry): string[] = match e.sources { case some(xs) => xs, case none => [] }
+// A tag filter ignores case, as the server's does; "" is every title.
+fn tagMatches(e: ListEntry, tag: string): bool = tag == "" or tagsOf(e).map(x => x.toLowerCase()).includes(tag.toLowerCase())
+fn listTags(xs: ListEntry[]): string[] = uniq(xs.map(e => tagsOf(e)).flat())
+fn shownEntries(xs: ListEntry[], kind: string, release: string, services: string, tag: string): ListEntry[] = xs.filter(e => kindMatches(e.kind, kind) and releaseMatches(e, release) and servicesMatch(e, services) and tagMatches(e, tag))
+fn servicesState(l: SavedList): string = match l.services { case some(s) => s.state, case none => "" }
+fn servicesFilterLabel(f: string): string = f == "mine" ? "On my services" : "Anywhere"
+// What stood behind the services filter, as the web's To watch says it.
+fn servicesNote(o: option<ListServices>, filter: string): string = match o {
+  case some(s) => s.state == "unreadable" ? "Your services couldn’t be read, so titles can’t be filtered by them."
+    : s.state == "not_chosen" ? "Choose your streaming services in My Services to see which titles you can watch on them."
+    : [s.unknown > 0 ? `Couldn’t check where ${plural(s.unknown, "title is", "titles are")} available right now${filter == "mine" ? s.unknown == 1 ? ", so it’s left out" : ", so they’re left out" : ""}.` : "",
+       text(s.stale_since) == "" ? "" : `Couldn’t refresh where some titles are available; using listings from as early as ${day(text(s.stale_since))}.`].filter(x => x != "").join(" "),
+  case none => "" }
+fn emptyListMessage(kind: string, release: string, services: string, tag: string): string = (services == "all" and tag == ""
+  ? (release == "all" ? `No ${listKindWord(kind)} on your list.` : `None of the ${listKindWord(kind)} on your list are ${release == "out_now" ? "out now" : "coming soon"}.`)
+  : `None of the ${listKindWord(kind)} on your list match these filters.`)
 fn sourceLabel(s: string): string = s == "manual" ? "By hand" : s == "apple_tv" ? "Apple TV" : "Any way"
 fn sourceMatches(t: WatchedTitle, filter: string): bool = filter == "any" or t.sources.includes(filter)
 fn shownWatched(xs: WatchedTitle[], kind: string, source: string): WatchedTitle[] = xs.filter(t => kindMatches(t.kind, kind) and sourceMatches(t, source))
@@ -621,12 +677,12 @@ fn listRatingsNote(o: option<ListSortRatings>): string = match o {
   case none => "" }
 // The notes under a list: what couldn't be checked, what stood behind a by-rating
 // order, and when stale scores were saved.
-fn savedNotes(l: SavedList, release: string): string = [releaseNote(l.release_unknown, release), listRatingsNote(l.sort_ratings),
+fn savedNotes(l: SavedList, release: string, services: string): string = [releaseNote(l.release_unknown, release), servicesNote(l.services, services), listRatingsNote(l.sort_ratings),
   sortStale(l.sort_ratings) == "" ? "" : `Couldn’t refresh some ratings; using scores from as early as ${day(sortStale(l.sort_ratings))}.`].filter(x => x != "").join(" ")
 fn watchedNotesAbout(shown: WatchedTitle[], sort: string, stale: string): string = [
   shown.filter(t => t.title == none).length == 0 ? "" : `Couldn’t load the details of ${plural(shown.filter(t => t.title == none).length, "title", "titles")} from TMDB right now${sort == "title" ? ", so they’re listed last" : ""}.`,
   stale == "" ? "" : `Couldn’t refresh some titles; using details from as early as ${day(stale)}.`].filter(x => x != "").join(" ")
-fn entryNotes(e: ListEntry): string = [hashtags(e.sources), yes(e.in_theaters) ? "In theaters" : "", match e.next_release { case some(r) => `${releaseLabel(r)} ${releaseDay(r)}`, case none => "" }, scoreOf(e.rating)].filter(x => x != "").join(" · ")
+fn entryNotes(e: ListEntry): string = [hashtags(e.sources), servicesOf(e).length > 0 ? `On ${servicesOf(e).join(", ")}` : "", yes(e.in_theaters) ? "In theaters" : "", match e.next_release { case some(r) => `${releaseLabel(r)} ${releaseDay(r)}`, case none => "" }, scoreOf(e.rating)].filter(x => x != "").join(" · ")
 fn watchedNotes(t: WatchedTitle): string = [progressText(t.progress), `Watched ${day(t.last_watched_at)}`, t.sources.includes("apple_tv") ? "Apple TV" : ""].filter(x => x != "").join(" · ")
 fn watchedTitle(t: WatchedTitle): string = match t.title { case some(s) => s, case none => `${kindName(t.kind)} #${t.id}` }
 
@@ -977,6 +1033,25 @@ component TitleScreen
     send marked = setFavorite(kind, id, not yes(marks.favorite))
   action toggleWatched
     send marked = setWatched(kind, id, not yes(marks.watched))
+  // Recommended-by tags, while it's on To watch: each change replaces them all and
+  // the title is read again for the tags as saved.
+  state draft = ""
+  mutation tagged as shape SourceTags queue refreshes t then afterTag
+  resource known = watchlistSources() when yes(marks.to_watch) as shape SourceTags
+  derive suggestions = current(known) and current(t) ? tagSuggestions(known.sources, sourceList(t.sources)) : []
+  action editDraft(v: string)
+    draft = v
+  action addTyped
+    if typedTags(draft).length > 0 and not pending(tagged)
+      send tagged = setSources(kind, id, sourceList(t.sources).concat(typedTags(draft)))
+  action addTag(name: string)
+    if not pending(tagged)
+      send tagged = setSources(kind, id, sourceList(t.sources).concat([name]))
+  action removeTag(name: string)
+    if not pending(tagged)
+      send tagged = setSources(kind, id, sourceList(t.sources).filter(x => x != name))
+  action afterTag
+    draft = ""
   view
     column navigationKey=navKey navigationScroll="title" position="absolute" inset=0
       display="flex" flex-direction="column"
@@ -1029,8 +1104,32 @@ component TitleScreen
                 text keyRole(k.role) font="-exact-footnote" color="text.muted"
                 text k.people.map(p => p.name).join(", ")
           section
-            MarkButtons(marks=marks, source=hashtags(t.sources), busy=pending(marked), failed=(failed(marked) and not pending(marked)),
+            MarkButtons(marks=marks, busy=pending(marked), failed=(failed(marked) and not pending(marked)),
               toWatch=toggleToWatch, favorite=toggleFavorite, watched=toggleWatched)
+          if yes(marks.to_watch)
+            section testId="sources"
+              header
+                text "Recommended By"
+              for name in sourceList(t.sources) key=name
+                row gap=8 align-items="center" background-color="surface.card" testId=`source-${name}`
+                  text `#${name}` flex=1 min-width=0
+                  button press=removeTag(name) disabled=pending(tagged) aria-label=`Remove #${name}` testId=`source-remove-${name}`
+                    image "symbol:close" color="text.muted"
+              row gap=8 align-items="center" background-color="surface.card"
+                input value=draft input=editDraft submit=addTyped autocapitalize="none" autocorrect="off" spellcheck="false"
+                  enterkeyhint="done" placeholder=(sourceList(t.sources).length == 0 ? "#who-or-what" : "#more")
+                  aria-label="Tag who or what recommended it" testId="source-draft" flex=1 min-width=0
+                button press=addTyped disabled=(typedTags(draft).length == 0 or pending(tagged)) testId="source-add"
+                  text "Add"
+              if suggestions.length > 0
+                row gap=8 flex-wrap="wrap" background-color="surface.card" testId="source-suggestions"
+                  for name in suggestions key=name
+                    button press=addTag(name) buttonStyle="bordered" disabled=pending(tagged) aria-label=`Add #${name}` testId=`source-suggest-${name}`
+                      text `#${name}`
+              if failed(tagged) and not pending(tagged)
+                text "Couldn’t save the tags. Try again." color="mark.favorite" background-color="surface.card" testId="source-error"
+              footer
+                text "Separate tags with spaces." testId="source-hint"
           match t.where_to_watch
             case some(w)
               WhereToWatchSection(w=w, inTheaters=theatersOf(t))
@@ -1370,11 +1469,9 @@ component SeasonScreen
 
 // To watch, Favorite and Watched on a movie or show, as the web's detail page
 // toggles them. Each press flips one mark; the screen re-reads the title after.
-// `source` is the tags naming who recommended it, shown while it's on To watch.
 component MarkButtons
   props
     marks: Marks
-    source: string
     busy: bool
     failed: bool
     toWatch: action
@@ -1392,8 +1489,6 @@ component MarkButtons
         button press=watched buttonStyle="bordered" aria-pressed=yes(marks.watched) disabled=busy testId="mark-watched"
           image (yes(marks.watched) ? "symbol:checkmark" : "symbol:circle")
           text "Watched"
-      if yes(marks.to_watch) and source != ""
-        text `Recommended by ${source}` font="-exact-footnote" color="text.muted" testId="to-watch-source"
       if failed
         text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite" testId="mark-error"
 
@@ -1761,9 +1856,15 @@ component SavedListScreen
   state sort = "added"
   state kind = "all"
   state release = "all"
+  state services = "all"
+  state tag = ""
   resource saved = savedList(list, sort) as shape SavedList
-  derive shown = current(saved) ? shownEntries(saved.titles, kind, release) : []
-  derive notes = current(saved) ? savedNotes(saved, release) : ""
+  derive shown = current(saved) ? shownEntries(saved.titles, kind, release, services, tag) : []
+  derive notes = current(saved) ? savedNotes(saved, release, services) : ""
+  // The services filter shows once services are chosen; the tag filter once a
+  // title is tagged, or while one is picked.
+  derive byServices = list == "watchlist" and current(saved) and servicesState(saved) == "chosen"
+  derive tags = current(saved) ? listTags(saved.titles) : []
 
   action pickSort(s: string)
     sort = s
@@ -1771,6 +1872,10 @@ component SavedListScreen
     kind = k
   action pickRelease(r: string)
     release = r
+  action pickServices(s: string)
+    services = s
+  action pickTag(t: string)
+    tag = t
   action retry
     refresh saved
 
@@ -1804,19 +1909,32 @@ component SavedListScreen
               text "Show" flex=1
               select value=kind change=pickKind aria-label="Show" testId="list-show" min-width=0
                 for k in ["all", "movie", "tv"] key=k
-                  option `${listKindLabel(k)} (${shownEntries(saved.titles, k, release).length})` value=k
+                  option `${listKindLabel(k)} (${shownEntries(saved.titles, k, release, services, tag).length})` value=k
+            if byServices
+              row flex-wrap="wrap" background-color="surface.card"
+                text "Available" flex=1
+                select value=services change=pickServices aria-label="Available" testId="list-services" min-width=0
+                  for f in ["all", "mine"] key=f
+                    option `${servicesFilterLabel(f)} (${shownEntries(saved.titles, kind, release, f, tag).length})` value=f
             if list == "watchlist"
               row flex-wrap="wrap" background-color="surface.card"
                 text "Release" flex=1
                 select value=release change=pickRelease aria-label="Release" testId="list-release" min-width=0
                   for r in ["all", "out_now", "coming_soon"] key=r
-                    option `${releaseFilterLabel(r)} (${shownEntries(saved.titles, kind, r).length})` value=r
+                    option `${releaseFilterLabel(r)} (${shownEntries(saved.titles, kind, r, services, tag).length})` value=r
+            if list == "watchlist" and (tags.length > 0 or tag != "")
+              row flex-wrap="wrap" background-color="surface.card"
+                text "Tag" flex=1
+                select value=tag change=pickTag aria-label="Tag" testId="list-tag" min-width=0
+                  option `Any (${shownEntries(saved.titles, kind, release, services, "").length})` value=""
+                  for g in (tags.includes(tag) or tag == "" ? tags : [tag].concat(tags)) key=g
+                    option `#${g} (${shownEntries(saved.titles, kind, release, services, g).length})` value=g
           section
             for e in shown key=`${e.kind}-${e.id}`
               ListRow(testId=`saved-${e.kind}-${e.id}`, href=titlePath(e.kind, e.id), picture=text(e.poster_url), label=e.title,
                 detail=`${kindName(e.kind)} · ${match e.year { case some(y) => y, case none => "TBA" }}`, notes=entryNotes(e))
             if shown.length == 0
-              text (release == "all" ? `No ${listKindWord(kind)} on your list.` : `None of the ${listKindWord(kind)} on your list are ${release == "out_now" ? "out now" : "coming soon"}.`) color="text.muted" testId="list-empty"
+              text emptyListMessage(kind, release, services, tag) color="text.muted" testId="list-empty"
             footer
               text notes testId="list-notes"
 

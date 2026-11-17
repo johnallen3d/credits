@@ -517,7 +517,92 @@ test "the browse menu opens To Watch, with its filters counting and a release to
   tap "saved-movie-1"
   clock settle
   expect text "title" == "Soon"
-  expect text "to-watch-source" == "Recommended by #a-podcast #jazzy"
+  expect tree has "source-a-podcast"
+  expect tree has "source-jazzy"
+
+test "To Watch filters by your services and by tag, counting each choice"
+  at "/watchlist"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"sort":"added","services":{"state":"chosen","unknown":1},"titles":[{"kind":"movie","id":1,"title":"Streams","year":"2020","availability":{"state":"fresh","services":[{"name":"Netflix"}]},"sources":["Sam"]},{"kind":"tv","id":2,"title":"Nowhere","year":"2011","availability":{"state":"fresh","services":[]},"sources":["sam","jazzy"]},{"kind":"movie","id":3,"title":"Unknown","year":null,"availability":{"state":"unavailable","services":[]}}]}
+  clock settle
+  expect text "saved-movie-1-notes" == "#Sam · On Netflix"
+  expect text "list-notes" == "Couldn’t check where 1 title is available right now."
+  type "list-services" "mine"
+  expect tree has "saved-movie-1"
+  expect tree missing "saved-tv-2"
+  expect tree missing "saved-movie-3"
+  expect text "list-notes" == "Couldn’t check where 1 title is available right now, so it’s left out."
+  type "list-services" "all"
+  type "list-tag" "jazzy"
+  expect tree has "saved-tv-2"
+  expect tree missing "saved-movie-1"
+  type "list-tag" "Sam"
+  expect tree has "saved-movie-1"
+  expect tree has "saved-tv-2"
+  type "list-show" "movie"
+  type "list-services" "mine"
+  type "list-tag" "jazzy"
+  expect text "list-empty" == "None of the movies on your list match these filters."
+
+test "To Watch says when services aren't chosen, and hides the services filter"
+  at "/watchlist"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"sort":"added","services":{"state":"not_chosen","unknown":0},"titles":[{"kind":"movie","id":1,"title":"Streams","year":"2020"}]}
+  clock settle
+  expect tree missing "list-services"
+  expect tree missing "list-tag"
+  expect text "list-notes" == "Choose your streaming services in My Services to see which titles you can watch on them."
+
+test "a To Watch title's recommended-by tags are added, offered and removed"
+  at "/movie/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/movie/1" with 200 {"kind":"movie","id":1,"title":"Soon","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false},"sources":["jazzy"]}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist/sources" with 200 {"sources":["podcast","Jazzy","sam"]}
+  clock settle
+  expect tree has "source-jazzy"
+  expect tree has "source-suggest-podcast"
+  expect tree missing "source-suggest-Jazzy"
+  expect disabled "source-add"
+  answer fetch "https://credits.jallen7usa.com/api/movie/1/watchlist/sources" with 200 {"sources":["jazzy","Sam","a-friend"]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/1" with 200 {"kind":"movie","id":1,"title":"Soon","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false},"sources":["jazzy","Sam","a-friend"]}
+  type "source-draft" "#Sam a-friend"
+  tap "source-add"
+  clock data
+  clock settle
+  expect tree has "source-Sam"
+  expect tree has "source-a-friend"
+  expect text "source-draft" == ""
+  expect tree missing "source-suggest-sam"
+  answer fetch "https://credits.jallen7usa.com/api/movie/1/watchlist/sources" with 200 {"sources":["Sam","a-friend"]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/1" with 200 {"kind":"movie","id":1,"title":"Soon","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false},"sources":["Sam","a-friend"]}
+  tap "source-remove-jazzy"
+  clock data
+  clock settle
+  expect tree missing "source-jazzy"
+  expect tree missing "source-error"
+
+test "a tag that can't be saved keeps its text and says so"
+  at "/movie/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/movie/1" with 200 {"kind":"movie","id":1,"title":"Soon","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false}}
+  fail fetch "https://credits.jallen7usa.com/api/watchlist/sources"
+  fail fetch "https://credits.jallen7usa.com/api/movie/1/watchlist/sources"
+  clock settle
+  expect tree missing "source-suggestions"
+  type "source-draft" "sam"
+  tap "source-add"
+  clock data
+  clock settle
+  expect tree has "source-error"
+  expect text "source-draft" == "sam"
+
+test "a title off To Watch has no recommended-by tags"
+  at "/movie/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/movie/1" with 200 {"kind":"movie","id":1,"title":"Soon","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  clock settle
+  expect tree missing "sources"
+  expect tree missing "source-draft"
 
 test "Favorites sorts by rating through the server and says what stood behind it"
   at "/favorites"
