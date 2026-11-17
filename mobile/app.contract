@@ -31,6 +31,14 @@ shape Hit
   poster_url: option<string>
   profile_url: option<string>
 
+// A search hit or recently viewed page, as the search screen draws it.
+shape Tile
+  kind: string
+  id: string
+  label: string
+  picture: string
+  year: string
+
 shape Recent
   kind: string
   id: number
@@ -460,6 +468,8 @@ fn text(o: option<string>): string = match o { case some(s) => s, case none => "
 fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(h.name) }
 fn picture(h: Hit): string = match h.poster_url { case some(u) => u, case none => text(h.profile_url) }
 fn numberOf(s: string): number = match parseNumber(s) { case some(n) => n, case none => 0 }
+fn fromHit(h: Hit): Tile = Tile(kind=h.kind, id=`${h.id}`, label=label(h), picture=picture(h), year=text(h.year))
+fn fromRecent(r: Recent): Tile = Tile(kind=r.kind, id=`${r.id}`, label=r.name, picture=text(r.image_url), year=text(r.year))
 fn kindName(k: string): string = k == "movie" ? "Movie" : k == "tv" ? "TV" : "Person"
 fn scoreOf(o: option<Score>): string = match o {
   case some(s) => s.scale == 100 ? `RT ${round(s.score)}%` : `IMDb ${s.score}`,
@@ -649,12 +659,9 @@ component App
               input type="search" value=query input=edit placeholder="Movies, shows, people"
                 aria-label="Search" testId="search" width="100%"
             if asked == "" and recents.length > 0
-              list id="recent" testId="recent" appearance="auto" listStyle="plain" flex=1 min-height=0 background-color="surface.page"
-                section
-                  header
-                    text "Recently Viewed"
-                  for r in recents key=`${r.kind}-${r.id}`
-                    Entry(testId=`recent-${r.kind}-${r.id}`, kind=r.kind, id=`${r.id}`, label=r.name, picture=text(r.image_url), year=text(r.year))
+              scroll id="hits" testId="recent" flex=1 min-height=0 background-color="surface.page"
+                Shelves(prefix="recent", people=recents.filter(r => r.kind == "person").map(r => fromRecent(r)),
+                  titles=recents.filter(r => r.kind != "person").map(r => fromRecent(r)), peopleHeading="Recent People", titlesHeading="Recently Viewed")
             else if asked == ""
               EmptyState(symbol="symbol:search", title="Search", message="Find a movie, show or person.")
             else if failed(hits)
@@ -664,10 +671,9 @@ component App
             else if hits.length == 0 and not pending(hits)
               EmptyState(symbol="symbol:search", title=`No Results for “${asked}”`, message="Check the spelling or try a new search.")
             else
-              list id="hits" appearance="auto" listStyle="plain" flex=1 min-height=0 background-color="surface.page"
-                section
-                  for h in hits key=`${h.kind}-${h.id}`
-                    Entry(testId=`hit-${h.kind}-${h.id}`, kind=h.kind, id=`${h.id}`, label=label(h), picture=picture(h), year=text(h.year))
+              scroll id="hits" flex=1 min-height=0 background-color="surface.page"
+                Shelves(prefix="hit", people=hits.filter(h => h.kind == "person").map(h => fromHit(h)),
+                  titles=hits.filter(h => h.kind != "person").map(h => fromHit(h)), peopleHeading="People", titlesHeading="Movies & TV")
             // The menu: every destination and the theme, slid in from the left.
             // A full-window dialog painting its own dim: iOS centres a top-layer dialog's box,
             // so the panel sits at its start and the dim beside it closes the menu.
@@ -730,23 +736,61 @@ component App
         if e.name == "playback"
           PlaybackScreen(navKey=`${e.id}`)
 
-// A search hit or recently viewed page, linking to its title or person screen.
-component Entry
+// The search screen's results or recently viewed pages: people as a strip of round
+// portraits, then titles as a grid of posters.
+component Shelves
+  props
+    prefix: string
+    people: Tile[]
+    titles: Tile[]
+    peopleHeading: string
+    titlesHeading: string
+  view
+    column gap=24 padding="8px 0 32px"
+      if people.length > 0
+        column gap=12
+          text peopleHeading role="heading" aria-level=2 padding="0 16px" font="-exact-title3" font-weight=700
+          scroll overflow-x="auto" overflow-y="hidden" scrollbar-width="none" width="100%"
+            row gap=16 padding="0 16px" align-items="flex-start"
+              for t in people key=`${t.kind}-${t.id}`
+                TileLink(testId=`${prefix}-${t.kind}-${t.id}`, tile=t, width=84)
+      if titles.length > 0
+        column gap=12
+          text titlesHeading role="heading" aria-level=2 padding="0 16px" font="-exact-title3" font-weight=700
+          box display="grid" grid-template-columns="repeat(auto-fill, minmax(104px, 1fr))" column-gap=14 row-gap=20 padding="0 16px"
+            for t in titles key=`${t.kind}-${t.id}`
+              TileLink(testId=`${prefix}-${t.kind}-${t.id}`, tile=t, width=0)
+
+// A search hit or recently viewed page as artwork with its name under it, linking to its
+// title or person screen: a poster for a title, a round portrait for a person.
+// `width` fixes a carousel's tile; 0 fills a grid's cell.
+component TileLink
   props
     testId: string
-    kind: string
-    id: string
-    label: string
-    picture: string
-    year: string
+    tile: Tile
+    width: number
+  derive kind = tile.kind
+  derive id = tile.id
+  derive label = tile.label
+  derive picture = tile.picture
+  derive year = tile.year
   view
     link href=(kind == "movie" ? path("movie", id) : kind == "tv" ? path("tv", id) : path("person", id))
-      display="flex" align-items="center" gap=12 testId=testId background-color="surface.page"
-      Thumb(url=picture)
-      column flex=1 min-width=0
-        text label
-        text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-footnote" color="text.muted"
-      image "symbol:forward-chevron" color="text.muted"
+      display="flex" flex-direction="column" gap=6 testId=testId flex-shrink=0
+      width=(width == 0 ? "100%" : `${width}px`)
+      aria-label=(year == "" ? `${label}, ${kindName(kind)}` : `${label}, ${kindName(kind)}, ${year}`)
+      if picture == ""
+        column width="100%" aspect-ratio=(kind == "person" ? "1" : "2 / 3") border-radius=(kind == "person" ? "50%" : "12px")
+          background-color="surface.thumb" align-items="center" justify-content="center"
+          image (kind == "person" ? "symbol:person" : "symbol:photo") color="text.muted" width=28 height=28
+      else
+        image picture aria-label="" width="100%" aspect-ratio=(kind == "person" ? "1" : "2 / 3")
+          border-radius=(kind == "person" ? "50%" : "12px") object-fit="cover" background-color="surface.thumb"
+      column gap=2 align-items=(kind == "person" ? "center" : "flex-start")
+        text label font="-exact-subheadline" font-weight=600 line-clamp=2
+          text-align=(kind == "person" ? "center" : "start")
+        if kind != "person"
+          text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-caption1" color="text.muted"
 
 component Thumb
   props
