@@ -433,3 +433,63 @@ test "a person's photo opens full size from their page"
   expect tree has "photo-full"
   tap "photo-close"
   expect tree has "person-photo"
+
+test "the browse menu opens To Watch, with its filters counting and a release to come"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/1" with 200 {"kind":"movie","id":1,"title":"Soon","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false}}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"sort":"added","release_unknown":1,"titles":[{"kind":"movie","id":1,"title":"Soon","year":"2026","next_release":{"kind":"digital","date":"2026-12-05","upcoming":true},"release_status":"coming_soon"},{"kind":"tv","id":2,"title":"Out","year":"2011","release_status":"out_now"},{"kind":"movie","id":3,"title":"Unknown","year":null}]}
+  tap "browse"
+  tap "open-watchlist"
+  clock settle
+  expect text "list-title" == "To Watch"
+  expect tree has "saved-tv-2"
+  expect text "saved-movie-1-notes" == "Digital Coming Dec 5, 2026"
+  expect text "list-notes" == "Couldn’t check the release dates of 1 title right now."
+  type "list-release" "coming_soon"
+  expect tree missing "saved-tv-2"
+  type "list-show" "tv"
+  expect text "list-empty" == "None of the TV shows on your list are coming soon."
+  type "list-show" "all"
+  tap "saved-movie-1"
+  clock settle
+  expect text "title" == "Soon"
+
+test "Favorites sorts by rating through the server and says what stood behind it"
+  at "/favorites"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"sort":"added","titles":[{"kind":"movie","id":1,"title":"First"}]}
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=rating" with 200 {"sort":"rating","sort_ratings":{"unrated":1},"titles":[{"kind":"movie","id":2,"title":"Best","rating":{"source":"rotten_tomatoes","score":97,"scale":100}},{"kind":"movie","id":1,"title":"First"}]}
+  clock settle
+  expect tree missing "list-release"
+  tap "list-sort"
+  tap "list-sort-rating"
+  clock settle
+  expect text "saved-movie-2-notes" == "RT 97%"
+  expect text "list-notes" == "Titles without a Rotten Tomatoes or IMDb score are listed last, most recently added first."
+
+test "an empty list says so"
+  at "/favorites"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"sort":"added","titles":[]}
+  clock settle
+  expect text "list-title" == "Favorites"
+  expect tree missing "list-titles"
+  expect tree missing "list-retry"
+
+test "a list that can't load offers to try again"
+  at "/watchlist"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  fail fetch "https://credits.jallen7usa.com/api/watchlist?sort=added"
+  clock settle
+  expect tree has "list-retry"
+
+test "Watched lists how each title was marked and filters by it"
+  at "/watched"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/watched?sort=recent" with 200 {"sort":"recent","unavailable":1,"titles":[{"kind":"tv","id":1420,"title":"New Girl","year":"2011","last_watched_at":"2026-11-17T03:26:19Z","progress":{"show":false,"seasons":[0,1,2,3],"episodes":12},"sources":["manual","apple_tv"]},{"kind":"movie","id":9,"title":null,"last_watched_at":"2026-11-01T12:00:00Z","sources":["manual"]}]}
+  clock settle
+  expect text "list-notes" == "Couldn’t load the details of 1 title from TMDB right now."
+  expect text "watched-tv-1420-notes" == "Seasons 1–3, specials · 12 episodes · Watched Nov 17, 2026 · Apple TV"
+  type "list-marked" "apple_tv"
+  expect tree has "watched-tv-1420"
+  expect tree missing "watched-movie-9"

@@ -8,6 +8,9 @@ use EmptyState from "exact:content"
 routes nav
   search "/"
     services "/services"
+    watchlist "/watchlist"
+    favorites "/favorites"
+    watched "/watched"
     movie "/movie/:id"
       movieCredits "/movie/:id/credits"
     tv "/tv/:id"
@@ -252,6 +255,49 @@ shape Person
   sort: string
   sort_ratings: option<SortRatings>
 
+// The To Watch, Favorites and Watched lists, as the web's /watchlist, /favorites
+// and /watched show them: the server orders and answers each list; the screen
+// filters it and counts each choice.
+shape ListEntry
+  kind: string
+  id: number
+  title: string
+  year: option<string>
+  poster_url: option<string>
+  rating: option<Score>
+  in_theaters: option<bool>
+  next_release: option<ReleaseDate>
+  release_status: option<string>
+
+shape ListSortRatings
+  unrated: number
+  stale_since: option<string>
+  unavailable_reason: option<string>
+
+shape SavedList
+  titles: ListEntry[]
+  sort_ratings: option<ListSortRatings>
+  release_unknown: option<number>
+
+shape ShowProgress
+  show: bool
+  seasons: number[]
+  episodes: number
+
+shape WatchedTitle
+  kind: string
+  id: number
+  title: option<string>
+  year: option<string>
+  poster_url: option<string>
+  last_watched_at: string
+  progress: option<ShowProgress>
+  sources: string[]
+
+shape WatchedList
+  titles: WatchedTitle[]
+  stale_since: option<string>
+
 source search(q: string) as shape Hit[]
   url "https://credits.jallen7usa.com/api/search?q={q}"
   pointer "/results"
@@ -337,6 +383,13 @@ source episode(id: string, n: string, e: string) as shape EpisodeDetail
 
 source person(id: string, sort: string) as shape Person
   url "https://credits.jallen7usa.com/api/person/{id}?sort={sort}"
+
+// The To Watch and Favorites lists (`list` is the API's name for each), sorted by the server.
+source savedList(list: string, sort: string) as shape SavedList
+  url "https://credits.jallen7usa.com/api/{list}?sort={sort}"
+
+source watchedList(sort: string) as shape WatchedList
+  url "https://credits.jallen7usa.com/api/watched?sort={sort}"
 
 fn text(o: option<string>): string = match o { case some(s) => s, case none => "" }
 fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(h.name) }
@@ -427,6 +480,44 @@ fn fullSize(url: string): string = (url.includes("/t/p/")
   : url)
 // Where a tap on a poster, backdrop, photo or still goes: the image full screen.
 fn photoPath(url: string): string = path("photo", url)
+fn listName(l: string): string = l == "watchlist" ? "To Watch" : l == "favorites" ? "Favorites" : "Watched"
+fn listKindLabel(k: string): string = k == "movie" ? "Movies" : k == "tv" ? "TV" : "All"
+fn listKindWord(k: string): string = k == "movie" ? "movies" : k == "tv" ? "TV shows" : "titles"
+fn kindMatches(k: string, filter: string): bool = filter == "all" or k == filter
+fn releaseFilterLabel(r: string): string = r == "out_now" ? "Out now" : r == "coming_soon" ? "Coming soon" : "All"
+fn releaseMatches(e: ListEntry, filter: string): bool = filter == "all" or text(e.release_status) == filter
+fn shownEntries(xs: ListEntry[], kind: string, release: string): ListEntry[] = xs.filter(e => kindMatches(e.kind, kind) and releaseMatches(e, release))
+fn sourceLabel(s: string): string = s == "manual" ? "By hand" : s == "apple_tv" ? "Apple TV" : "Any way"
+fn sourceMatches(t: WatchedTitle, filter: string): bool = filter == "any" or t.sources.includes(filter)
+fn shownWatched(xs: WatchedTitle[], kind: string, source: string): WatchedTitle[] = xs.filter(t => kindMatches(t.kind, kind) and sourceMatches(t, source))
+fn titlePath(kind: string, id: number): string = kind == "movie" ? path("movie", `${id}`) : path("tv", `${id}`)
+fn plural(n: number, one: string, many: string): string = n == 1 ? `${n} ${one}` : `${n} ${many}`
+fn nth(xs: number[], i: number): number = match xs.at(i) { case some(x) => x, case none => 0 }
+// "2", "1, 2", "1–3", "1, 3–4": a run of three or more collapses, as the web's does.
+fn seasonRun(ns: number[]): string = ns.length == 1 ? `${nth(ns, 0)}` : nth(ns, -1) - nth(ns, 0) != ns.length - 1 ? ns.join(", ") : ns.length == 2 ? `${nth(ns, 0)}, ${nth(ns, 1)}` : `${nth(ns, 0)}–${nth(ns, -1)}`
+fn seasonsOfNumbers(ns: number[], specials: bool): string = ns.length == 0 ? (specials ? "Specials" : "") : `${ns.length == 1 ? "Season" : "Seasons"} ${seasonRun(ns)}${specials ? ", specials" : ""}`
+fn progressText(o: option<ShowProgress>): string = match o {
+  case some(p) => p.show ? "Whole show" : [seasonsOfNumbers(p.seasons.filter(x => x > 0), p.seasons.includes(0)), p.episodes > 0 ? episodes(some(p.episodes)) : ""].filter(x => x != "").join(" · "),
+  case none => "" }
+fn sortStale(o: option<ListSortRatings>): string = match o { case some(r) => text(r.stale_since), case none => "" }
+fn releaseNote(o: option<number>, release: string): string = match o {
+  case some(n) => n > 0 ? `Couldn’t check the release dates of ${plural(n, "title", "titles")} right now${release == "all" ? "" : n == 1 ? ", so it’s left out" : ", so they’re left out"}.` : "",
+  case none => "" }
+fn listRatingsNote(o: option<ListSortRatings>): string = match o {
+  case some(r) => text(r.unavailable_reason) == "not_configured" ? "Ratings aren’t configured on this server, so titles stay in the order they were added."
+    : text(r.unavailable_reason) != "" ? "Some ratings couldn’t be loaded right now."
+    : r.unrated > 0 ? "Titles without a Rotten Tomatoes or IMDb score are listed last, most recently added first." : "",
+  case none => "" }
+// The notes under a list: what couldn't be checked, what stood behind a by-rating
+// order, and when stale scores were saved.
+fn savedNotes(l: SavedList, release: string): string = [releaseNote(l.release_unknown, release), listRatingsNote(l.sort_ratings),
+  sortStale(l.sort_ratings) == "" ? "" : `Couldn’t refresh some ratings; using scores from as early as ${day(sortStale(l.sort_ratings))}.`].filter(x => x != "").join(" ")
+fn watchedNotesAbout(shown: WatchedTitle[], sort: string, stale: string): string = [
+  shown.filter(t => t.title == none).length == 0 ? "" : `Couldn’t load the details of ${plural(shown.filter(t => t.title == none).length, "title", "titles")} from TMDB right now${sort == "title" ? ", so they’re listed last" : ""}.`,
+  stale == "" ? "" : `Couldn’t refresh some titles; using details from as early as ${day(stale)}.`].filter(x => x != "").join(" ")
+fn entryNotes(e: ListEntry): string = [yes(e.in_theaters) ? "In theaters" : "", match e.next_release { case some(r) => `${releaseLabel(r)} ${releaseDay(r)}`, case none => "" }, scoreOf(e.rating)].filter(x => x != "").join(" · ")
+fn watchedNotes(t: WatchedTitle): string = [progressText(t.progress), `Watched ${day(t.last_watched_at)}`, t.sources.includes("apple_tv") ? "Apple TV" : ""].filter(x => x != "").join(" · ")
+fn watchedTitle(t: WatchedTitle): string = match t.title { case some(s) => s, case none => `${kindName(t.kind)} #${t.id}` }
 
 component App
   // The web's theme picker, remembered on the phone. The dark themes keep the
@@ -493,6 +584,15 @@ component App
                   button press=browse(l) popovertarget="browse-menu" popovertargetaction="hide"
                     testId=`browse-${l}`
                     text releaseList(l)
+                button press=follow(path("watchlist")) role="menuitem"
+                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-watchlist"
+                  text "To Watch"
+                button press=follow(path("favorites")) role="menuitem"
+                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-favorites"
+                  text "Favorites"
+                button press=follow(path("watched")) role="menuitem"
+                  popovertarget="browse-menu" popovertargetaction="hide" testId="open-watched"
+                  text "Watched"
                 button press=follow(path("services")) role="menuitem"
                   popovertarget="browse-menu" popovertargetaction="hide" testId="open-services"
                   text "My Services"
@@ -534,6 +634,10 @@ component App
           EpisodeScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n, e=e.params.e)
         if e.name == "person"
           PersonScreen(navKey=`${e.id}`, id=e.params.id)
+        if e.name == "watchlist" or e.name == "favorites"
+          SavedListScreen(navKey=`${e.id}`, list=e.name)
+        if e.name == "watched"
+          WatchedScreen(navKey=`${e.id}`)
         if e.name == "releases"
           ReleasesScreen(navKey=`${e.id}`, list=e.params.list, loaded=releasesLoaded, pages=releasesPages,
             pending=pending(releasesLoaded), failed=failed(releasesLoaded), more=releasesMore, retry=releasesRetry)
@@ -1289,3 +1393,155 @@ component PhotoScreen
           image url aria-label="" position="absolute" inset=0 width="100%" height="100%" object-fit="contain"
           image fullSize(url) aria-label="Full-size image" position="absolute" inset=0 width="100%" height="100%"
             object-fit="contain" testId="photo-full"
+
+// To Watch or Favorites (`list` is the route's name, which is also the API's):
+// sorted by the server, filtered here by kind (and on To Watch by release), each
+// row a link to its title.
+component SavedListScreen
+  props
+    navKey: string
+    list: string
+  state sort = "added"
+  state kind = "all"
+  state release = "all"
+  resource saved = savedList(list, sort) as shape SavedList
+  derive shown = current(saved) ? shownEntries(saved.titles, kind, release) : []
+  derive notes = current(saved) ? savedNotes(saved, release) : ""
+
+  action pickSort(s: string)
+    sort = s
+  action pickKind(k: string)
+    kind = k
+  action pickRelease(r: string)
+    release = r
+  action retry
+    refresh saved
+
+  view
+    column navigationKey=navKey navigationScroll=`list-${list}` position="absolute" inset=0
+      display="flex" flex-direction="column"
+      header display="flex" align-items="center" gap=8 padding="8px 16px" background-color="surface.page"
+        text listName(list) role="heading" aria-level=2 testId="list-title"
+        button popovertarget=`list-sort-menu-${list}` aria-label="Sort" testId="list-sort"
+          image "symbol:sort" color="accent"
+        column id=`list-sort-menu-${list}` popover="auto" role="menu" aria-label="Sort by"
+          for o in ["added", "rating"] key=o
+            button press=pickSort(o) role="menuitemradio" aria-checked=(sort == o)
+              popovertarget=`list-sort-menu-${list}` popovertargetaction="hide" testId=`list-sort-${o}`
+              text (o == "added" ? "Added" : "Rating")
+      if failed(saved)
+        EmptyState(symbol="symbol:alert", title=`Can’t Load ${listName(list)}`, message="The server didn’t answer.")
+          button press=retry testId="list-retry"
+            text "Try Again"
+      else if not current(saved)
+        progress aria-label="Loading" testId="list-loading"
+      else if saved.titles.length == 0
+        if list == "favorites"
+          EmptyState(symbol="symbol:star", title="No Favorites Yet", message="Favorite a movie or TV show and it will be listed here.")
+        else
+          EmptyState(symbol="symbol:bookmark", title="Nothing Saved Yet", message="Add a movie or TV show to To Watch and it will be listed here.")
+      else
+        list id=`list-${list}` testId="list-titles" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+          section
+            row flex-wrap="wrap" background-color="surface.card"
+              text "Show" flex=1
+              select value=kind change=pickKind aria-label="Show" testId="list-show" min-width=0
+                for k in ["all", "movie", "tv"] key=k
+                  option `${listKindLabel(k)} (${shownEntries(saved.titles, k, release).length})` value=k
+            if list == "watchlist"
+              row flex-wrap="wrap" background-color="surface.card"
+                text "Release" flex=1
+                select value=release change=pickRelease aria-label="Release" testId="list-release" min-width=0
+                  for r in ["all", "out_now", "coming_soon"] key=r
+                    option `${releaseFilterLabel(r)} (${shownEntries(saved.titles, kind, r).length})` value=r
+          section
+            for e in shown key=`${e.kind}-${e.id}`
+              ListRow(testId=`saved-${e.kind}-${e.id}`, href=titlePath(e.kind, e.id), picture=text(e.poster_url), label=e.title,
+                detail=`${kindName(e.kind)} · ${match e.year { case some(y) => y, case none => "TBA" }}`, notes=entryNotes(e))
+            if shown.length == 0
+              text (release == "all" ? `No ${listKindWord(kind)} on your list.` : `None of the ${listKindWord(kind)} on your list are ${release == "out_now" ? "out now" : "coming soon"}.`) color="text.muted" testId="list-empty"
+            footer
+              text notes testId="list-notes"
+
+// Every watched movie and show, however it was marked, as the web's /watched.
+component WatchedScreen
+  props
+    navKey: string
+  state sort = "recent"
+  state kind = "all"
+  state source = "any"
+  resource watched = watchedList(sort) as shape WatchedList
+  derive shown = current(watched) ? shownWatched(watched.titles, kind, source) : []
+  derive notes = current(watched) ? watchedNotesAbout(shown, sort, text(watched.stale_since)) : ""
+
+  action pickSort(s: string)
+    sort = s
+  action pickKind(k: string)
+    kind = k
+  action pickSource(s: string)
+    source = s
+  action retry
+    refresh watched
+
+  view
+    column navigationKey=navKey navigationScroll="list-watched" position="absolute" inset=0
+      display="flex" flex-direction="column"
+      header display="flex" align-items="center" gap=8 padding="8px 16px" background-color="surface.page"
+        text "Watched" role="heading" aria-level=2 testId="list-title"
+        button popovertarget="list-sort-menu-watched" aria-label="Sort" testId="list-sort"
+          image "symbol:sort" color="accent"
+        column id="list-sort-menu-watched" popover="auto" role="menu" aria-label="Sort by"
+          for o in ["recent", "title"] key=o
+            button press=pickSort(o) role="menuitemradio" aria-checked=(sort == o)
+              popovertarget="list-sort-menu-watched" popovertargetaction="hide" testId=`list-sort-${o}`
+              text (o == "recent" ? "Last Watched" : "Title")
+      if failed(watched)
+        EmptyState(symbol="symbol:alert", title="Can’t Load Watched", message="The server didn’t answer.")
+          button press=retry testId="list-retry"
+            text "Try Again"
+      else if not current(watched)
+        progress aria-label="Loading" testId="list-loading"
+      else if watched.titles.length == 0
+        EmptyState(symbol="symbol:checkmark", title="Nothing Watched Yet", message="Mark a movie, show, season or episode watched, or let Seen on Apple TV mark what plays.")
+      else
+        list id="list-watched" testId="list-watched" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+          section
+            row flex-wrap="wrap" background-color="surface.card"
+              text "Show" flex=1
+              select value=kind change=pickKind aria-label="Show" testId="list-show" min-width=0
+                for k in ["all", "movie", "tv"] key=k
+                  option `${listKindLabel(k)} (${shownWatched(watched.titles, k, source).length})` value=k
+            row flex-wrap="wrap" background-color="surface.card"
+              text "Marked" flex=1
+              select value=source change=pickSource aria-label="Marked" testId="list-marked" min-width=0
+                for s in ["any", "manual", "apple_tv"] key=s
+                  option `${sourceLabel(s)} (${shownWatched(watched.titles, kind, s).length})` value=s
+          section
+            for t in shown key=`${t.kind}-${t.id}`
+              ListRow(testId=`watched-${t.kind}-${t.id}`, href=titlePath(t.kind, t.id), picture=text(t.poster_url), label=watchedTitle(t),
+                detail=(t.title == none ? `${kindName(t.kind)} · Details unavailable` : `${kindName(t.kind)} · ${match t.year { case some(y) => y, case none => "TBA" }}`),
+                notes=watchedNotes(t))
+            if shown.length == 0
+              text `No ${listKindWord(kind)} ${source == "manual" ? "marked watched by hand" : source == "apple_tv" ? "marked watched from the Apple TV" : "watched"}.` color="text.muted" testId="list-empty"
+            footer
+              text notes testId="list-notes"
+
+// A row on a list: poster, title, kind and year, then a line of notes (a release
+// to come, a score, how it was watched), linking to the title.
+component ListRow
+  props
+    testId: string
+    href: string
+    picture: string
+    label: string
+    detail: string
+    notes: string
+  view
+    link href=href display="flex" align-items="center" gap=12 testId=testId background-color="surface.page"
+      Thumb(url=picture)
+      column flex=1 min-width=0 gap=2
+        text label
+        text detail font="-exact-footnote" color="text.muted"
+        if notes != ""
+          text notes font="-exact-footnote" color="mark.watched" testId=`${testId}-notes`
+      image "symbol:forward-chevron" color="text.muted"
