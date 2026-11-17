@@ -14,6 +14,7 @@ routes nav
       tvCredits "/tv/:id/credits"
       season "/tv/:id/season/:n"
     releases "/releases/:list"
+    person "/person/:id"
 
 shape Hit
   kind: string
@@ -172,6 +173,39 @@ shape Services
   complete: bool
   fetched_at: option<string>
 
+// A person page. `sort` is the web's: "date" (newest first) or "rating".
+shape FilmCredit
+  kind: string
+  id: number
+  title: string
+  year: option<string>
+  role: option<string>
+  episode_count: option<number>
+  poster_url: option<string>
+  rating: option<Score>
+
+shape CreditGroup
+  department: string
+  entries: FilmCredit[]
+
+shape SortRatings
+  unrated: number
+  unavailable_reason: option<string>
+
+shape Person
+  id: number
+  name: string
+  known_for: option<string>
+  biography: option<string>
+  birthday: option<string>
+  deathday: option<string>
+  place_of_birth: option<string>
+  profile_url: option<string>
+  known_for_titles: FilmCredit[]
+  filmography: CreditGroup[]
+  sort: string
+  sort_ratings: option<SortRatings>
+
 source search(q: string) as shape Hit[]
   url "https://credits.jallen7usa.com/api/search?q={q}"
   pointer "/results"
@@ -252,6 +286,9 @@ source credits(kind: string, id: string) as shape Credits
 source season(id: string, n: string) as shape Season
   url "https://credits.jallen7usa.com/api/tv/{id}/season/{n}"
 
+source person(id: string, sort: string) as shape Person
+  url "https://credits.jallen7usa.com/api/person/{id}?sort={sort}"
+
 fn text(o: option<string>): string = match o { case some(s) => s, case none => "" }
 fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(h.name) }
 fn picture(h: Hit): string = match h.poster_url { case some(u) => u, case none => text(h.profile_url) }
@@ -277,6 +314,24 @@ fn moreCredits(t: Title): bool = countOf(t.cast_total) > t.cast.slice(0, 10).len
 fn themeName(t: string): string = t == "tokyo-night" ? "Tokyo Night" : t == "catppuccin" ? "Catppuccin" : t == "classic" ? "Classic" : "Rosé Pine"
 fn seasonSeen(w: SeasonWatched, season: number): bool = w.show or w.seasons.filter(n => n == season).length > 0
 fn theatersOf(t: Title): bool = match t.in_theaters { case some(b) => b, case none => false }
+fn creditScore(o: option<Score>): string = match o {
+  case some(s) => s.scale == 100 ? `${round(s.score)}%` : `${s.score}`,
+  case none => "" }
+fn creditPath(c: FilmCredit): string = c.kind == "movie" ? path("movie", `${c.id}`) : path("tv", `${c.id}`)
+fn filmLine(c: FilmCredit, acting: bool): string = [
+  c.year == none ? "TBA" : text(c.year), kindName(c.kind),
+  text(c.role) == "" ? "" : acting ? `as ${text(c.role)}` : text(c.role),
+  match c.episode_count { case some(n) => `${n} ${n == 1 ? "episode" : "episodes"}`, case none => "" }
+  ].filter(x => x != "").join(" · ")
+fn paragraphs(o: option<string>): string[] = text(o).split("\n").map(l => l.trim()).filter(l => l != "")
+fn bornText(p: Person): string = match p.birthday {
+  case some(d) => p.place_of_birth == none ? formatDate(d, 0, "medium") : `${formatDate(d, 0, "medium")} in ${text(p.place_of_birth)}`,
+  case none => text(p.place_of_birth) }
+fn ratingNote(p: Person): string = match p.sort_ratings {
+  case some(r) => match r.unavailable_reason {
+    case some(why) => why == "not_configured" ? "Ratings aren’t configured on this server, so credits stay in date order." : "Some ratings couldn’t be loaded right now.",
+    case none => p.sort == "rating" and r.unrated > 0 ? "Credits without a Rotten Tomatoes or IMDb score are listed last, newest first." : "" },
+  case none => "" }
 fn seen(w: SeasonWatched, season: number, ep: number): bool =
   seasonSeen(w, season) or w.episodes.filter(e => e.season == season and e.number == ep).length > 0
 fn offerLabel(k: string): string = k == "stream" ? "Stream" : k == "free" ? "Free" : k == "ads" ? "Free with ads" : k == "rent" ? "Rent" : "Buy"
@@ -301,7 +356,7 @@ component App
 
   task scheme when theme != "" key=theme
     change(applyScheme)
-  task opened when top(nav).name == "movie" or top(nav).name == "tv" key=top(nav).id
+  task opened when top(nav).name == "movie" or top(nav).name == "tv" or top(nav).name == "person" key=top(nav).id
     change(record)
 
   action edit(v: string)
@@ -388,12 +443,13 @@ component App
           CreditsScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
         if e.name == "season"
           SeasonScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n)
+        if e.name == "person"
+          PersonScreen(navKey=`${e.id}`, id=e.params.id)
         if e.name == "releases"
           ReleasesScreen(navKey=`${e.id}`, list=e.params.list, loaded=releasesLoaded, pages=releasesPages,
             pending=pending(releasesLoaded), failed=failed(releasesLoaded), more=releasesMore, retry=releasesRetry)
 
-// A search hit or recently viewed page: a title links to its screen; a person has
-// none yet.
+// A search hit or recently viewed page, linking to its title or person screen.
 component Entry
   props
     testId: string
@@ -403,20 +459,13 @@ component Entry
     picture: string
     year: string
   view
-    if kind == "person"
-      row gap=12 testId=testId background-color="surface.page"
-        Thumb(url=picture)
-        column flex=1 min-width=0
-          text label
-          text "Person" font="-exact-footnote" color="text.muted"
-    else
-      link href=(kind == "movie" ? path("movie", id) : path("tv", id)) display="flex" align-items="center" gap=12 testId=testId
-        background-color="surface.page"
-        Thumb(url=picture)
-        column flex=1 min-width=0
-          text label
-          text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-footnote" color="text.muted"
-        image "symbol:forward-chevron" color="text.muted"
+    link href=(kind == "movie" ? path("movie", id) : kind == "tv" ? path("tv", id) : path("person", id))
+      display="flex" align-items="center" gap=12 testId=testId background-color="surface.page"
+      Thumb(url=picture)
+      column flex=1 min-width=0
+        text label
+        text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-footnote" color="text.muted"
+      image "symbol:forward-chevron" color="text.muted"
 
 component Thumb
   props
@@ -500,11 +549,13 @@ component TitleScreen
             header
               text "Cast"
             for c in t.cast.slice(0, 10) key=`${c.person_id}`
-              row gap=12 background-color="surface.card"
+              link href=path("person", `${c.person_id}`) display="flex" align-items="center" gap=12
+                testId=`title-cast-${c.person_id}` background-color="surface.card"
                 image text(c.profile_url) aria-label="" width=40 height=40 border-radius=999 object-fit="cover"
                 column flex=1 min-width=0
                   text c.name
                   text creditLine("", c) font="-exact-footnote" color="text.muted"
+                image "symbol:forward-chevron" color="text.muted"
             if moreCredits(t)
               link href=(kind == "movie" ? path("movieCredits", id) : path("tvCredits", id)) testId="full-credits" background-color="surface.card"
                 text "Full Cast & Crew" flex=1
@@ -555,7 +606,7 @@ component Credit
     person: CastMember
     line: string
   view
-    row gap=12 testId=testId background-color="surface.card"
+    link href=path("person", `${person.person_id}`) display="flex" align-items="center" gap=12 testId=testId background-color="surface.card"
       if text(person.profile_url) == ""
         column width=40 height=40 border-radius=999 background-color="surface.thumb"
       else
@@ -564,6 +615,7 @@ component Credit
         text person.name
         if line != ""
           text line font="-exact-footnote" color="text.muted"
+      image "symbol:forward-chevron" color="text.muted"
 
 // The title's offers in the region, grouped as stream, rent and buy, with the
 // user's services marked. Says when the offers couldn't be loaded or refreshed
@@ -839,3 +891,99 @@ component ServicesScreen
                     input type="checkbox" switch change=choose(o.id) aria-label=o.name
                       checked=(pending(chose) and flipId == o.id ? flipOn : o.chosen)
                       testId=`service-${o.id}`
+
+// A person: photo, known for, born and died, a biography that opens past its first
+// paragraph, known-for titles and the filmography by department in the web's Date or
+// Rating order, each credit linking to its title.
+component PersonScreen
+  props
+    navKey: string
+    id: string
+  state sort = "date"
+  state more = false
+  resource p = person(id, sort) as shape Person
+  action pickSort(s: string)
+    sort = s
+  action toggleMore
+    more = not more
+  view
+    column navigationKey=navKey navigationScroll="person" position="absolute" inset=0
+      display="flex" flex-direction="column"
+      header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
+        text (p.id > 0 ? p.name : "") role="heading" aria-level=2 testId="person-name"
+      if failed(p) and p.id == 0
+        EmptyState(symbol="symbol:alert", title="Can’t Load Person", message="The server didn’t answer.")
+      else if p.id == 0
+        progress aria-label="Loading" testId="loading"
+      else
+        list id="person" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+          section
+            row gap=16 align-items="flex-start" padding-top=12 padding-bottom=12 background-color="surface.card"
+              if text(p.profile_url) == ""
+                column width=110 height=165 border-radius=8 background-color="surface.thumb" role="img" aria-label="No photo available"
+              else
+                image text(p.profile_url) aria-label=`Photo of ${p.name}` width=110 height=165 border-radius=8 object-fit="cover"
+              column flex=1 min-width=0 gap=6
+                if text(p.known_for) != ""
+                  text `Known for ${text(p.known_for)}` font="-exact-headline" testId="known-for"
+                if bornText(p) != ""
+                  text `Born ${bornText(p)}` color="text.muted" testId="born"
+                if p.deathday != none
+                  text `Died ${formatDate(text(p.deathday), 0, "medium")}` color="text.muted" testId="died"
+            if paragraphs(p.biography).length == 0
+              text "No biography available." color="text.muted" background-color="surface.card" testId="no-bio"
+            else
+              for para, i in (more ? paragraphs(p.biography) : paragraphs(p.biography).slice(0, 1)) key=`${i}`
+                text para padding-top=8 padding-bottom=8 background-color="surface.card" testId=`bio-${i}`
+              if paragraphs(p.biography).length > 1
+                button press=toggleMore testId="more" background-color="surface.card"
+                  text (more ? "Show less" : "Show more")
+          if p.known_for_titles.length > 0
+            section
+              header
+                text "Known For"
+              for c in p.known_for_titles key=`${c.kind}-${c.id}`
+                FilmRow(c=c, acting=true, prefix="known")
+          if p.filmography.length == 0
+            section
+              text "TMDB has no credits listed for this person." color="text.muted" background-color="surface.card" testId="no-credits"
+          else
+            section
+              header
+                text "Filmography"
+              row gap=8 align-items="center" background-color="surface.card"
+                row role="radiogroup" aria-label="Sort credits" flex=1
+                  button role="radio" aria-checked=(sort == "date") press=pickSort("date") testId="sort-date" flex=1
+                    text "Date"
+                  button role="radio" aria-checked=(sort == "rating") press=pickSort("rating") testId="sort-rating" flex=1
+                    text "Rating"
+                if not current(p)
+                  progress aria-label="Sorting" testId="sorting"
+              if failed(p)
+                text "Couldn’t load that order. Showing the last one." font="-exact-footnote" color="text.muted" background-color="surface.card" testId="sort-failed"
+              else if ratingNote(p) != ""
+                text ratingNote(p) font="-exact-footnote" color="text.muted" background-color="surface.card" testId="rating-note"
+            for g in p.filmography key=g.department
+              section
+                header
+                  text `${g.department} (${g.entries.length})`
+                for c in g.entries key=`${c.kind}-${c.id}-${text(c.role)}`
+                  FilmRow(c=c, acting=(g.department == "Acting"), prefix=g.department)
+
+// A credit row on a person screen: poster, title, year, kind and role, and the score
+// when sorted by rating. It links to the title's screen.
+component FilmRow
+  props
+    c: FilmCredit
+    acting: bool
+    prefix: string
+  view
+    link href=creditPath(c) display="flex" align-items="center" gap=12
+      testId=`${prefix}-${c.kind}-${c.id}` background-color="surface.card"
+      Thumb(url=text(c.poster_url))
+      column flex=1 min-width=0
+        text c.title
+        text filmLine(c, acting) font="-exact-footnote" color="text.muted"
+      if creditScore(c.rating) != ""
+        text creditScore(c.rating) font="-exact-footnote" color="text.muted" testId=`score-${c.kind}-${c.id}`
+      image "symbol:forward-chevron" color="text.muted"

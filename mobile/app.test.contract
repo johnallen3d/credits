@@ -267,3 +267,49 @@ test "cast and crew that can't load say so"
   clock data
   expect tree missing "cast-17419"
   expect tree has "credits-retry"
+
+test "a recently viewed person opens their page with photo, facts and credits"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for":"Acting","biography":"Keanu was born in Beirut.\n\nHe grew up in Toronto.","birthday":"1964-09-02","deathday":null,"place_of_birth":"Beirut, Lebanon","profile_url":null,"known_for_titles":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"},{"kind":"tv","id":1,"title":"A Show","year":null,"role":"Self","episode_count":2}]},{"department":"Production","entries":[{"kind":"movie","id":9,"title":"A Film","year":"2020","role":"Producer"}]}],"sort":"date","sort_ratings":{"unrated":0}}
+  tap "recent-person-6384"
+  clock data
+  expect text "person-name" == "Keanu Reeves"
+  expect text "known-for" == "Known for Acting"
+  expect text "born" == "Born Sep 2, 1964 in Beirut, Lebanon"
+  expect tree missing "died"
+  expect tree has "known-movie-603"
+  expect tree has "Acting-tv-1"
+  expect tree has "Production-movie-9"
+  expect text "bio-0" == "Keanu was born in Beirut."
+  expect tree missing "bio-1"
+  tap "more"
+  expect text "bio-1" == "He grew up in Toronto."
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{},"cast":[{"person_id":6384,"name":"Keanu Reeves","role":"Neo"}],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  tap "Acting-movie-603"
+  clock data
+  expect text "title" == "The Matrix"
+  tap "title-cast-6384"
+  clock data
+  expect text "person-name" == "Keanu Reeves"
+
+test "sorting a person's credits by rating shows each score"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=rating" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo","rating":{"source":"rotten_tomatoes","score":83.0,"scale":100}}]}],"sort":"rating","sort_ratings":{"unrated":3}}
+  tap "recent-person-6384"
+  clock data
+  expect tree has "no-bio"
+  expect tree missing "score-movie-603"
+  tap "sort-rating"
+  clock data
+  expect text "score-movie-603" == "83%"
+  expect text "rating-note" == "Credits without a Rotten Tomatoes or IMDb score are listed last, newest first."
+
+test "a person page the server can't answer says so"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  fail fetch "https://credits.jallen7usa.com/api/person/6384?sort=date"
+  tap "recent-person-6384"
+  clock data
+  expect text "person-name" == ""
+  expect tree missing "loading"
+  expect tree missing "known-for"
