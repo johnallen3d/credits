@@ -247,6 +247,12 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .showtimes-link { font-size: .9rem; padding: .35rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); text-decoration: none; }
 .showtimes-link:hover, .showtimes-link:focus-visible { border-color: var(--accent); color: var(--accent); }
 .detail .meta > .title-actions { margin: .5rem 0; }
+.watchlist-source { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .5rem; margin: 0 0 .5rem; font-size: .9rem; }
+.watchlist-source label { color: var(--muted); }
+.watchlist-source input { flex: 0 1 16rem; min-width: 0; font: inherit; padding: .3rem .7rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--fg); }
+.watchlist-source button { font: inherit; padding: .3rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); cursor: pointer; }
+.watchlist-source button:hover, .watchlist-source button:focus-visible, .watchlist-source input:focus-visible { border-color: var(--accent); color: var(--accent); }
+.list-source { display: block; margin-top: .15rem; font-size: .85rem; color: var(--muted); }
 .favorite-toggle button[aria-pressed="true"] { color: var(--favorite); border-color: var(--favorite); }
 .favorite-toggle button[aria-pressed="true"] .heart { fill: currentColor; }
 .favorite-error:not([hidden]) { display: block; max-width: 15rem; color: var(--error-fg); font-size: .85rem; margin-top: .25rem; }

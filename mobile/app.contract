@@ -159,6 +159,7 @@ shape Title
   releases: option<TitleReleases>
   showtimes_url: option<string>
   metadata: option<Metadata>
+  source: option<string>
 
 shape Episode
   number: number
@@ -280,6 +281,7 @@ shape ListEntry
   in_theaters: option<bool>
   next_release: option<ReleaseDate>
   release_status: option<string>
+  source: option<string>
 
 shape ListSortRatings
   unrated: number
@@ -593,7 +595,7 @@ fn savedNotes(l: SavedList, release: string): string = [releaseNote(l.release_un
 fn watchedNotesAbout(shown: WatchedTitle[], sort: string, stale: string): string = [
   shown.filter(t => t.title == none).length == 0 ? "" : `Couldn’t load the details of ${plural(shown.filter(t => t.title == none).length, "title", "titles")} from TMDB right now${sort == "title" ? ", so they’re listed last" : ""}.`,
   stale == "" ? "" : `Couldn’t refresh some titles; using details from as early as ${day(stale)}.`].filter(x => x != "").join(" ")
-fn entryNotes(e: ListEntry): string = [yes(e.in_theaters) ? "In theaters" : "", match e.next_release { case some(r) => `${releaseLabel(r)} ${releaseDay(r)}`, case none => "" }, scoreOf(e.rating)].filter(x => x != "").join(" · ")
+fn entryNotes(e: ListEntry): string = [match e.source { case some(s) => `From ${s}`, case none => "" }, yes(e.in_theaters) ? "In theaters" : "", match e.next_release { case some(r) => `${releaseLabel(r)} ${releaseDay(r)}`, case none => "" }, scoreOf(e.rating)].filter(x => x != "").join(" · ")
 fn watchedNotes(t: WatchedTitle): string = [progressText(t.progress), `Watched ${day(t.last_watched_at)}`, t.sources.includes("apple_tv") ? "Apple TV" : ""].filter(x => x != "").join(" · ")
 fn watchedTitle(t: WatchedTitle): string = match t.title { case some(s) => s, case none => `${kindName(t.kind)} #${t.id}` }
 
@@ -894,7 +896,7 @@ component TitleScreen
                 text keyRole(k.role) font="-exact-footnote" color="text.muted"
                 text k.people.map(p => p.name).join(", ")
           section
-            MarkButtons(marks=marks, busy=pending(marked), failed=(failed(marked) and not pending(marked)),
+            MarkButtons(marks=marks, source=text(t.source), busy=pending(marked), failed=(failed(marked) and not pending(marked)),
               toWatch=toggleToWatch, favorite=toggleFavorite, watched=toggleWatched)
           match t.where_to_watch
             case some(w)
@@ -1206,9 +1208,11 @@ component SeasonScreen
 
 // To watch, Favorite and Watched on a movie or show, as the web's detail page
 // toggles them. Each press flips one mark; the screen re-reads the title after.
+// `source` is who recommended it, shown while it's on To watch.
 component MarkButtons
   props
     marks: Marks
+    source: string
     busy: bool
     failed: bool
     toWatch: action
@@ -1226,6 +1230,8 @@ component MarkButtons
         button press=watched buttonStyle="bordered" aria-pressed=yes(marks.watched) disabled=busy testId="mark-watched"
           image (yes(marks.watched) ? "symbol:checkmark" : "symbol:circle")
           text "Watched"
+      if yes(marks.to_watch) and source != ""
+        text `Recommended by ${source}` font="-exact-footnote" color="text.muted" testId="to-watch-source"
       if failed
         text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite" testId="mark-error"
 

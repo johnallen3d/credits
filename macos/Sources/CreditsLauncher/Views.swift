@@ -293,6 +293,10 @@ struct TitleDetailView: View {
                     Text(title.title).font(.title.bold())
                     Text(facts).foregroundStyle(Theme.muted)
                     ListMarksView(marks: marks, changing: changing)
+                    // Only while on To watch, since a toggle updates just the marks.
+                    if let source = title.source, marks?.toWatch == true {
+                        Text("Recommended by \(source)").foregroundStyle(Theme.muted)
+                    }
                     if !ratings.isEmpty {
                         HStack {
                             ForEach(ratings, id: \.self) { r in

@@ -77,6 +77,14 @@ pub fn app(catalog: Catalog) -> Router {
             post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Tv, false)),
         )
         .route(
+            "/movie/{id}/watchlist/source",
+            post(|s, p, f| set_watchlist_source(s, p, f, MediaKind::Movie)),
+        )
+        .route(
+            "/tv/{id}/watchlist/source",
+            post(|s, p, f| set_watchlist_source(s, p, f, MediaKind::Tv)),
+        )
+        .route(
             "/movie/{id}/favorite",
             post(|s, p, f| set_on_watchlist(s, p, f, MediaKind::Movie, true)),
         )
@@ -154,6 +162,7 @@ fn api() -> OpenApiRouter<Catalog> {
         .routes(routes!(api_episode))
         .routes(routes!(api_person))
         .routes(routes!(api_watchlist))
+        .routes(routes!(api_watchlist_sources))
         .routes(routes!(api_favorites))
         .routes(routes!(api_watched))
         .routes(routes!(api_services, api_choose_service))
@@ -163,6 +172,8 @@ fn api() -> OpenApiRouter<Catalog> {
         .routes(routes!(api_coming_soon))
         .routes(routes!(api_movie_watchlist))
         .routes(routes!(api_tv_watchlist))
+        .routes(routes!(api_movie_watchlist_source))
+        .routes(routes!(api_tv_watchlist_source))
         .routes(routes!(api_movie_favorite))
         .routes(routes!(api_tv_favorite))
         .routes(routes!(api_movie_watched))
@@ -218,10 +229,38 @@ enum WriteErrors {
     Provider(#[to_schema] ApiError),
 }
 
+/// The ways setting a To watch source fails.
+#[derive(IntoResponses)]
+#[allow(dead_code)] // Only describes responses for the spec.
+enum SourceErrors {
+    /// The title isn't on To watch, or the ID isn't a number.
+    #[response(status = 404)]
+    NotFound(#[to_schema] ApiError),
+    /// The database couldn't be updated; nothing was saved.
+    #[response(status = 500)]
+    Database(#[to_schema] ApiError),
+}
+
 /// Puts a title on a list or takes it off.
 #[derive(Deserialize, ToSchema)]
 struct ListedBody {
     listed: bool,
+}
+
+/// Who or what recommended a To watch title.
+#[derive(Deserialize, Serialize, ToSchema)]
+struct SourceBody {
+    /// Free text, whitespace collapsed and cut to 80 characters. Null or
+    /// blank clears it.
+    source: Option<String>,
+}
+
+/// Sources used on To watch so far, for offering them again.
+#[derive(Serialize, ToSchema)]
+struct WatchlistSources {
+    /// Most recently used first, including sources of titles no longer on
+    /// the list.
+    sources: Vec<String>,
 }
 
 /// A title or person page a client opened.
@@ -367,6 +406,10 @@ struct DetailPage {
     movie_watched: MovieWatched,
     /// On the "To watch" list.
     listed: bool,
+    /// Who or what recommended it, when listed.
+    source: Option<String>,
+    /// Sources used before, to pick from.
+    sources: Vec<String>,
     favorited: Option<bool>,
 }
 
@@ -927,6 +970,13 @@ struct WatchlistForm {
 }
 
 #[derive(Deserialize)]
+struct SourceForm {
+    source: String,
+    /// Page to return to; only paths on this site are honored.
+    back: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct WatchedForm {
     watched: bool,
     /// Page to return to; only pages of the same show are honored.
@@ -1010,6 +1060,15 @@ async fn detail_page(
         _ => MovieWatched::default(),
     };
     let listed = result.is_ok() && catalog.watchlist_titles().await.contains(&(kind, id));
+    let (source, sources) = if listed {
+        let sources = catalog.watchlist_sources().await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "reading sources failed");
+            Vec::new()
+        });
+        (catalog.watchlist_source(kind, id).await, sources)
+    } else {
+        (None, Vec::new())
+    };
     let favorited = favorite_titles(&catalog)
         .await
         .map(|titles| titles.contains(&(kind, id)));
@@ -1019,6 +1078,8 @@ async fn detail_page(
             watched,
             movie_watched,
             listed,
+            source,
+            sources,
             favorited,
         }),
         || not_found_title(kind),
@@ -1308,6 +1369,39 @@ async fn set_on_watchlist(
     }
 }
 
+async fn set_watchlist_source(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    Form(form): Form<SourceForm>,
+    kind: MediaKind,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return not_found_title(kind);
+    };
+    match catalog.set_watchlist_source(kind, id, &form.source).await {
+        Ok(true) => {
+            let back = form
+                .back
+                .filter(|back| is_local_path(back))
+                .unwrap_or_else(|| title_path(kind, id));
+            Redirect::to(&back).into_response()
+        }
+        Ok(false) => error_page(
+            StatusCode::NOT_FOUND,
+            "Not on your To watch list",
+            "Add the title to your To watch list, then say who recommended it.",
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, ?kind, id, "saving the source failed");
+            error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save who recommended it",
+                "The database couldn't be updated. Please try again.",
+            )
+        }
+    }
+}
+
 /// A path on this site, so a form can't redirect elsewhere.
 fn is_local_path(path: &str) -> bool {
     path.starts_with('/')
@@ -1368,6 +1462,25 @@ async fn watchlist_page(
 )]
 async fn api_watchlist(state: State<Catalog>, query: Query<WatchlistParams>) -> Response {
     api_list(state, query, false).await
+}
+
+/// Sources used on To watch so far, to offer when setting one.
+#[utoipa::path(
+    get,
+    path = "/api/watchlist/sources",
+    responses((status = OK, body = WatchlistSources), ReadError)
+)]
+async fn api_watchlist_sources(State(catalog): State<Catalog>) -> Response {
+    match catalog.watchlist_sources().await {
+        Ok(sources) => Json(WatchlistSources { sources }).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "api sources read failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the sources couldn't be read",
+            )
+        }
+    }
 }
 
 /// Favorites.
@@ -1860,6 +1973,7 @@ async fn api_movie(State(catalog): State<Catalog>, Path(id): Path<String>) -> Re
         Ok(title) => Ok(MovieWithMarks {
             title,
             marks: catalog.title_marks(MediaKind::Movie, id).await,
+            source: catalog.watchlist_source(MediaKind::Movie, id).await,
         }),
         Err(e) => Err(e),
     };
@@ -1883,6 +1997,7 @@ async fn api_tv(State(catalog): State<Catalog>, Path(id): Path<String>) -> Respo
             title,
             watched: catalog.watched_marks(id).await,
             marks: catalog.title_marks(MediaKind::Tv, id).await,
+            source: catalog.watchlist_source(MediaKind::Tv, id).await,
         }),
         Err(e) => Err(e),
     };
@@ -2051,6 +2166,68 @@ async fn api_tv_watchlist(
     body: Result<Json<ListedBody>, JsonRejection>,
 ) -> Response {
     api_set_listed(state, id, body, MediaKind::Tv, false).await
+}
+
+/// Sets who or what recommended a movie on To watch.
+#[utoipa::path(
+    put,
+    path = "/api/movie/{id}/watchlist/source",
+    params(("id" = u64, Path, description = "TMDB movie ID")),
+    request_body = SourceBody,
+    responses((status = OK, body = SourceBody), SourceErrors)
+)]
+async fn api_movie_watchlist_source(
+    state: State<Catalog>,
+    id: Path<String>,
+    body: Result<Json<SourceBody>, JsonRejection>,
+) -> Response {
+    api_set_source(state, id, body, MediaKind::Movie).await
+}
+
+/// Sets who or what recommended a TV show on To watch.
+#[utoipa::path(
+    put,
+    path = "/api/tv/{id}/watchlist/source",
+    params(("id" = u64, Path, description = "TMDB TV ID")),
+    request_body = SourceBody,
+    responses((status = OK, body = SourceBody), SourceErrors)
+)]
+async fn api_tv_watchlist_source(
+    state: State<Catalog>,
+    id: Path<String>,
+    body: Result<Json<SourceBody>, JsonRejection>,
+) -> Response {
+    api_set_source(state, id, body, MediaKind::Tv).await
+}
+
+/// Answers with the source as saved.
+async fn api_set_source(
+    State(catalog): State<Catalog>,
+    Path(id): Path<String>,
+    body: Result<Json<SourceBody>, JsonRejection>,
+    kind: MediaKind,
+) -> Response {
+    let Ok(id) = id.parse::<u64>() else {
+        return api_not_found();
+    };
+    let source = match body {
+        Ok(Json(body)) => body.source.unwrap_or_default(),
+        Err(e) => return api_error(e.status(), &e.body_text()),
+    };
+    match catalog.set_watchlist_source(kind, id, &source).await {
+        Ok(true) => Json(SourceBody {
+            source: catalog.watchlist_source(kind, id).await,
+        })
+        .into_response(),
+        Ok(false) => api_error(StatusCode::NOT_FOUND, "the title isn't on the watchlist"),
+        Err(e) => {
+            tracing::warn!(error = %e, ?kind, id, "api source save failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the watchlist couldn't be updated, so nothing was saved",
+            )
+        }
+    }
 }
 
 /// Hearts a movie or unhearts it.

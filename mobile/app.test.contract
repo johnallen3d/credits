@@ -460,8 +460,8 @@ test "a person's photo opens full size from their page"
 
 test "the browse menu opens To Watch, with its filters counting and a release to come"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
-  answer fetch "https://credits.jallen7usa.com/api/movie/1" with 200 {"kind":"movie","id":1,"title":"Soon","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false}}
-  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"sort":"added","release_unknown":1,"titles":[{"kind":"movie","id":1,"title":"Soon","year":"2026","next_release":{"kind":"digital","date":"2026-12-05","upcoming":true},"release_status":"coming_soon"},{"kind":"tv","id":2,"title":"Out","year":"2011","release_status":"out_now"},{"kind":"movie","id":3,"title":"Unknown","year":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/1" with 200 {"kind":"movie","id":1,"title":"Soon","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":true,"favorite":false,"watched":false},"source":"A podcast"}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"sort":"added","release_unknown":1,"titles":[{"kind":"movie","id":1,"title":"Soon","year":"2026","next_release":{"kind":"digital","date":"2026-12-05","upcoming":true},"release_status":"coming_soon"},{"kind":"tv","id":2,"title":"Out","year":"2011","release_status":"out_now","source":"Sam"},{"kind":"movie","id":3,"title":"Unknown","year":null}]}
   tap "menu"
   clock settle
   tap "open-watchlist"
@@ -469,6 +469,7 @@ test "the browse menu opens To Watch, with its filters counting and a release to
   expect text "list-title" == "To Watch"
   expect tree has "saved-tv-2"
   expect text "saved-movie-1-notes" == "Digital Coming Dec 5, 2026"
+  expect text "saved-tv-2-notes" == "From Sam"
   expect text "list-notes" == "Couldn’t check the release dates of 1 title right now."
   type "list-release" "coming_soon"
   expect tree missing "saved-tv-2"
@@ -478,6 +479,7 @@ test "the browse menu opens To Watch, with its filters counting and a release to
   tap "saved-movie-1"
   clock settle
   expect text "title" == "Soon"
+  expect text "to-watch-source" == "Recommended by A podcast"
 
 test "Favorites sorts by rating through the server and says what stood behind it"
   at "/favorites"

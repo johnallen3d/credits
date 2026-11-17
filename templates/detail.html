@@ -22,7 +22,7 @@
       {% if let Some(tagline) = d.tagline %}<p class="tagline">{{ tagline }}</p>{% endif %}
       {% let page = d.path() %}
       <div class="title-actions">
-      {% call watchlist::toggle(d.kind.slug(), d.id, d.title, listed, "watchlist-toggle", page, "To watch", true) %}{% endcall %}
+      {% call watchlist::toggle(d.kind.slug(), d.id, d.title, listed, "watchlist-toggle", page, "To watch", true, "#watchlist-source") %}{% endcall %}
       {% call favorite::toggle(d.kind.slug(), d.id, d.title, favorited, "favorite-toggle", page, "Favorite", true) %}{% endcall %}
       {% if let Some(url) = d.showtimes_url %}<a class="showtimes-link" href="{{ url }}" rel="noopener">Showtimes</a>{% endif %}
       {% if d.kind.slug() == "movie" %}
@@ -38,6 +38,7 @@
       </form>
       {% endif %}
       </div>
+      <div id="watchlist-source">{% if listed %}{% call watchlist::source(d.kind.slug(), d.id, source, sources, page) %}{% endcall %}{% endif %}</div>
       {% if movie_watched.apple_tv %}<p class="muted auto-marked">Marked watched from what played on the Apple TV. <a href="/playback">Seen on Apple TV</a></p>{% endif %}
       {% if favorited.is_none() %}<p class="muted" role="status">Favorites couldn't be read. Please reload to try again.</p>{% endif %}
       <section class="ratings" aria-label="Ratings">

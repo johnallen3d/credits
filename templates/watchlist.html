@@ -64,7 +64,8 @@
       {%- if a.is_unavailable() %} <span class="service-badges muted">Availability unknown</span>
       {%- else if !a.services.is_empty() %} <span class="service-badges{% if a.is_stale() %} stale{% endif %}"{% if a.is_stale() %}{% if let Some(day) = a.fetched_on() %} title="Listed on {{ day }}"{% endif %}{% endif %}><span class="visually-hidden">On your services:</span>{% for svc in a.services %}{% if let Some(logo) = svc.logo_url %}<img class="service-badge" src="{{ logo }}" alt="{{ svc.name }}" title="{{ svc.name }}" width="22" height="22" loading="lazy">{% else %}<span class="service-badge text">{{ svc.name }}</span>{% endif %}{% endfor %}</span>
       {%- endif %}
-      {%- endif %}</span>
+      {%- endif %}
+      {%- if let Some(source) = e.source %} <span class="list-source">From {{ source }}</span>{% endif %}</span>
       <div class="title-actions">
       {% call watchlist::toggle(e.kind.slug(), e.id, e.title, self.is_listed(e), crate::web::watchlist_toggle_id(e), back, "", favorites) %}{% endcall %}
       {% call favorite::toggle(e.kind.slug(), e.id, e.title, self.is_favorite(e), crate::web::favorite_toggle_id(e), back, "", !favorites) %}{% endcall %}

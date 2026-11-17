@@ -530,6 +530,10 @@ fn title_page(t: &Title, width: u16) -> Page {
     if let Some(marks) = &t.marks {
         page.line(Line::from(mark_spans(marks, true)));
     }
+    // Kept only while it's on To watch, since a toggle updates just the marks.
+    if let (Some(source), Some(true)) = (&t.source, t.marks.and_then(|m| m.to_watch)) {
+        page.line(Line::styled(format!("Recommended by {source}"), dim()));
+    }
     stale_notice(&mut page, &t.metadata, width);
 
     ratings(&mut page, &t.ratings, width);
@@ -1203,6 +1207,9 @@ fn list_page(l: &List, name: ListName, view: ListView, width: u16) -> Page {
         }
         if let Some(a) = &e.availability {
             spans.extend(availability(a));
+        }
+        if let Some(source) = &e.source {
+            spans.push(Span::styled(format!("  from {source}"), dim()));
         }
         page.link(Line::from(spans), Target::Title(e.kind, e.id));
     }

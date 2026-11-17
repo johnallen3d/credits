@@ -2068,6 +2068,84 @@ async fn watching_a_title_takes_it_off_to_watch() {
 }
 
 #[tokio::test]
+async fn to_watch_titles_remember_who_recommended_them() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(r##"hx-select-oob="#watchlist-source""##));
+    assert!(
+        body.contains(r#"<div id="watchlist-source"></div>"#),
+        "no field until listed"
+    );
+    let (status, _) = post_form(t.app(), "/movie/603/watchlist/source", "source=Sam").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    post_form(t.app(), "/tv/1396/watchlist", "listed=true").await;
+    let (_, _, body) = get_page(t.app(), "/movie/603", false).await;
+    assert!(body.contains(r#"action="/movie/603/watchlist/source""#));
+    assert!(body.contains(r#"placeholder="Who or what?" value="">"#));
+    assert!(!body.contains("<datalist"), "nothing to offer yet");
+
+    let (status, headers) = post_form(
+        t.app(),
+        "/movie/603/watchlist/source",
+        "source=++Sam++from+work+&back=%2Fmovie%2F603",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/movie/603");
+    let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
+    assert!(body.contains(
+        r#"<datalist id="watchlist-sources"><option value="Sam from work"></option></datalist>"#
+    ));
+    let (_, _, body) = get_page(t.app(), "/watchlist", false).await;
+    assert!(body.contains(r#"<span class="list-source">From Sam from work</span>"#));
+
+    // Over JSON: a different case reuses the earlier spelling.
+    let (status, json) = put_json(
+        t.app(),
+        "/api/tv/1396/watchlist/source",
+        json!({ "source": "sam FROM work" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json, json!({ "source": "Sam from work" }));
+    let (_, json) = put_json(
+        t.app(),
+        "/api/movie/603/watchlist/source",
+        json!({ "source": "A podcast" }),
+    )
+    .await;
+    assert_eq!(json["source"], "A podcast");
+    let (_, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(json["source"], "A podcast");
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert_eq!(json["titles"][0]["source"], "Sam from work");
+    assert_eq!(json["titles"][1]["source"], "A podcast");
+
+    // Sources outlive their titles; cleared ones are omitted.
+    let (_, json) = put_json(
+        t.app(),
+        "/api/tv/1396/watchlist/source",
+        json!({ "source": null }),
+    )
+    .await;
+    assert_eq!(json, json!({ "source": null }));
+    post_form(t.app(), "/movie/603/watched", "watched=true").await;
+    let (_, json) = get_json(t.app(), "/api/watchlist").await;
+    assert!(json["titles"][0].get("source").is_none());
+    let (_, json) = get_json(t.app(), "/api/watchlist/sources").await;
+    assert_eq!(json, json!({ "sources": ["A podcast", "Sam from work"] }));
+    let (status, _) = put_json(
+        t.app(),
+        "/api/movie/603/watchlist/source",
+        json!({ "source": "Sam" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn person_page_shows_biography_and_filmography_linked_to_titles() {
     let (status, _, body) = get_page(test_app().await, "/person/6384", false).await;
     assert_eq!(status, StatusCode::OK);
@@ -5143,6 +5221,39 @@ async fn terminal_client_marks_movies_in_theaters() {
         "{movie}"
     );
     assert!(!movie.contains("No streaming, rental"), "{movie}");
+}
+
+#[tokio::test]
+async fn terminal_client_shows_who_recommended_to_watch_titles() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    post_form(t.app(), "/movie/603/watchlist", "listed=true").await;
+    put_json(
+        t.app(),
+        "/api/movie/603/watchlist/source",
+        json!({ "source": "Sam" }),
+    )
+    .await;
+    let base = serve(t.app()).await;
+    let client = tui::Client::new(&base);
+    let mut app = tui::App::new(&base);
+    press(&mut app, KeyCode::Tab);
+    let open = press(&mut app, KeyCode::Char('w'));
+    fulfil(
+        &client,
+        &mut app,
+        open.into_iter().next().expect("opens To watch"),
+    )
+    .await;
+    let list = screen(&mut app);
+    assert!(
+        list.contains("The Matrix") && list.contains("from Sam"),
+        "{list}"
+    );
+
+    let open = press(&mut app, KeyCode::Enter);
+    fulfil(&client, &mut app, open.into_iter().next().unwrap()).await;
+    let movie = screen(&mut app);
+    assert!(movie.contains("Recommended by Sam"), "{movie}");
 }
 
 #[tokio::test]

@@ -142,6 +142,8 @@ pub struct Title {
     pub watched: Option<Watched>,
     /// A server too old to send them can't say what's saved.
     pub marks: Option<Marks>,
+    /// On To watch only: who or what recommended it.
+    pub source: Option<String>,
     pub metadata: Metadata,
 }
 
@@ -601,6 +603,8 @@ pub struct ListEntry {
     /// To watch only: a movie's soonest theatrical or digital date still to come.
     #[serde(default)]
     pub next_release: Option<ReleaseDate>,
+    /// To watch only: who or what recommended it.
+    pub source: Option<String>,
 }
 
 /// Which of the user's services include a title.

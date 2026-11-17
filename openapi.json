@@ -766,6 +766,41 @@
         }
       }
     },
+    "/api/watchlist/sources": {
+      "get": {
+        "summary": "Sources used on To watch so far, to offer when setting one.",
+        "operationId": "api_watchlist_sources",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistSources"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/favorites": {
       "get": {
         "summary": "Favorites.",
@@ -1295,6 +1330,162 @@
           },
           "502": {
             "description": "Adding needs the title from TMDB, which rejected the token or failed\nwith no cached copy to fall back on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/movie/{id}/watchlist/source": {
+      "put": {
+        "summary": "Sets who or what recommended a movie on To watch.",
+        "operationId": "api_movie_watchlist_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB movie ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The title isn't on To watch, or the ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be updated; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tv/{id}/watchlist/source": {
+      "put": {
+        "summary": "Sets who or what recommended a TV show on To watch.",
+        "operationId": "api_tv_watchlist_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "TMDB TV ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The title isn't on To watch, or the ID isn't a number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Every JSON error response.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The database couldn't be updated; nothing was saved.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2509,6 +2700,13 @@
                 "type": "null"
               }
             ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "To watch only: who or what recommended it. Omitted when not set."
           }
         }
       },
@@ -2760,6 +2958,13 @@
             "properties": {
               "marks": {
                 "$ref": "#/components/schemas/TitleMarks"
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "On To watch only: who or what recommended it. Omitted when not set."
               }
             }
           }
@@ -3859,6 +4064,19 @@
           }
         }
       },
+      "SourceBody": {
+        "type": "object",
+        "description": "Who or what recommended a To watch title.",
+        "properties": {
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free text, whitespace collapsed and cut to 80 characters. Null or\nblank clears it."
+          }
+        }
+      },
       "SyncStatus": {
         "oneOf": [
           {
@@ -4263,6 +4481,13 @@
               },
               "marks": {
                 "$ref": "#/components/schemas/TitleMarks"
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "On To watch only: who or what recommended it. Omitted when not set."
               }
             }
           }
@@ -4543,6 +4768,22 @@
           "added",
           "rating"
         ]
+      },
+      "WatchlistSources": {
+        "type": "object",
+        "description": "Sources used on To watch so far, for offering them again.",
+        "required": [
+          "sources"
+        ],
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Most recently used first, including sources of titles no longer on\nthe list."
+          }
+        }
       },
       "WhereToWatch": {
         "type": "object",

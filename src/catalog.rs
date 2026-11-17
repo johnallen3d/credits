@@ -775,8 +775,39 @@ impl Catalog {
             in_theaters: false,
             next_release: None,
             release_status: None,
+            source: None,
         };
         Ok((entry, seasons))
+    }
+
+    /// Sets who or what recommended a To watch title. Blank clears it;
+    /// whitespace is collapsed and long text cut to `SOURCE_MAX_CHARS`.
+    /// False, and nothing saved, when the title isn't on the list.
+    pub async fn set_watchlist_source(
+        &self,
+        kind: MediaKind,
+        id: u64,
+        source: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let source = normalize_source(source);
+        self.watchlist
+            .set_source(kind, id, source.as_deref(), Timestamp::now())
+            .await
+    }
+
+    /// Who or what recommended a To watch title; `None` if unset or unreadable.
+    pub async fn watchlist_source(&self, kind: MediaKind, id: u64) -> Option<String> {
+        self.watchlist
+            .source(kind, id)
+            .await
+            .inspect_err(|e| tracing::warn!(error = %e, ?kind, id, "reading the source failed"))
+            .ok()
+            .flatten()
+    }
+
+    /// Sources used before, most recent first; none if they can't be read.
+    pub async fn watchlist_sources(&self) -> Result<Vec<String>, sqlx::Error> {
+        self.watchlist.sources().await
     }
 
     pub async fn remove_from_watchlist(&self, kind: MediaKind, id: u64) -> Result<(), sqlx::Error> {
@@ -1307,6 +1338,7 @@ impl Catalog {
                     in_theaters: false,
                     next_release: None,
                     release_status: None,
+                    source: None,
                 };
                 Some((
                     (department.clone(), kind, c.id),
@@ -2530,6 +2562,23 @@ fn known_for_titles(
     .collect()
 }
 
+/// The longest source kept, in characters.
+pub const SOURCE_MAX_CHARS: usize = 80;
+
+/// A source as saved: inner whitespace collapsed, cut to
+/// `SOURCE_MAX_CHARS`; `None` when blank.
+fn normalize_source(source: &str) -> Option<String> {
+    let source: String = source
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(SOURCE_MAX_CHARS)
+        .collect();
+    let source = source.trim_end();
+    (!source.is_empty()).then(|| source.to_owned())
+}
+
 /// The services page's options: the user's services, then the popular ones,
 /// then the rest, each A to Z. Add-on channels are left out unless chosen,
 /// since the service itself is nearly always listed alongside them.
@@ -2821,6 +2870,18 @@ fn year(date: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sources_are_tidied_before_saving() {
+        assert_eq!(
+            normalize_source("  Sam \n  from   work "),
+            Some("Sam from work".to_owned())
+        );
+        assert_eq!(normalize_source(" \t "), None);
+        let long = "a ".repeat(SOURCE_MAX_CHARS);
+        let cut = normalize_source(&long).unwrap();
+        assert!(cut.chars().count() <= SOURCE_MAX_CHARS && !cut.ends_with(' '));
+    }
 
     #[test]
     fn service_options_group_popular_and_hide_add_ons() {

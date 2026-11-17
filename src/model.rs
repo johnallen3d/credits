@@ -387,6 +387,9 @@ pub struct MovieWithMarks {
     #[serde(flatten)]
     pub title: TitleDetail,
     pub marks: TitleMarks,
+    /// On To watch only: who or what recommended it. Omitted when not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// A TV show with its watched marks.
@@ -396,6 +399,9 @@ pub struct TvWithWatched {
     pub title: TitleDetail,
     pub watched: WatchedMarks,
     pub marks: TitleMarks,
+    /// On To watch only: who or what recommended it. Omitted when not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Whether a title is on To watch and Favorites and marked watched (a TV
@@ -1820,6 +1826,9 @@ pub struct FilmographyEntry {
     /// its release dates couldn't be loaded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release_status: Option<ReleaseStatus>,
+    /// To watch only: who or what recommended it. Omitted when not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Whether a To watch title can be watched at home today.
