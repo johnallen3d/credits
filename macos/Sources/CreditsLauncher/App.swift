@@ -48,13 +48,14 @@ final class HotKey {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     let model = LauncherModel()
     private var panel: LauncherPanel!
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
     private var keyMonitor: Any?
     private var loginItem: NSMenuItem!
+    private var themeMenu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = LauncherPanel()
@@ -64,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         host.layer?.cornerRadius = 14
         host.layer?.masksToBounds = true
         panel.contentView = host
+        applyTheme()
         model.close = { [weak self] in self?.hide() }
 
         // Never shown (the app has no menu bar), but routes ⌘A/⌘C/⌘V/⌘Z to the search field.
@@ -85,6 +87,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .keyEquivalentModifierMask = .option
         menu.addItem(withTitle: "Open Credits in Browser", action: #selector(openSite), keyEquivalent: "")
         menu.addItem(.separator())
+        themeMenu = NSMenu(title: "Theme")
+        themeMenu.addItem(withTitle: "From config.toml", action: #selector(chooseTheme(_:)), keyEquivalent: "")
+        themeMenu.addItem(.separator())
+        for theme in ThemeName.allCases {
+            let item = themeMenu.addItem(withTitle: theme.title, action: #selector(chooseTheme(_:)), keyEquivalent: "")
+            item.representedObject = theme.rawValue
+        }
+        menu.addItem(withTitle: "Theme", action: nil, keyEquivalent: "").submenu = themeMenu
+        menu.delegate = self
         loginItem = menu.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -137,6 +148,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         loginItem.state = service.status == .enabled ? .on : .off
     }
 
+    func menuWillOpen(_ menu: NSMenu) {
+        ThemeStore.shared.reload()
+        applyTheme()
+    }
+
+    @objc func chooseTheme(_ sender: NSMenuItem) {
+        ThemeStore.shared.pick((sender.representedObject as? String).flatMap(ThemeName.init(rawValue:)))
+        applyTheme()
+    }
+
+    /// Matches the panel's appearance and the menu to the theme.
+    private func applyTheme() {
+        let store = ThemeStore.shared
+        panel.appearance = store.name.appearance
+        guard let themeMenu, let follow = themeMenu.items.first else { return }
+        follow.title = "From config.toml (\(store.configured.title))"
+        follow.state = store.picked == nil ? .on : .off
+        for item in themeMenu.items.dropFirst() {
+            item.state = item.representedObject as? String == store.picked?.rawValue ? .on : .off
+        }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         show()
         return false
@@ -178,6 +211,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.setFrameOrigin(NSPoint(x: frame.midX - size.width / 2,
                                          y: frame.minY + frame.height * 0.62 - size.height / 2))
         }
+        ThemeStore.shared.reload()
+        applyTheme()
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
         model.panelOpened()

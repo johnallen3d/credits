@@ -320,27 +320,10 @@ struct APIError: LocalizedError {
 struct CreditsAPI {
     let base: URL
 
-    /// The server in the terminal client's config file, found the same way
-    /// (`$CREDITS_CONFIG`, else `$XDG_CONFIG_HOME/credits/config.toml`, else
-    /// `~/.config/credits/config.toml`), else the hosted one.
+    /// The server in the terminal client's config file, else the hosted one.
     static func fromConfig() -> CreditsAPI {
         let fallback = URL(string: "https://credits.jallen7usa.com")!
-        let env = ProcessInfo.processInfo.environment.filter { !$0.value.isEmpty }
-        let path = env["CREDITS_CONFIG"].map { URL(fileURLWithPath: $0) }
-            ?? env["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0).appendingPathComponent("credits/config.toml") }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/credits/config.toml")
-        guard let text = try? String(contentsOf: path, encoding: .utf8) else {
-            return CreditsAPI(base: fallback)
-        }
-        for line in text.split(separator: "\n") {
-            let parts = line.split(separator: "=", maxSplits: 1)
-            guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == "url" else { continue }
-            let value = parts[1].split(separator: "#")[0]
-                .trimmingCharacters(in: .whitespaces)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-            if let url = URL(string: value) { return CreditsAPI(base: url) }
-        }
-        return CreditsAPI(base: fallback)
+        return CreditsAPI(base: CreditsConfig.value("url").flatMap(URL.init(string:)) ?? fallback)
     }
 
     func webURL(_ kind: Kind, _ id: Int) -> URL {

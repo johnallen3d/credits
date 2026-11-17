@@ -52,7 +52,6 @@ struct LauncherView: View {
         .foregroundStyle(Theme.fg)
         .tint(Theme.accent)
         .background(Theme.bg)
-        .environment(\.colorScheme, .dark)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .onChange(of: model.shown, initial: true) { fieldFocused = true }
     }
