@@ -341,6 +341,13 @@ test "a person page the server can't answer says so"
   expect text "person-name" == ""
   expect tree missing "loading"
   expect tree missing "known-for"
+  expect tree has "person-retry"
+  pass fetch "https://credits.jallen7usa.com/api/person/6384?sort=date"
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[],"sort":"date"}
+  tap "person-retry"
+  clock data
+  expect tree missing "person-retry"
+  expect text "person-name" == "Keanu Reeves"
 test "a title served stale from the cache says so, and its ratings note why they're missing"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
   answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":"Neo wakes up.","year":"1999","genres":["Action"],"runtime_minutes":136,"poster_url":null,"backdrop_url":null,"ratings":{"state":"unavailable","unavailable_reason":"provider_error","preferred":null,"fetched_at":null},"cast":[],"season_list":[],"marks":{"to_watch":null,"favorite":null,"watched":null},"metadata":{"state":"stale","fetched_at":"2026-10-16T08:00:00Z"}}
@@ -425,6 +432,14 @@ test "an episode the server can't load says so"
   fail fetch "https://credits.jallen7usa.com/api/tv/1396/season/1/episode/1"
   expect tree missing "facts"
   expect tree missing "episode-overview"
+  clock data
+  expect tree has "episode-retry"
+  pass fetch "https://credits.jallen7usa.com/api/tv/1396/season/1/episode/1"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1/episode/1" with 200 {"show_title":"Breaking Bad","season_number":1,"season_name":"Season 1","number":1,"title":"Pilot","episode_ratings":{"state":"fresh"},"key_crew":[],"cast":[],"guest_stars":[],"watched":{"show":false,"seasons":[],"episodes":[]}}
+  tap "episode-retry"
+  clock data
+  expect tree missing "episode-retry"
+  expect text "episode-title" == "Pilot"
 test "a title shows each score as a ring, the preferred one first"
   at "/movie/603"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
@@ -740,3 +755,29 @@ test "a season row's hidden summary peeks when tapped, one episode at a time"
   expect text "peek-1" == "A teacher turns."
   tap "peek-2"
   expect text "peek-2" == "Bodies."
+
+test "a title the server can't load offers to try again"
+  at "/movie/603"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  fail fetch "https://credits.jallen7usa.com/api/movie/603"
+  clock data
+  expect tree has "title-retry"
+  pass fetch "https://credits.jallen7usa.com/api/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  tap "title-retry"
+  clock data
+  expect tree missing "title-retry"
+  expect text "title" == "The Matrix"
+
+test "a season the server can't load offers to try again"
+  at "/tv/95396/season/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  fail fetch "https://credits.jallen7usa.com/api/tv/95396/season/1"
+  clock data
+  expect tree has "season-retry"
+  pass fetch "https://credits.jallen7usa.com/api/tv/95396/season/1"
+  answer fetch "https://credits.jallen7usa.com/api/tv/95396/season/1" with 200 {"show_title":"Severance","number":1,"name":"Season 1","episodes":[],"watched":{"show":false,"seasons":[],"episodes":[]}}
+  tap "season-retry"
+  clock data
+  expect tree missing "season-retry"
+  expect text "season-title" == "Severance: Season 1"

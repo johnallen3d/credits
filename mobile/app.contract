@@ -965,6 +965,8 @@ component TitleScreen
     kind: string
     id: string
   resource t = title(kind, id) as shape Title
+  action retry
+    refresh t
   // The last mark's reply is the server's marks after it, shown until the screen
   // closes; the title is read again too, since favoriting a show marks its seasons.
   mutation marked as shape Marks queue refreshes t
@@ -982,6 +984,8 @@ component TitleScreen
         text (current(t) ? t.title : "") role="heading" aria-level=2 testId="title"
       if failed(t)
         EmptyState(symbol="symbol:alert", title="Can’t Load Title", message="The server didn’t answer.")
+          button press=retry testId="title-retry"
+            text "Try Again"
       else if not current(t)
         progress aria-label="Loading" testId="loading"
       else
@@ -1271,6 +1275,8 @@ component SeasonScreen
     id: string
     n: string
   resource s = season(id, n) as shape Season
+  action retry
+    refresh s
   state peekEp = -1
   // As on TitleScreen, the last mark's reply is the show's watched marks after it.
   mutation marked as shape SeasonWatched queue refreshes s
@@ -1288,6 +1294,8 @@ component SeasonScreen
         text (current(s) ? `${s.show_title}: ${s.name}` : "") role="heading" aria-level=2 testId="season-title"
       if failed(s)
         EmptyState(symbol="symbol:alert", title="Can’t Load Season", message="The server didn’t answer.")
+          button press=retry testId="season-retry"
+            text "Try Again"
       else if not current(s)
         progress aria-label="Loading"
       else
@@ -1512,6 +1520,8 @@ component PersonScreen
   state sort = "date"
   state more = false
   resource p = person(id, sort) as shape Person
+  action retry
+    refresh p
   action pickSort(s: string)
     sort = s
   action toggleMore
@@ -1523,6 +1533,8 @@ component PersonScreen
         text (p.id > 0 ? p.name : "") role="heading" aria-level=2 testId="person-name"
       if failed(p) and p.id == 0
         EmptyState(symbol="symbol:alert", title="Can’t Load Person", message="The server didn’t answer.")
+          button press=retry testId="person-retry"
+            text "Try Again"
       else if p.id == 0
         progress aria-label="Loading" testId="loading"
       else
@@ -1622,6 +1634,8 @@ component EpisodeScreen
     n: string
     e: string
   resource ep = episode(id, n, e) as shape EpisodeDetail
+  action retry
+    refresh ep
   // As on SeasonScreen, the last mark's reply is the show's watched marks after it.
   mutation marked as shape SeasonWatched queue refreshes ep
   state peek = false
@@ -1639,6 +1653,8 @@ component EpisodeScreen
         text (current(ep) ? ep.title : "") role="heading" aria-level=2 testId="episode-title"
       if failed(ep)
         EmptyState(symbol="symbol:alert", title="Can’t Load Episode", message="The server didn’t answer.")
+          button press=retry testId="episode-retry"
+            text "Try Again"
       else if not current(ep)
         progress aria-label="Loading"
       else
