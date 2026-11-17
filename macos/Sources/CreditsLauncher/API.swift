@@ -114,6 +114,8 @@ struct TitleDetail: Decodable {
     let episodes: Int?
     let releases: Releases?
     let posterUrl: String?
+    /// A wide still from the title, shown above its page.
+    let backdropUrl: String?
     let ratings: Ratings?
     let whereToWatch: WhereToWatch?
     let keyCrew: [KeyCrew]

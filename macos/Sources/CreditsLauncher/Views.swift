@@ -370,6 +370,7 @@ struct TitleDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            Backdrop(url: title.backdropUrl)
             HStack(alignment: .top, spacing: 16) {
                 Poster(url: title.posterUrl, width: 120, kind: title.kind)
                 VStack(alignment: .leading, spacing: 8) {
@@ -718,6 +719,30 @@ struct SeasonDetailView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 3)
+    }
+}
+
+/// A title's backdrop as a banner across the top of its page, as on the web;
+/// nothing when it has none or it can't be loaded.
+struct Backdrop: View {
+    let url: String?
+
+    var body: some View {
+        if let url = url.flatMap(URL.init(string:)) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    Color.clear
+                        .frame(height: 170)
+                        .overlay { image.resizable().aspectRatio(contentMode: .fill) }
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                case .failure:
+                    EmptyView()
+                default:
+                    Theme.line.frame(height: 170).clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
     }
 }
 
