@@ -13,6 +13,7 @@ routes nav
     tv "/tv/:id"
       tvCredits "/tv/:id/credits"
       season "/tv/:id/season/:n"
+        episode "/tv/:id/season/:n/episode/:e"
     releases "/releases/:list"
     person "/person/:id"
 
@@ -170,6 +171,32 @@ shape Season
 
 // The web's "My services" page: TMDB's streaming services for the region,
 // grouped, with the ones chosen. Choosing one answers with the new page.
+shape EpisodeRatings
+  state: string
+  unavailable_reason: option<string>
+
+// An episode's own page. Its watched marks are the season's shape, so the same
+// spoiler rules apply.
+shape EpisodeDetail
+  show_title: string
+  season_number: number
+  season_name: string
+  number: number
+  title: string
+  air_date: option<string>
+  overview: option<string>
+  runtime_minutes: option<number>
+  still_url: option<string>
+  rating: option<Score>
+  episode_ratings: EpisodeRatings
+  key_crew: KeyCrew[]
+  cast: CastMember[]
+  guest_stars: CastMember[]
+  previous: option<number>
+  next: option<number>
+  watched: SeasonWatched
+  metadata: option<Metadata>
+
 shape ServiceOption
   id: number
   name: string
@@ -301,6 +328,9 @@ source credits(kind: string, id: string) as shape Credits
 source season(id: string, n: string) as shape Season
   url "https://credits.jallen7usa.com/api/tv/{id}/season/{n}"
 
+source episode(id: string, n: string, e: string) as shape EpisodeDetail
+  url "https://credits.jallen7usa.com/api/tv/{id}/season/{n}/episode/{e}"
+
 source person(id: string, sort: string) as shape Person
   url "https://credits.jallen7usa.com/api/person/{id}?sort={sort}"
 
@@ -349,6 +379,8 @@ fn ratingNote(p: Person): string = match p.sort_ratings {
   case none => "" }
 fn seen(w: SeasonWatched, season: number, ep: number): bool =
   seasonSeen(w, season) or w.episodes.filter(e => e.season == season and e.number == ep).length > 0
+fn episodeScore(e: EpisodeDetail): string = scoreOf(e.rating) != "" ? scoreOf(e.rating) : e.episode_ratings.state == "unavailable" ? "Ratings unavailable" : "No IMDb score"
+fn episodeFacts(e: EpisodeDetail): string = [match e.air_date { case some(d) => formatDate(d, 0, "medium"), case none => "Not announced" }, match e.runtime_minutes { case some(m) => `${m} min`, case none => "" }].filter(x => x != "").join(" · ")
 fn offerLabel(k: string): string = k == "stream" ? "Stream" : k == "free" ? "Free" : k == "ads" ? "Free with ads" : k == "rent" ? "Rent" : "Buy"
 fn uniq(xs: string[]): string[] = range(xs.length).filter(i => xs.indexOf(text(xs.at(i))) == i).map(i => text(xs.at(i)))
 fn myServices(w: WhereToWatch): string[] = uniq(w.offers.map(g => g.providers.filter(p => p.mine).map(p => p.name)).flat())
@@ -473,6 +505,8 @@ component App
           CreditsScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
         if e.name == "season"
           SeasonScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n)
+        if e.name == "episode"
+          EpisodeScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n, e=e.params.e)
         if e.name == "person"
           PersonScreen(navKey=`${e.id}`, id=e.params.id)
         if e.name == "releases"
@@ -784,7 +818,8 @@ component SeasonScreen
             for ep in s.episodes key=`${ep.number}`
               column gap=6 padding-top=10 padding-bottom=10 testId=`episode-${ep.number}` background-color="surface.card"
                 row gap=8
-                  text `${ep.number}. ${ep.title}` font="-exact-headline" flex=1
+                  link href=path("episode", id, n, `${ep.number}`) testId=`episode-open-${ep.number}` flex=1
+                    text `${ep.number}. ${ep.title}` font="-exact-headline"
                   button press=toggleEpisode(ep.number) aria-pressed=seen(w, s.number, ep.number)
                     aria-label=`Episode ${ep.number} watched` disabled=(seasonSeen(w, s.number) or pending(marked))
                     testId=`mark-episode-${ep.number}`
@@ -1043,3 +1078,80 @@ component Notice
       background-color="surface.card"
       image "symbol:alert" color="text.muted"
       text message font="-exact-subheadline" flex=1 min-width=0
+
+// An episode: still, air date, runtime, score, crew, overview, a pager to its
+// neighbours, then guest stars and series cast. Until the episode is watched
+// (itself, its season or the show) its still, score and summary stay blurred.
+component EpisodeScreen
+  props
+    navKey: string
+    id: string
+    n: string
+    e: string
+  resource ep = episode(id, n, e) as shape EpisodeDetail
+  view
+    column navigationKey=navKey navigationScroll="episode" position="absolute" inset=0
+      display="flex" flex-direction="column"
+      header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
+        text (current(ep) ? ep.title : "") role="heading" aria-level=2 testId="episode-title"
+      if failed(ep)
+        EmptyState(symbol="symbol:alert", title="Can’t Load Episode", message="The server didn’t answer.")
+      else if not current(ep)
+        progress aria-label="Loading"
+      else
+        list id="episode" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+          if staleNote(ep.metadata) != "" or stateOf(ep.watched.state) == "unreadable"
+            section
+              if staleNote(ep.metadata) != ""
+                Notice(testId="stale", message=staleNote(ep.metadata))
+              if stateOf(ep.watched.state) == "unreadable"
+                Notice(testId="watched-note", message="Watched marks couldn’t be read, so the spoilers stay blurred.")
+          section
+            column gap=8 padding-top=12 padding-bottom=12 background-color="surface.card"
+              if text(ep.still_url) == ""
+                column width="100%" aspect-ratio="16 / 9" border-radius=8 background-color="surface.thumb"
+              else
+                image text(ep.still_url) aria-label=`Still from ${ep.title}` width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
+                  filter=(seen(ep.watched, ep.season_number, ep.number) ? "none" : "blur(14px)") testId="still"
+              text `${ep.show_title} · ${ep.season_name} · Episode ${ep.number}` font="-exact-footnote" color="text.muted"
+              row gap=8 flex-wrap="wrap"
+                text episodeFacts(ep) color="text.muted" flex=1 flex-basis="10rem" testId="facts"
+                if seen(ep.watched, ep.season_number, ep.number)
+                  text "Watched" font="-exact-footnote" color="mark.watched" testId="watched"
+              text episodeScore(ep) font="-exact-headline" testId="episode-score"
+                filter=(seen(ep.watched, ep.season_number, ep.number) or scoreOf(ep.rating) == "" ? "none" : "blur(6px)")
+              for k in ep.key_crew key=k.role
+                text `${keyRole(k.role)} ${k.people.map(p => p.name).join(", ")}` font="-exact-footnote"
+            if text(ep.overview) == ""
+              text "No summary available." padding-top=8 padding-bottom=8 color="text.muted" background-color="surface.card"
+            else
+              text text(ep.overview) padding-top=8 padding-bottom=8 testId="episode-overview" background-color="surface.card"
+                filter=(seen(ep.watched, ep.season_number, ep.number) ? "none" : "blur(5px)")
+          if ep.previous != none or ep.next != none
+            section
+              match ep.previous
+                case some(p)
+                  link href=path("episode", id, n, `${p}`) testId="previous" background-color="surface.card"
+                    image "symbol:back" color="text.muted"
+                    text `Episode ${p}` flex=1
+                case none
+              match ep.next
+                case some(x)
+                  link href=path("episode", id, n, `${x}`) testId="next" background-color="surface.card"
+                    text `Episode ${x}` flex=1
+                    image "symbol:forward-chevron" color="text.muted"
+                case none
+          section
+            header
+              text "Guest Stars"
+            if ep.guest_stars.length == 0
+              text "No guest stars listed." color="text.muted" background-color="surface.card"
+            for c in ep.guest_stars key=`${c.person_id}`
+              Credit(testId=`guest-${c.person_id}`, person=c, line=text(c.role))
+          section
+            header
+              text "Series Cast"
+            if ep.cast.length == 0
+              text "No series regulars listed." color="text.muted" background-color="surface.card"
+            for c in ep.cast key=`${c.person_id}`
+              Credit(testId=`cast-${c.person_id}`, person=c, line=text(c.role))
