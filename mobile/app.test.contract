@@ -313,3 +313,38 @@ test "a person page the server can't answer says so"
   expect text "person-name" == ""
   expect tree missing "loading"
   expect tree missing "known-for"
+test "a title served stale from the cache says so, and its ratings note why they're missing"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":"Neo wakes up.","year":"1999","genres":["Action"],"runtime_minutes":136,"poster_url":null,"backdrop_url":null,"ratings":{"state":"unavailable","unavailable_reason":"provider_error","preferred":null,"fetched_at":null},"cast":[],"season_list":[],"marks":{"to_watch":null,"favorite":null,"watched":null},"metadata":{"state":"stale","fetched_at":"2026-10-16T08:00:00Z"}}
+  tap "recent-movie-603"
+  expect text "title" == "The Matrix"
+  expect text "stale" == "TMDB isn’t responding, so this page shows details saved on Oct 16, 2026. They may be out of date."
+  expect text "ratings-note" == "Ratings couldn’t be loaded right now."
+  expect tree has "favorites-note"
+  expect tree missing "score"
+
+test "a fresh title shows its score and no notices"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":136,"poster_url":null,"backdrop_url":null,"ratings":{"state":"fresh","unavailable_reason":null,"preferred":{"source":"rotten_tomatoes","score":83,"scale":100},"fetched_at":"2026-11-16T08:00:00Z"},"cast":[],"season_list":[],"marks":{"to_watch":false,"favorite":true,"watched":false},"metadata":{"state":"fresh","fetched_at":"2026-11-16T08:00:00Z"}}
+  tap "recent-movie-603"
+  expect text "score" == "RT 83%"
+  expect tree missing "stale"
+  expect tree missing "ratings-note"
+  expect tree missing "favorites-note"
+
+test "stale ratings say which day their scores are from"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":136,"poster_url":null,"backdrop_url":null,"ratings":{"state":"stale","unavailable_reason":null,"preferred":{"source":"imdb","score":8.7,"scale":10},"fetched_at":"2026-11-02T08:00:00Z"},"cast":[],"season_list":[],"marks":{"to_watch":false,"favorite":false,"watched":false},"metadata":{"state":"fresh","fetched_at":"2026-11-16T08:00:00Z"}}
+  tap "recent-movie-603"
+  expect text "score" == "IMDb 8.7"
+  expect text "ratings-note" == "Couldn’t refresh ratings; showing scores from Nov 2, 2026."
+
+test "a stale season with unreadable watched marks says both"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"tv","id":1396,"name":"Breaking Bad","year":"2008","image_url":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396" with 200 {"kind":"tv","id":1396,"title":"Breaking Bad","tagline":null,"overview":null,"year":"2008","genres":[],"runtime_minutes":null,"poster_url":null,"backdrop_url":null,"ratings":{"state":"fresh","unavailable_reason":null,"preferred":null,"fetched_at":null},"cast":[],"season_list":[{"number":1,"name":"Season 1","year":"2008","episode_count":1}],"marks":{"to_watch":false,"favorite":false,"watched":false},"metadata":{"state":"fresh","fetched_at":"2026-11-16T08:00:00Z"}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1" with 200 {"show_title":"Breaking Bad","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Pilot","air_date":null,"overview":"A teacher turns.","still_url":null}],"watched":{"state":"unreadable","show":false,"seasons":[],"episodes":[]},"metadata":{"state":"stale","fetched_at":"2026-10-16T08:00:00Z"}}
+  tap "recent-tv-1396"
+  tap "season-1"
+  expect text "season-title" == "Breaking Bad: Season 1"
+  expect tree has "stale"
+  expect text "watched-note" == "Watched marks couldn’t be read, so every episode stays blurred."

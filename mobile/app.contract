@@ -38,7 +38,16 @@ shape Score
   scale: number
 
 shape Ratings
+  state: option<string>
+  unavailable_reason: option<string>
   preferred: option<Score>
+  fetched_at: option<string>
+
+// How current the TMDB data behind a page is: "stale" when it was served from
+// cache because TMDB didn't answer. A response without it counts as fresh.
+shape Metadata
+  state: string
+  fetched_at: string
 
 shape CastMember
   person_id: number
@@ -70,10 +79,11 @@ shape SeasonSummary
   year: option<string>
   episode_count: number
 
+// Each is null when the server couldn't read it.
 shape Marks
-  to_watch: bool
-  favorite: bool
-  watched: bool
+  to_watch: option<bool>
+  favorite: option<bool>
+  watched: option<bool>
 
 // Where a title can be watched in the server's region, from the title API's
 // where_to_watch. state is fresh, stale or unavailable; my_services is
@@ -129,6 +139,7 @@ shape Title
   where_to_watch: option<WhereToWatch>
   releases: option<TitleReleases>
   showtimes_url: option<string>
+  metadata: option<Metadata>
 
 shape Episode
   number: number
@@ -141,7 +152,10 @@ shape EpisodeRef
   season: number
   number: number
 
+// state is "unreadable" when the marks couldn't be read; then nothing counts as
+// watched and every episode stays blurred.
 shape SeasonWatched
+  state: option<string>
   show: bool
   seasons: number[]
   episodes: EpisodeRef[]
@@ -152,6 +166,7 @@ shape Season
   name: string
   episodes: Episode[]
   watched: SeasonWatched
+  metadata: option<Metadata>
 
 // The web's "My services" page: TMDB's streaming services for the region,
 // grouped, with the ones chosen. Choosing one answers with the new page.
@@ -340,6 +355,21 @@ fn myServices(w: WhereToWatch): string[] = uniq(w.offers.map(g => g.providers.fi
 fn listedOn(w: WhereToWatch): string = match w.fetched_at { case some(t) => formatDate(t.slice(0, 10), 0, "medium"), case none => "" }
 fn releaseLabel(d: ReleaseDate): string = d.kind == "theatrical" ? "In theaters" : d.kind == "digital" ? "Digital" : d.kind == "physical" ? "Physical" : d.upcoming ? "Release" : "Released"
 fn releaseDay(d: ReleaseDate): string = d.upcoming ? `Coming ${formatDate(d.date, 0, "medium")}` : formatDate(d.date, 0, "medium")
+fn yes(o: option<bool>): bool = match o { case some(b) => b, case none => false }
+fn unknown(o: option<bool>): bool = match o { case some(b) => false, case none => true }
+fn day(iso: string): string = formatDate(iso.slice(0, 10), 0, "medium")
+// The web's notices, word for word, for data served stale or not loaded.
+fn stateOf(o: option<string>): string = match o { case some(s) => s, case none => "fresh" }
+fn staleNote(m: option<Metadata>): string = match m {
+  case some(x) => x.state == "stale" ? `TMDB isn’t responding, so this page shows details saved on ${day(x.fetched_at)}. They may be out of date.` : "",
+  case none => "" }
+fn ratingsNote(r: Ratings): string = (stateOf(r.state) == "unavailable"
+  ? (match r.unavailable_reason {
+      case some(why) => why == "not_configured" ? "Ratings aren’t configured on this server." : why == "no_imdb_id" ? "No IMDb entry is linked to this title." : "Ratings couldn’t be loaded right now.",
+      case none => "Ratings couldn’t be loaded right now." })
+  : stateOf(r.state) == "stale"
+    ? (match r.fetched_at { case some(at) => `Couldn’t refresh ratings; showing scores from ${day(at)}.`, case none => "Couldn’t refresh ratings." })
+    : "")
 
 component App
   // The web's theme picker, remembered on the phone. The dark themes keep the
@@ -487,11 +517,11 @@ component TitleScreen
   mutation marked as shape Marks queue refreshes t
   derive marks = match marked { case some(m) => m, case none => t.marks }
   action toggleToWatch
-    send marked = setToWatch(kind, id, not marks.to_watch)
+    send marked = setToWatch(kind, id, not yes(marks.to_watch))
   action toggleFavorite
-    send marked = setFavorite(kind, id, not marks.favorite)
+    send marked = setFavorite(kind, id, not yes(marks.favorite))
   action toggleWatched
-    send marked = setWatched(kind, id, not marks.watched)
+    send marked = setWatched(kind, id, not yes(marks.watched))
   view
     column navigationKey=navKey navigationScroll="title" position="absolute" inset=0
       display="flex" flex-direction="column"
@@ -503,6 +533,9 @@ component TitleScreen
         progress aria-label="Loading" testId="loading"
       else
         list id="title" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+          if staleNote(t.metadata) != ""
+            section
+              Notice(testId="stale", message=staleNote(t.metadata))
           section
             row gap=16 align-items="flex-start" padding-top=12 padding-bottom=12 background-color="surface.card"
               image text(t.poster_url) aria-label=`Poster for ${t.title}` width=110 height=165 border-radius=8 object-fit="cover"
@@ -512,8 +545,13 @@ component TitleScreen
                   text scoreText(t.ratings) font="-exact-headline" testId="score"
                 if theatersOf(t)
                   text "In theaters" font="-exact-footnote" color="accent" testId="in-theaters"
-                if marks.favorite
+                if ratingsNote(t.ratings) != ""
+                  text ratingsNote(t.ratings) font="-exact-footnote" color="text.muted" role="status" testId="ratings-note"
+                if yes(marks.favorite)
                   text "★ Favorite" color="mark.favorite" testId="favorite-badge"
+                if unknown(marks.favorite)
+                  text "Favorites couldn’t be read. Please reload to try again." font="-exact-footnote" color="text.muted"
+                    role="status" testId="favorites-note"
                 if text(t.showtimes_url) != ""
                   link href=text(t.showtimes_url) testId="showtimes"
                     text "Showtimes"
@@ -726,6 +764,12 @@ component SeasonScreen
         progress aria-label="Loading"
       else
         list id="season" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+          if staleNote(s.metadata) != "" or stateOf(s.watched.state) == "unreadable"
+            section
+              if staleNote(s.metadata) != ""
+                Notice(testId="stale", message=staleNote(s.metadata))
+              if stateOf(s.watched.state) == "unreadable"
+                Notice(testId="watched-note", message="Watched marks couldn’t be read, so every episode stays blurred.")
           section
             row gap=8 align-items="center" background-color="surface.card"
               text (w.show ? "Watched with the whole show" : seasonSeen(w, s.number) ? "Season watched" : "Season not watched")
@@ -767,14 +811,14 @@ component MarkButtons
   view
     column gap=8 padding-top=8 padding-bottom=8 background-color="surface.card"
       row gap=8 flex-wrap="wrap"
-        button press=toWatch buttonStyle="bordered" aria-pressed=marks.to_watch disabled=busy testId="mark-to-watch"
-          image (marks.to_watch ? "symbol:bookmark-fill" : "symbol:bookmark")
+        button press=toWatch buttonStyle="bordered" aria-pressed=yes(marks.to_watch) disabled=busy testId="mark-to-watch"
+          image (yes(marks.to_watch) ? "symbol:bookmark-fill" : "symbol:bookmark")
           text "To Watch"
-        button press=favorite buttonStyle="bordered" aria-pressed=marks.favorite disabled=busy testId="mark-favorite"
-          image (marks.favorite ? "symbol:heart-fill" : "symbol:heart")
+        button press=favorite buttonStyle="bordered" aria-pressed=yes(marks.favorite) disabled=busy testId="mark-favorite"
+          image (yes(marks.favorite) ? "symbol:heart-fill" : "symbol:heart")
           text "Favorite"
-        button press=watched buttonStyle="bordered" aria-pressed=marks.watched disabled=busy testId="mark-watched"
-          image (marks.watched ? "symbol:checkmark" : "symbol:circle")
+        button press=watched buttonStyle="bordered" aria-pressed=yes(marks.watched) disabled=busy testId="mark-watched"
+          image (yes(marks.watched) ? "symbol:checkmark" : "symbol:circle")
           text "Watched"
       if failed
         text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite" testId="mark-error"
@@ -987,3 +1031,15 @@ component FilmRow
       if creditScore(c.rating) != ""
         text creditScore(c.rating) font="-exact-footnote" color="text.muted" testId=`score-${c.kind}-${c.id}`
       image "symbol:forward-chevron" color="text.muted"
+
+// A degraded-state notice at the top of a screen: data served stale from the
+// cache, or a part that couldn't be read.
+component Notice
+  props
+    testId: string
+    message: string
+  view
+    row gap=10 align-items="flex-start" padding-top=10 padding-bottom=10 role="status" testId=testId
+      background-color="surface.card"
+      image "symbol:alert" color="text.muted"
+      text message font="-exact-subheadline" flex=1 min-width=0
