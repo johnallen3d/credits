@@ -21,9 +21,30 @@ final class LauncherModel {
     var homeError: [HomeTab: String] = [:]
     var homeLoading: Set<HomeTab> = []
 
+    /// To watch as the server last sent it, in `toWatchSort` order; the tab
+    /// shows the titles `toWatchFilter` keeps.
+    var toWatch: Watchlist?
+    var toWatchSort: WatchlistSort = .added {
+        didSet { if toWatchSort != oldValue { reloadHome(.toWatch) } }
+    }
+    var toWatchFilter = ToWatchFilter() {
+        didSet { rebuildToWatch() }
+    }
+
     var showingHome: Bool { query.trimmingCharacters(in: .whitespaces).isEmpty }
     /// What ↑↓ and ⏎ act on: the search results, or the tab's list.
     var rows: [SearchHit] { showingHome ? home[tab]?.hits ?? [] : results }
+
+    /// The page in detail's recommended-by tag being typed, and whether its
+    /// field has the keys (so ⏎ and esc go to it).
+    var tagDraft = ""
+    var editingTags = false
+    /// Bumped by ⌘R to put the keys in the tag field, and by esc there to give
+    /// them back to the search field.
+    var focusTags = 0
+    var focusSearch = 0
+    /// Tags used on To watch so far, offered on a title's page.
+    var knownTags: [String] = []
 
     /// The page in detail: a result, or a credit opened from another page.
     var detailHit: SearchHit?
@@ -88,17 +109,30 @@ final class LauncherModel {
         loadHome(next)
     }
 
+    /// Drops a load in flight (its answer would be for an old sort) and starts again.
+    private func reloadHome(_ tab: HomeTab) {
+        homeTasks[tab]?.cancel()
+        homeTasks[tab] = nil
+        loadHome(tab)
+    }
+
     /// Reloads a tab's list, keeping the saved one on screen until it's back.
     private func loadHome(_ tab: HomeTab) {
         guard homeTasks[tab] == nil else { return }
         homeLoading.insert(tab)
         homeTasks[tab] = Task {
-            defer { homeLoading.remove(tab); homeTasks[tab] = nil }
+            defer {
+                if !Task.isCancelled { homeLoading.remove(tab); homeTasks[tab] = nil }
+            }
             do {
                 let list = try await fetch(tab)
+                guard !Task.isCancelled else { return }
                 home[tab] = list
                 homeError[tab] = nil
+            } catch is CancellationError {
+                return
             } catch {
+                guard !Task.isCancelled else { return }
                 homeError[tab] = error.localizedDescription
             }
             // Keep the selection where it was if it's still listed.
@@ -116,25 +150,16 @@ final class LauncherModel {
                 SearchHit(kind: $0.kind, id: $0.id, title: $0.name, year: $0.year, posterUrl: $0.imageUrl)
             })
         case .toWatch:
-            let w = try await api.watchlist()
+            let w = try await api.watchlist(sort: toWatchSort)
             for t in w.titles {
                 if let m = t.marks { marks[SearchHit(kind: t.kind, id: t.id)] = m }
             }
-            var notes: [String] = []
-            if let s = w.services {
-                if s.state == "unreadable" { notes.append("Your streaming services couldn't be read") }
-                if let since = s.staleSince { notes.append("Services saved from \(shortDate(since)): TMDB isn't responding") }
-                if s.unknown > 0 {
-                    notes.append("Services couldn't be loaded for \(s.unknown) title\(s.unknown == 1 ? "" : "s")")
-                }
+            toWatch = w
+            // A tag no title has any more can't match, so stop filtering by it.
+            if let tag = toWatchFilter.tag, !toWatchTags.contains(where: { $0.lowercased() == tag.lowercased() }) {
+                toWatchFilter.tag = nil
             }
-            return HomeList(hits: w.titles.map { t in
-                let services = (t.availability?.services ?? []).map(\.name)
-                let tags = (t.sources ?? []).map { "#\($0)" }.joined(separator: " ")
-                let info = (services + [tags].filter { !$0.isEmpty }).joined(separator: " · ")
-                return SearchHit(kind: t.kind, id: t.id, title: t.title, year: t.year,
-                                 posterUrl: t.posterUrl, info: info)
-            }, notes: notes)
+            return toWatchList(w)
         case .nowPlaying:
             let n = try await api.nowPlaying()
             var notes: [String] = []
@@ -153,6 +178,66 @@ final class LauncherModel {
                 return SearchHit(kind: .movie, id: m.id, title: m.title, posterUrl: m.posterUrl, info: info)
             }, notes: notes)
         }
+    }
+
+    /// The services filter applies once services are chosen.
+    var servicesChosen: Bool { toWatch?.services?.state == "chosen" }
+
+    /// Every tag on To watch, in the order first seen.
+    var toWatchTags: [String] {
+        var seen = Set<String>()
+        return (toWatch?.titles ?? []).flatMap { $0.sources ?? [] }
+            .filter { seen.insert($0.lowercased()).inserted }
+    }
+
+    /// How many To watch titles a filter keeps, for the filter menus' counts.
+    func toWatchCount(_ filter: ToWatchFilter) -> Int {
+        let filter = servicesChosen ? filter : filter.with(\.onMyServices, false)
+        return (toWatch?.titles ?? []).filter(filter.keeps).count
+    }
+
+    private func rebuildToWatch() {
+        if let w = toWatch { home[.toWatch] = toWatchList(w) }
+        if showingHome, tab == .toWatch, selection.map({ !rows.contains($0) }) ?? true {
+            selection = rows.first
+        }
+    }
+
+    /// To watch's titles that the filter keeps, with notes on what stood behind them.
+    private func toWatchList(_ w: Watchlist) -> HomeList {
+        let filter = servicesChosen ? toWatchFilter : toWatchFilter.with(\.onMyServices, false)
+        var notes: [String] = []
+        let leftOut: (Int) -> String = { $0 == 1 ? "; it's left out" : "; they're left out" }
+        if let s = w.services {
+            if s.state == "unreadable" { notes.append("Your streaming services couldn't be read, so titles can't be filtered by them") }
+            if s.state == "not_chosen" { notes.append("Choose your streaming services on the web to filter by them") }
+            if let since = s.staleSince { notes.append("Services saved from \(shortDate(since)): TMDB isn't responding") }
+            if s.unknown > 0 && s.state == "chosen" {
+                notes.append("Services couldn't be loaded for \(s.unknown) title\(s.unknown == 1 ? "" : "s")"
+                             + (filter.onMyServices ? leftOut(s.unknown) : ""))
+            }
+        }
+        if let n = w.releaseUnknown, n > 0 {
+            notes.append("Release dates couldn't be loaded for \(n) title\(n == 1 ? "" : "s")"
+                         + (filter.release != nil ? leftOut(n) : ""))
+        }
+        if let r = w.sortRatings {
+            if let since = r.staleSince { notes.append("Ratings saved from \(shortDate(since)): OMDb isn't responding") }
+            switch r.unavailableReason {
+            case "not_configured": notes.append("Ratings aren't set up on the server, so titles stay in the order added")
+            case .some: notes.append("Some ratings couldn't be loaded")
+            case nil:
+                if let n = r.unrated, n > 0 { notes.append("Titles without a score are listed last, most recently added first") }
+            }
+        }
+        return HomeList(hits: w.titles.filter(filter.keeps).map { t in
+            let services = (t.availability?.services ?? []).map(\.name)
+            let tags = (t.sources ?? []).map { "#\($0)" }.joined(separator: " ")
+            let info = ([t.rating?.label].compactMap { $0 } + services + [tags].filter { !$0.isEmpty })
+                .joined(separator: " · ")
+            return SearchHit(kind: t.kind, id: t.id, title: t.title, year: t.year,
+                             posterUrl: t.posterUrl, info: info)
+        }, notes: notes)
     }
 
     private func scheduleSearch() {
@@ -263,6 +348,7 @@ final class LauncherModel {
 
     private func load(_ hit: SearchHit) {
         detailTask?.cancel()
+        tagDraft = ""
         detailHit = hit
         detail = nil
         detailError = nil
@@ -273,7 +359,10 @@ final class LauncherModel {
                 let d = try await api.detail(hit)
                 guard !Task.isCancelled else { return }
                 detail = d
-                if case .title(let t) = d, let m = t.marks { marks[hit] = m }
+                if case .title(let t) = d, let m = t.marks {
+                    marks[hit] = m
+                    if m.toWatch == true { loadKnownTags() }
+                }
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
@@ -331,6 +420,11 @@ final class LauncherModel {
                     return
                 }
                 marks[hit] = try await api.setList(list, hit.kind, hit.id, !current)
+                // Leaving To watch drops its tags on the server.
+                if list == .toWatch, detailHit == hit, case .title(var t) = detail {
+                    if current { t.sources = nil } else { loadKnownTags() }
+                    detail = .title(t)
+                }
                 show("\(list.done(!current)): \(hit.displayName)", failed: false)
             } catch is CancellationError {
             } catch {
@@ -359,6 +453,63 @@ final class LauncherModel {
             } catch is CancellationError {
             } catch {
                 show("Couldn't update Watched: \(error.localizedDescription)", failed: true)
+            }
+        }
+    }
+
+    /// The page in detail's tags, when it's a title on To watch.
+    var detailTags: [String]? {
+        guard let hit = detailHit, case .title(let t) = detail, marks[hit]?.toWatch == true else { return nil }
+        return t.sources ?? []
+    }
+
+    /// Tags used before that the page in detail doesn't have, to add with a click.
+    var tagSuggestions: [String] {
+        guard let tags = detailTags else { return [] }
+        let has = Set(tags.map { $0.lowercased() })
+        return Array(knownTags.filter { !has.contains($0.lowercased()) }.prefix(6))
+    }
+
+    private func loadKnownTags() {
+        Task { if let tags = try? await api.watchlistSources() { knownTags = tags } }
+    }
+
+    /// Adds the tags typed in the field, separated by spaces.
+    func addTypedTags() {
+        let typed = tagDraft.split(whereSeparator: \.isWhitespace).map(String.init).filter { $0 != "#" }
+        guard !typed.isEmpty, let tags = detailTags else { return }
+        setTags(tags + typed, clearDraft: true)
+    }
+
+    func addTag(_ name: String) {
+        guard let tags = detailTags else { return }
+        setTags(tags + [name], clearDraft: false)
+    }
+
+    func removeTag(_ name: String) {
+        guard let tags = detailTags else { return }
+        setTags(tags.filter { $0 != name }, clearDraft: false)
+    }
+
+    /// Saves the page in detail's tags, then shows them as the server tidied them.
+    private func setTags(_ tags: [String], clearDraft: Bool) {
+        guard let hit = detailHit, !changing.contains(hit) else { return }
+        changing.insert(hit)
+        Task {
+            defer { changing.remove(hit) }
+            do {
+                let saved = try await api.setSources(hit.kind, hit.id, tags)
+                if detailHit == hit, case .title(var t) = detail {
+                    t.sources = saved
+                    detail = .title(t)
+                }
+                if clearDraft { tagDraft = "" }
+                loadKnownTags()
+                // To watch shows tags too, so read it again for next time.
+                reloadHome(.toWatch)
+            } catch is CancellationError {
+            } catch {
+                show("Couldn't save the tags: \(error.localizedDescription)", failed: true)
             }
         }
     }
@@ -422,6 +573,30 @@ enum HomeTab: CaseIterable {
         case .toWatch: return "Nothing on To watch"
         case .nowPlaying: return "Nothing playing in theaters"
         }
+    }
+}
+
+/// Which To watch titles the tab shows, as the web's filters choose them.
+struct ToWatchFilter: Equatable {
+    /// Movies or TV; nil for both.
+    var kind: Kind?
+    var onMyServices = false
+    /// `out_now` or `coming_soon`; nil for any.
+    var release: String?
+    /// A recommended-by tag, matched ignoring case; nil for any.
+    var tag: String?
+
+    func keeps(_ t: ListEntry) -> Bool {
+        (kind == nil || t.kind == kind)
+            && (!onMyServices || !(t.availability?.services ?? []).isEmpty)
+            && (release == nil || t.releaseStatus == release)
+            && (tag == nil || (t.sources ?? []).contains { $0.lowercased() == tag!.lowercased() })
+    }
+
+    func with<T>(_ key: WritableKeyPath<ToWatchFilter, T>, _ value: T) -> ToWatchFilter {
+        var copy = self
+        copy[keyPath: key] = value
+        return copy
     }
 }
 

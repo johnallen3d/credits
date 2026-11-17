@@ -121,7 +121,7 @@ struct TitleDetail: Decodable {
     let metadata: Metadata
     let marks: TitleMarks?
     /// On To watch only: tags naming who or what recommended it.
-    let sources: [String]?
+    var sources: [String]?
     /// TV only: regular seasons first, specials (season 0) last.
     let seasonList: [SeasonSummary]?
     /// TV only.
@@ -400,6 +400,17 @@ struct RecentView: Decodable {
 struct Watchlist: Decodable {
     let titles: [ListEntry]
     let services: ListServices?
+    /// Only when sorted by rating: how complete the scores behind the order are.
+    let sortRatings: SortRatings?
+    /// Titles whose release dates couldn't be loaded, so they have no `releaseStatus`.
+    let releaseUnknown: Int?
+}
+
+/// How To watch is ordered, which the server does.
+enum WatchlistSort: String, CaseIterable {
+    case added, rating
+
+    var name: String { self == .added ? "Added" : "Rating" }
 }
 
 struct ListEntry: Decodable {
@@ -408,6 +419,10 @@ struct ListEntry: Decodable {
     let title: String
     let year: String?
     let posterUrl: String?
+    /// When sorted by rating: the score it was sorted by.
+    let rating: Rating?
+    /// `out_now` or `coming_soon`; none when its release dates couldn't be loaded.
+    let releaseStatus: String?
     let availability: Availability?
     let marks: TitleMarks?
     /// On To watch only: tags naming who or what recommended it.
@@ -443,11 +458,14 @@ struct ReleaseEntry: Decodable {
 }
 
 struct SortRatings: Decodable {
+    /// Titles without a score, listed last when sorted by rating.
+    let unrated: Int?
     let staleSince: String?
     let unavailableReason: String?
 }
 
 private struct ErrorBody: Decodable { let error: String }
+private struct SourcesBody: Decodable { let sources: [String] }
 
 struct APIError: LocalizedError {
     let message: String
@@ -497,8 +515,26 @@ struct CreditsAPI {
         try await get(base.appendingPathComponent("api/recent"))
     }
 
-    func watchlist() async throws -> Watchlist {
-        try await get(base.appendingPathComponent("api/watchlist"))
+    func watchlist(sort: WatchlistSort) async throws -> Watchlist {
+        var url = URLComponents(url: base.appendingPathComponent("api/watchlist"), resolvingAgainstBaseURL: false)!
+        url.queryItems = [URLQueryItem(name: "sort", value: sort.rawValue)]
+        return try await get(url.url!)
+    }
+
+    /// Tags used on To watch so far, most recently used first.
+    func watchlistSources() async throws -> [String] {
+        let body: SourcesBody = try await get(base.appendingPathComponent("api/watchlist/sources"))
+        return body.sources
+    }
+
+    /// Replaces a To watch title's recommended-by tags; returns them as saved.
+    func setSources(_ kind: Kind, _ id: Int, _ sources: [String]) async throws -> [String] {
+        var request = URLRequest(url: base.appendingPathComponent("api/\(kind.rawValue)/\(id)/watchlist/sources"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["sources": sources])
+        let body: SourcesBody = try await send(request)
+        return body.sources
     }
 
     func nowPlaying() async throws -> NowPlaying {

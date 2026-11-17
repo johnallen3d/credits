@@ -192,6 +192,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     private func handleKey(_ event: NSEvent) -> Bool {
         let commandOnly = event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command
+        if commandOnly, Int(event.keyCode) == kVK_ANSI_R, model.detailTags != nil {
+            model.focusTags += 1
+            return true
+        }
+        // The tag field takes ⏎ and the arrows; esc hands the keys back to search.
+        if model.editingTags {
+            switch Int(event.keyCode) {
+            case kVK_Escape: model.focusSearch += 1; return true
+            case kVK_Return, kVK_ANSI_KeypadEnter, kVK_UpArrow, kVK_DownArrow: return false
+            default: break
+            }
+        }
         if commandOnly, Int(event.keyCode) == kVK_ANSI_LeftBracket, model.detailHit != nil {
             model.goBack()
             return true

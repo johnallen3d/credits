@@ -46,7 +46,9 @@ struct LauncherView: View {
                        home: model.showingHome,
                        selectedRow: model.detailRow.flatMap { model.detail?.rows[safe: $0] },
                        canGoBack: !model.back.isEmpty,
-                       lists: model.listTarget?.isTitle ?? false)
+                       lists: model.listTarget?.isTitle ?? false,
+                       tags: model.detailTags != nil,
+                       editingTags: model.editingTags)
         }
         .frame(width: 720, height: 480)
         .foregroundStyle(Theme.fg)
@@ -54,6 +56,7 @@ struct LauncherView: View {
         .background(Theme.bg)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .onChange(of: model.shown, initial: true) { fieldFocused = true }
+        .onChange(of: model.focusSearch) { fieldFocused = true }
     }
 }
 
@@ -77,7 +80,7 @@ struct ResultsView: View {
 
 /// With no query: Recently viewed, To watch and Now playing as tabs.
 struct HomeView: View {
-    let model: LauncherModel
+    @Bindable var model: LauncherModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -100,6 +103,10 @@ struct HomeView: View {
             .padding(.horizontal, 10)
             .padding(.top, 8)
 
+            if model.tab == .toWatch, let w = model.toWatch, !w.titles.isEmpty {
+                ToWatchFilters(model: model)
+            }
+
             VStack(spacing: 0) { content }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -120,7 +127,9 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.top, error != nil || !list.notes.isEmpty ? 8 : 0)
             if list.hits.isEmpty {
-                Notice(icon: model.tab.icon, text: model.tab.empty)
+                Notice(icon: model.tab.icon,
+                       text: model.tab == .toWatch && !(model.toWatch?.titles.isEmpty ?? true)
+                           ? "Nothing on To watch matches these filters" : model.tab.empty)
             } else {
                 HitList(model: model, hits: list.hits).id(model.tab)
             }
@@ -137,6 +146,53 @@ struct HomeView: View {
             .foregroundStyle(tint)
             .lineLimit(2)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// To watch's sort and filters, as the web's: each choice counts the titles it
+/// would show. The services filter waits for services to be chosen; the tag
+/// filter for a tagged title.
+struct ToWatchFilters: View {
+    @Bindable var model: LauncherModel
+
+    var body: some View {
+        let f = model.toWatchFilter
+        FlowLayout(spacing: 14, lineSpacing: 6) {
+            Picker("Sort", selection: $model.toWatchSort) {
+                ForEach(WatchlistSort.allCases, id: \.self) { Text($0.name).tag($0) }
+            }
+            Picker("Show", selection: $model.toWatchFilter.kind) {
+                ForEach([nil, Kind.movie, Kind.tv], id: \.self) { k in
+                    Text("\(k == nil ? "All" : k == .movie ? "Movies" : "TV") (\(model.toWatchCount(f.with(\.kind, k))))").tag(k)
+                }
+            }
+            if model.servicesChosen {
+                Picker("Available", selection: $model.toWatchFilter.onMyServices) {
+                    ForEach([false, true], id: \.self) { mine in
+                        Text("\(mine ? "On my services" : "Anywhere") (\(model.toWatchCount(f.with(\.onMyServices, mine))))").tag(mine)
+                    }
+                }
+            }
+            Picker("Release", selection: $model.toWatchFilter.release) {
+                ForEach([nil, "out_now", "coming_soon"], id: \.self) { r in
+                    Text("\(r == nil ? "All" : r == "out_now" ? "Out now" : "Coming soon") (\(model.toWatchCount(f.with(\.release, r))))").tag(r)
+                }
+            }
+            if !model.toWatchTags.isEmpty {
+                Picker("Tag", selection: $model.toWatchFilter.tag) {
+                    Text("Any (\(model.toWatchCount(f.with(\.tag, nil))))").tag(String?.none)
+                    ForEach(model.toWatchTags, id: \.self) { t in
+                        Text("#\(t) (\(model.toWatchCount(f.with(\.tag, t))))").tag(String?.some(t))
+                    }
+                }
+            }
+        }
+        .pickerStyle(.menu)
+        .controlSize(.small)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .font(.callout)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
     }
 }
 
@@ -237,7 +293,8 @@ struct DetailContainer: View {
                         switch detail {
                         case .title(let t):
                             TitleDetailView(title: t, marks: model.marks[hit] ?? t.marks,
-                                            changing: model.changing.contains(hit), credits: credits)
+                                            changing: model.changing.contains(hit), credits: credits,
+                                            model: model)
                         case .person(let p): PersonDetailView(person: p, credits: credits)
                         case .season(let s): SeasonDetailView(season: s, credits: credits)
                         }
@@ -281,6 +338,7 @@ struct TitleDetailView: View {
     let marks: TitleMarks?
     let changing: Bool
     let credits: Credits
+    let model: LauncherModel
 
     /// Each key crew role with the row number of its first person.
     private var crew: [(role: KeyCrew, first: Int)] {
@@ -318,11 +376,7 @@ struct TitleDetailView: View {
                     Text(title.title).font(.title.bold())
                     Text(facts).foregroundStyle(Theme.muted)
                     ListMarksView(marks: marks, changing: changing)
-                    // Only while on To watch, since a toggle updates just the marks.
-                    if let sources = title.sources, !sources.isEmpty, marks?.toWatch == true {
-                        Text("Recommended by " + sources.map { "#\($0)" }.joined(separator: " "))
-                            .foregroundStyle(Theme.muted)
-                    }
+                    RecommendedByView(model: model, changing: changing)
                     if !ratings.isEmpty {
                         HStack {
                             ForEach(ratings, id: \.self) { r in
@@ -415,6 +469,64 @@ struct TitleDetailView: View {
         case "director": return "Directed by"
         case "writer": return "Written by"
         default: return role.capitalized
+        }
+    }
+}
+
+/// The tags naming who or what recommended a title, while it's on To watch:
+/// each removable, with a field to add more (⌘R) and tags used before to add
+/// with a click.
+struct RecommendedByView: View {
+    @Bindable var model: LauncherModel
+    let changing: Bool
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        if let tags = model.detailTags {
+            VStack(alignment: .leading, spacing: 5) {
+                FlowLayout(spacing: 6, lineSpacing: 5) {
+                    Text("Recommended by").foregroundStyle(Theme.muted)
+                    ForEach(tags, id: \.self) { tag in
+                        HStack(spacing: 4) {
+                            Text("#\(tag)")
+                            Button { model.removeTag(tag) } label: {
+                                Image(systemName: "xmark").font(.caption2.bold())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Theme.muted)
+                            .help("Remove #\(tag)")
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 2)
+                        .overlay(Capsule().stroke(Theme.line))
+                    }
+                    HStack(spacing: 4) {
+                        TextField(tags.isEmpty ? "#who-or-what" : "#more", text: $model.tagDraft)
+                            .textFieldStyle(.plain)
+                            .frame(width: 120)
+                            .focused($focused)
+                            .onSubmit { model.addTypedTags() }
+                        Text(focused ? "⏎" : "⌘R").font(.caption).foregroundStyle(Theme.subtle)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 2)
+                    .overlay(Capsule().stroke(focused ? Theme.accent : Theme.line))
+                }
+                if !model.tagSuggestions.isEmpty {
+                    FlowLayout(spacing: 6, lineSpacing: 5) {
+                        Text("Used before").font(.callout).foregroundStyle(Theme.subtle)
+                        ForEach(model.tagSuggestions, id: \.self) { tag in
+                            Button("+ #\(tag)") { model.addTag(tag) }
+                                .buttonStyle(.plain)
+                                .font(.callout)
+                                .foregroundStyle(Theme.muted)
+                                .help("Add #\(tag)")
+                        }
+                    }
+                }
+            }
+            .disabled(changing)
+            .onChange(of: focused) { model.editingTags = focused }
+            .onChange(of: model.focusTags) { focused = true }
+            .onDisappear { model.editingTags = false }
         }
     }
 }
@@ -774,12 +886,18 @@ struct FooterView: View {
     let selectedRow: SearchHit?
     let canGoBack: Bool
     let lists: Bool
+    var tags = false
+    var editingTags = false
 
     var body: some View {
         HStack(spacing: 16) {
             Spacer()
             if lists && !inDetail { hint("⌘T ⌘F ⌘W", "To watch, Favorites, Watched") }
-            if inDetail {
+            if editingTags {
+                hint("⏎", "Add tags")
+                hint("esc", "Done")
+            } else if inDetail {
+                if tags { hint("⌘R", "Tag") }
                 if selectedRow?.kind == .episode {
                     hint("⌘W", "Watched")
                     hint("⏎", "Open in browser")
