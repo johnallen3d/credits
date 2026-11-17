@@ -420,7 +420,7 @@ final class LauncherModel {
         let leftOut: (Int) -> String = { $0 == 1 ? "; it's left out" : "; they're left out" }
         if let s = w.services {
             if s.state == "unreadable" { notes.append("Your streaming services couldn't be read, so titles can't be filtered by them") }
-            if s.state == "not_chosen" { notes.append("Choose your streaming services on the web to filter by them") }
+            if s.state == "not_chosen" { notes.append("Choose your streaming services in the menu bar's My Services to filter by them") }
             if let since = s.staleSince { notes.append("Services saved from \(shortDate(since)): TMDB isn't responding") }
             if s.unknown > 0 && s.state == "chosen" {
                 notes.append("Services couldn't be loaded for \(s.unknown) title\(s.unknown == 1 ? "" : "s")"

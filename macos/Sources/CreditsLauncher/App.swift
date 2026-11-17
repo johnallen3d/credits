@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var keyMonitor: Any?
     private var loginItem: NSMenuItem!
     private var themeMenu: NSMenu!
+    private let sideWindows = SideWindows()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = LauncherPanel()
@@ -94,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             .keyEquivalentModifierMask = .option
         menu.addItem(withTitle: "Open Credits in Browser", action: #selector(openSite), keyEquivalent: "")
         menu.addItem(.separator())
+        menu.addItem(withTitle: "My Services…", action: #selector(showServices), keyEquivalent: "")
         themeMenu = NSMenu(title: "Theme")
         themeMenu.addItem(withTitle: "From config.toml", action: #selector(chooseTheme(_:)), keyEquivalent: "")
         themeMenu.addItem(.separator())
@@ -106,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         loginItem = menu.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         loginItem.isHidden = loginItemManaged
         menu.addItem(.separator())
+        menu.addItem(withTitle: "About Credits", action: #selector(showAbout), keyEquivalent: "")
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
 
@@ -173,10 +176,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         applyTheme()
     }
 
+    @objc func showServices() {
+        sideWindows.show("services", title: "My Services", size: NSSize(width: 460, height: 600)) {
+            ServicesView(api: model.api)
+        }
+    }
+
+    @objc func showAbout() {
+        sideWindows.show("about", title: "About Credits", size: NSSize(width: 480, height: 440)) {
+            AboutView(api: model.api) { [weak self] in self?.showPlayback() }
+        }
+    }
+
+    /// Opens the launcher on Seen on Apple TV.
+    private func showPlayback() {
+        model.query = ""
+        model.backToResults()
+        model.tab = .appleTV
+        show()
+    }
+
     /// Matches the panel's appearance and the menu to the theme.
     private func applyTheme() {
         let store = ThemeStore.shared
         panel.appearance = store.name.appearance
+        sideWindows.applyTheme()
         guard let themeMenu, let follow = themeMenu.items.first else { return }
         follow.title = "From config.toml (\(store.configured.title))"
         follow.state = store.picked == nil ? .on : .off

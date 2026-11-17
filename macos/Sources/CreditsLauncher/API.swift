@@ -671,6 +671,28 @@ enum WatchedSort: String, CaseIterable {
     var name: String { self == .recent ? "Last watched" : "Title" }
 }
 
+/// The services page: your chosen streaming services and every one to choose
+/// from in the region, grouped `mine`, `popular` and `more`.
+struct ServicesPage: Decodable {
+    let region: String
+    let chosen: [ServiceChoice]
+    let options: [ServiceChoice]
+    /// Of TMDB's list: `fresh`, `stale` or `unavailable`.
+    let state: String
+    /// False when only one of TMDB's movie and TV lists could be loaded.
+    let complete: Bool
+    let fetchedAt: String?
+}
+
+struct ServiceChoice: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let logoUrl: String?
+    /// Options only.
+    var chosen: Bool? = nil
+    var group: String? = nil
+}
+
 /// Apple TV playback seen through Home Assistant: how following it is going,
 /// shows waiting on a match, and what played lately.
 struct Playback: Decodable {
@@ -942,6 +964,19 @@ struct CreditsAPI {
         var url = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         url.queryItems = [URLQueryItem(name: "page", value: String(page))]
         return try await get(url.url!)
+    }
+
+    func services() async throws -> ServicesPage {
+        try await get(base.appendingPathComponent("api/services"))
+    }
+
+    /// Chooses a streaming service or unchooses it; returns the services page after.
+    func chooseService(_ id: Int, _ chosen: Bool) async throws -> ServicesPage {
+        var request = URLRequest(url: base.appendingPathComponent("api/services"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["id": id, "chosen": chosen])
+        return try await send(request)
     }
 
     func playback() async throws -> Playback {
