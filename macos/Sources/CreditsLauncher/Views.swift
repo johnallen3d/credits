@@ -44,9 +44,9 @@ struct LauncherView: View {
             Rule()
             FooterView(inDetail: model.detailHit != nil,
                        home: model.showingHome,
-                       rowSelected: model.detailRow != nil,
+                       selectedRow: model.detailRow.flatMap { model.detail?.rows[safe: $0] },
                        canGoBack: !model.back.isEmpty,
-                       lists: model.listTarget.map { $0.kind != .person } ?? false)
+                       lists: model.listTarget?.isTitle ?? false)
         }
         .frame(width: 720, height: 480)
         .foregroundStyle(Theme.fg)
@@ -239,6 +239,7 @@ struct DetailContainer: View {
                             TitleDetailView(title: t, marks: model.marks[hit] ?? t.marks,
                                             changing: model.changing.contains(hit), credits: credits)
                         case .person(let p): PersonDetailView(person: p, credits: credits)
+                        case .season(let s): SeasonDetailView(season: s, credits: credits)
                         }
                     }
                     .padding(18)
@@ -344,6 +345,8 @@ struct TitleDetailView: View {
             }
             StaleNotice(metadata: title.metadata)
             WhereToWatchView(whereToWatch: title.whereToWatch)
+            let crewCount = title.keyCrew.reduce(0) { $0 + $1.people.count }
+            let seasons = title.seasonList ?? []
             ForEach(crew, id: \.first) { crew in
                 Section(heading: crewHeading(crew.role.role)) {
                     FlowLayout {
@@ -359,8 +362,29 @@ struct TitleDetailView: View {
                     }
                 }
             }
+            if !seasons.isEmpty {
+                Section(heading: "Seasons") {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(seasons.enumerated()), id: \.offset) { i, season in
+                            credits.row(crewCount + i) {
+                                HStack(spacing: 4) {
+                                    Text(season.name)
+                                    Text(seasonFacts(season)).foregroundStyle(Theme.muted)
+                                    if let w = title.watched {
+                                        if w.season(season.number) {
+                                            Label("Watched", systemImage: "eye.fill").foregroundStyle(Theme.accent)
+                                        } else if let pct = w.percent(season.number, of: season.episodeCount) {
+                                            Text("· \(pct)% watched").foregroundStyle(Theme.accent)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if !title.cast.isEmpty {
-                let first = title.keyCrew.reduce(0) { $0 + $1.people.count }
+                let first = crewCount + seasons.count
                 Section(heading: "Cast") {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(Array(title.cast.prefix(Detail.castShown).enumerated()), id: \.offset) { i, c in
@@ -377,6 +401,12 @@ struct TitleDetailView: View {
                 }
             }
         }
+    }
+
+    private func seasonFacts(_ season: SeasonSummary) -> String {
+        [season.year.map { "(\($0))" },
+         season.episodeCount.map { "· \($0) episode\($0 == 1 ? "" : "s")" }]
+            .compactMap { $0 }.joined(separator: " ")
     }
 
     private func crewHeading(_ role: String) -> String {
@@ -460,6 +490,139 @@ struct WhereToWatchView: View {
                 }
             }
         }
+    }
+}
+
+/// A season: its facts, the seasons either side, and its episodes, with
+/// unwatched episodes' summaries and scores hidden until selected, as the
+/// web blurs them until you peek.
+struct SeasonDetailView: View {
+    let season: SeasonDetail
+    let credits: Credits
+
+    /// Rows before the episodes: the previous and next seasons.
+    private var pager: [SeasonSummary] { [season.previous, season.next].compactMap { $0 } }
+
+    private var facts: String {
+        let count = season.episodes.count
+        return [season.showTitle,
+                season.airDate.map { "First aired \(shortDate($0))" },
+                "\(count) episode\(count == 1 ? "" : "s")"]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private var seasonWatched: Bool { season.watched?.season(season.number) ?? false }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 16) {
+                Poster(url: season.posterUrl, width: 120, kind: .tv)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("TV SEASON").font(.caption2.bold()).kerning(0.5).foregroundStyle(Theme.tv)
+                    Text(season.name).font(.title.bold())
+                    Text(facts).foregroundStyle(Theme.muted)
+                    if seasonWatched {
+                        Label("Watched", systemImage: "eye.fill").font(.callout).foregroundStyle(Theme.accent)
+                    }
+                    if let overview = season.overview, !overview.isEmpty {
+                        Text(overview).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !pager.isEmpty {
+                        HStack(spacing: 16) {
+                            ForEach(Array(pager.enumerated()), id: \.offset) { i, s in
+                                credits.row(i) {
+                                    Text(s.number < season.number ? "← \(s.name)" : "\(s.name) →")
+                                        .foregroundStyle(Theme.accent)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            StaleNotice(metadata: season.metadata)
+            Section(heading: "Episodes") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !seasonWatched && !season.episodes.isEmpty {
+                        note(season.watched?.state == "unreadable"
+                             ? "Watched marks couldn't be read, so unwatched episodes' summaries and scores are hidden. Select one to peek."
+                             : "Summaries and scores of unwatched episodes are hidden. Select one to peek.")
+                    }
+                    if let ratings = season.episodeRatings.note, !season.episodes.isEmpty {
+                        note(ratings)
+                    }
+                    if season.episodes.isEmpty {
+                        Text("TMDB has no episodes listed for this season yet.").foregroundStyle(Theme.muted)
+                    }
+                    ForEach(Array(season.episodes.enumerated()), id: \.offset) { i, e in
+                        credits.row(pager.count + i) {
+                            episode(e, peeking: credits.selected == pager.count + i)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.callout).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func episode(_ e: Episode, peeking: Bool) -> some View {
+        let watched = season.watched
+        let seen = watched?.episode(season.number, e.number) ?? false
+        let shown = seen || peeking
+        let facts = [e.airDate.map(shortDate) ?? "Air date not announced",
+                     e.runtimeMinutes.map { "\($0) min" },
+                     (watched?.fromAppleTV(season.number, e.number) ?? false) ? "Watched on Apple TV" : nil]
+            .compactMap { $0 }.joined(separator: " · ")
+        return HStack(alignment: .top, spacing: 12) {
+            Still(url: e.stillUrl)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    (Text("\(e.number). ").foregroundColor(Theme.muted) + Text(e.title).bold())
+                        .lineLimit(1)
+                    if seen { Image(systemName: "eye.fill").font(.caption).foregroundStyle(Theme.accent) }
+                }
+                HStack(spacing: 4) {
+                    Text(facts)
+                    if let r = e.rating {
+                        Text("·")
+                        Text(shown ? r.label : "IMDb hidden")
+                    }
+                }
+                .font(.callout)
+                .foregroundStyle(Theme.muted)
+                if let overview = e.overview, !overview.isEmpty {
+                    if shown {
+                        Text(overview).font(.callout).lineLimit(4).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Label("Summary hidden: select to peek", systemImage: "eye.slash")
+                            .font(.callout).foregroundStyle(Theme.subtle)
+                    }
+                } else {
+                    Text("No summary available.").font(.callout).foregroundStyle(Theme.subtle)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+/// An episode's still, 16:9.
+struct Still: View {
+    let url: String?
+
+    var body: some View {
+        AsyncImage(url: url.flatMap(URL.init(string:))) { image in
+            image.resizable().aspectRatio(contentMode: .fill)
+        } placeholder: {
+            Image(systemName: "tv").foregroundStyle(Theme.subtle)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.line)
+        }
+        .frame(width: 112, height: 63)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }
 
@@ -608,7 +771,7 @@ struct Notice: View {
 struct FooterView: View {
     let inDetail: Bool
     let home: Bool
-    let rowSelected: Bool
+    let selectedRow: SearchHit?
     let canGoBack: Bool
     let lists: Bool
 
@@ -617,7 +780,9 @@ struct FooterView: View {
             Spacer()
             if lists && !inDetail { hint("⌘T ⌘F ⌘W", "To watch, Favorites, Watched") }
             if inDetail {
-                if rowSelected {
+                if selectedRow?.kind == .episode {
+                    hint("⏎", "Open in browser")
+                } else if selectedRow != nil {
                     hint("⏎", "Open")
                     hint("⌘⏎", "Open in browser")
                 } else {

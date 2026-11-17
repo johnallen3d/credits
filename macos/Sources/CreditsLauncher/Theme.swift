@@ -122,7 +122,7 @@ enum Theme {
     static func color(for kind: Kind) -> Color {
         switch kind {
         case .movie: return movie
-        case .tv: return tv
+        case .tv, .season, .episode: return tv
         case .person: return person
         }
     }

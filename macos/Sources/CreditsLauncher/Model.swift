@@ -208,9 +208,14 @@ final class LauncherModel {
         load(hit)
     }
 
-    /// Opens a credit on the page in detail, keeping that page to go back to.
+    /// Opens a row on the page in detail, keeping that page to go back to.
+    /// Episodes have no page here, so they open on the web.
     func openRow(_ index: Int) {
         guard let hit = detailHit, let row = detail?.rows[safe: index] else { return }
+        if row.kind == .episode {
+            openInBrowser(row)
+            return
+        }
         back.append(Page(hit: hit, detail: detail, error: detailError, row: index))
         load(row)
     }
@@ -239,7 +244,7 @@ final class LauncherModel {
     func fillSummary(_ hit: SearchHit) {
         guard hit.summary == nil, summaryAsked.insert(hit).inserted else { return }
         Task {
-            guard let d = try? await api.detail(hit.kind, hit.id) else { return }
+            guard let d = try? await api.detail(hit) else { return }
             switch d {
             case .title(let t):
                 if let m = t.marks, marks[hit] == nil { marks[hit] = m }
@@ -251,6 +256,7 @@ final class LauncherModel {
                 let text = [p.knownFor, titles.isEmpty ? nil : "known for " + titles]
                     .compactMap { $0 }.joined(separator: " · ")
                 if !text.isEmpty { summaries[hit] = text.prefix(1).uppercased() + text.dropFirst() }
+            case .season: break
             }
         }
     }
@@ -264,7 +270,7 @@ final class LauncherModel {
         pageID += 1
         detailTask = Task {
             do {
-                let d = try await api.detail(hit.kind, hit.id)
+                let d = try await api.detail(hit)
                 guard !Task.isCancelled else { return }
                 detail = d
                 if case .title(let t) = d, let m = t.marks { marks[hit] = m }
@@ -285,8 +291,8 @@ final class LauncherModel {
         back = []
     }
 
-    func openInBrowser(_ kind: Kind, _ id: Int) {
-        NSWorkspace.shared.open(api.webURL(kind, id))
+    func openInBrowser(_ hit: SearchHit) {
+        NSWorkspace.shared.open(api.webURL(hit))
         close()
     }
 
@@ -295,8 +301,9 @@ final class LauncherModel {
 
     func toggle(_ list: ListAction) {
         guard let hit = listTarget else { return }
-        guard hit.kind != .person else {
-            show("Only movies and shows go on lists", failed: true)
+        guard hit.isTitle else {
+            show(hit.kind == .season ? "Go back to the show to change its lists" : "Only movies and shows go on lists",
+                 failed: true)
             return
         }
         guard !changing.contains(hit) else { return }
@@ -305,7 +312,7 @@ final class LauncherModel {
             defer { changing.remove(hit) }
             do {
                 // Results don't carry list state, so learn it before flipping it.
-                if marks[hit]?[list] == nil, case .title(let t) = try await api.detail(hit.kind, hit.id),
+                if marks[hit]?[list] == nil, case .title(let t) = try await api.detail(hit),
                    let m = t.marks {
                     marks[hit] = m
                 }
@@ -340,14 +347,14 @@ final class LauncherModel {
             // ⏎ opens the selected credit's page here; with none selected, and
             // with ⌘, it opens the selected credit, or the page itself, on the web.
             if let index = detailRow, let row = detail?.rows[safe: index] {
-                if command { openInBrowser(row.kind, row.id) } else { openRow(index) }
+                if command { openInBrowser(row) } else { openRow(index) }
             } else {
-                openInBrowser(hit.kind, hit.id)
+                openInBrowser(hit)
             }
             return true
         }
         guard let hit = selection else { return false }
-        if command { openInBrowser(hit.kind, hit.id) } else { open(hit) }
+        if command { openInBrowser(hit) } else { open(hit) }
         return true
     }
 
