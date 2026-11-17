@@ -28,7 +28,27 @@ final class LauncherModel {
         didSet { if toWatchSort != oldValue { reloadHome(.toWatch) } }
     }
     var toWatchFilter = ToWatchFilter() {
-        didSet { rebuildToWatch() }
+        didSet { rebuild(.toWatch) }
+    }
+
+    /// Favorites as the server last sent it, in `favoritesSort` order; the tab
+    /// shows those of `favoritesKind` (nil for all).
+    var favorites: Watchlist?
+    var favoritesSort: WatchlistSort = .added {
+        didSet { if favoritesSort != oldValue { reloadHome(.favorites) } }
+    }
+    var favoritesKind: Kind? {
+        didSet { rebuild(.favorites) }
+    }
+
+    /// Watched as the server last sent it, in `watchedSort` order; the tab
+    /// shows the titles `watchedFilter` keeps.
+    var watched: WatchedList?
+    var watchedSort: WatchedSort = .recent {
+        didSet { if watchedSort != oldValue { reloadHome(.watched) } }
+    }
+    var watchedFilter = WatchedFilter() {
+        didSet { rebuild(.watched) }
     }
 
     var showingHome: Bool { query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -188,6 +208,22 @@ final class LauncherModel {
                 toWatchFilter.tag = nil
             }
             return toWatchList(w)
+        case .favorites:
+            let f = try await api.favorites(sort: favoritesSort)
+            for t in f.titles {
+                if let m = t.marks { marks[SearchHit(kind: t.kind, id: t.id)] = m }
+            }
+            favorites = f
+            return favoritesList(f)
+        case .watched:
+            let w = try await api.watched(sort: watchedSort)
+            // A movie listed here is watched; a show only once all of it is marked.
+            for t in w.titles {
+                let hit = SearchHit(kind: t.kind, id: t.id)
+                marks[hit, default: TitleMarks()].watched = t.kind == .movie || t.progress?.show == true
+            }
+            watched = w
+            return watchedList(w)
         case .nowPlaying:
             let n = try await api.nowPlaying()
             var notes: [String] = []
@@ -224,11 +260,88 @@ final class LauncherModel {
         return (toWatch?.titles ?? []).filter(filter.keeps).count
     }
 
-    private func rebuildToWatch() {
-        if let w = toWatch { home[.toWatch] = toWatchList(w) }
-        if showingHome, tab == .toWatch, selection.map({ !rows.contains($0) }) ?? true {
+    func favoritesCount(_ kind: Kind?) -> Int {
+        (favorites?.titles ?? []).filter { kind == nil || $0.kind == kind }.count
+    }
+
+    func watchedCount(_ filter: WatchedFilter) -> Int {
+        (watched?.titles ?? []).filter(filter.keeps).count
+    }
+
+    /// Shows a tab's saved list through its filters again, after one changed.
+    private func rebuild(_ tab: HomeTab) {
+        switch tab {
+        case .toWatch: if let w = toWatch { home[tab] = toWatchList(w) }
+        case .favorites: if let f = favorites { home[tab] = favoritesList(f) }
+        case .watched: if let w = watched { home[tab] = watchedList(w) }
+        default: return
+        }
+        if showingHome, self.tab == tab, selection.map({ !rows.contains($0) }) ?? true {
             selection = rows.first
         }
+    }
+
+    /// What a tab says when it lists nothing: why its filters left everything out,
+    /// or that the list itself is empty.
+    func emptyText(_ tab: HomeTab) -> String {
+        let titles = { (k: Kind?) in k == nil ? "titles" : k == .movie ? "movies" : "TV shows" }
+        switch tab {
+        case .toWatch where !(toWatch?.titles.isEmpty ?? true):
+            return "Nothing on To watch matches these filters"
+        case .favorites where !(favorites?.titles.isEmpty ?? true):
+            return "No \(titles(favoritesKind)) in Favorites"
+        case .watched where !(watched?.titles.isEmpty ?? true):
+            let how = switch watchedFilter.source {
+            case "manual": " marked watched by hand"
+            case "apple_tv": " marked watched from the Apple TV"
+            default: " watched"
+            }
+            return "No \(titles(watchedFilter.kind))\(how)"
+        default:
+            return tab.empty
+        }
+    }
+
+    /// Favorites of the chosen kind, with notes on the scores behind a by-rating order.
+    private func favoritesList(_ f: Watchlist) -> HomeList {
+        HomeList(hits: f.titles.filter { favoritesKind == nil || $0.kind == favoritesKind }.map { t in
+            SearchHit(kind: t.kind, id: t.id, title: t.title, year: t.year, posterUrl: t.posterUrl,
+                      info: t.rating?.label ?? "")
+        }, notes: sortNotes(f.sortRatings))
+    }
+
+    /// Watched titles the filter keeps: what of a show is marked, when, and
+    /// whether the Apple TV marked it, as the web lists them.
+    private func watchedList(_ w: WatchedList) -> HomeList {
+        var notes: [String] = []
+        if w.unavailable > 0 {
+            let n = w.unavailable
+            notes.append("Couldn't load the details of \(n) title\(n == 1 ? "" : "s") from TMDB"
+                         + (watchedSort == .title ? (n == 1 ? "; it's listed last" : "; they're listed last") : ""))
+        }
+        if let since = w.staleSince { notes.append("Details saved from \(shortDate(since)): TMDB isn't responding") }
+        return HomeList(hits: w.titles.filter(watchedFilter.keeps).map { t in
+            let info = [t.progress?.label, "Watched \(shortDate(t.lastWatchedAt))",
+                        t.sources.contains("apple_tv") ? "Apple TV" : nil,
+                        t.title == nil ? "Details unavailable" : nil]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+            return SearchHit(kind: t.kind, id: t.id, title: t.displayTitle, year: t.year,
+                             posterUrl: t.posterUrl, info: info)
+        }, notes: notes)
+    }
+
+    /// What stood behind a list's by-rating order.
+    private func sortNotes(_ r: SortRatings?) -> [String] {
+        guard let r else { return [] }
+        var notes: [String] = []
+        if let since = r.staleSince { notes.append("Ratings saved from \(shortDate(since)): OMDb isn't responding") }
+        switch r.unavailableReason {
+        case "not_configured": notes.append("Ratings aren't set up on the server, so titles stay in the order added")
+        case .some: notes.append("Some ratings couldn't be loaded")
+        case nil:
+            if let n = r.unrated, n > 0 { notes.append("Titles without a score are listed last, most recently added first") }
+        }
+        return notes
     }
 
     /// To watch's titles that the filter keeps, with notes on what stood behind them.
@@ -249,15 +362,7 @@ final class LauncherModel {
             notes.append("Release dates couldn't be loaded for \(n) title\(n == 1 ? "" : "s")"
                          + (filter.release != nil ? leftOut(n) : ""))
         }
-        if let r = w.sortRatings {
-            if let since = r.staleSince { notes.append("Ratings saved from \(shortDate(since)): OMDb isn't responding") }
-            switch r.unavailableReason {
-            case "not_configured": notes.append("Ratings aren't set up on the server, so titles stay in the order added")
-            case .some: notes.append("Some ratings couldn't be loaded")
-            case nil:
-                if let n = r.unrated, n > 0 { notes.append("Titles without a score are listed last, most recently added first") }
-            }
-        }
+        notes += sortNotes(w.sortRatings)
         return HomeList(hits: w.titles.filter(filter.keeps).map { t in
             let services = (t.availability?.services ?? []).map(\.name)
             let tags = (t.sources ?? []).map { "#\($0)" }.joined(separator: " ")
@@ -734,12 +839,14 @@ final class LauncherModel {
 }
 
 enum HomeTab: CaseIterable {
-    case recent, toWatch, nowPlaying
+    case recent, toWatch, favorites, watched, nowPlaying
 
     var name: String {
         switch self {
         case .recent: return "Recently viewed"
         case .toWatch: return "To watch"
+        case .favorites: return "Favorites"
+        case .watched: return "Watched"
         case .nowPlaying: return "Now playing"
         }
     }
@@ -748,6 +855,8 @@ enum HomeTab: CaseIterable {
         switch self {
         case .recent: return "clock"
         case .toWatch: return "bookmark"
+        case .favorites: return "heart"
+        case .watched: return "eye"
         case .nowPlaying: return "ticket"
         }
     }
@@ -756,8 +865,28 @@ enum HomeTab: CaseIterable {
         switch self {
         case .recent: return "Nothing viewed yet"
         case .toWatch: return "Nothing on To watch"
+        case .favorites: return "No favorites yet: ⌘F on a movie or show adds it"
+        case .watched: return "Nothing watched yet: ⌘W on a movie or show marks it"
         case .nowPlaying: return "Nothing playing in theaters"
         }
+    }
+}
+
+/// Which Watched titles the tab shows, as the web's filters choose them.
+struct WatchedFilter: Equatable {
+    /// Movies or TV; nil for both.
+    var kind: Kind?
+    /// `manual` or `apple_tv`: how a mark was made; nil for any.
+    var source: String?
+
+    func keeps(_ t: WatchedTitle) -> Bool {
+        (kind == nil || t.kind == kind) && (source == nil || t.sources.contains(source!))
+    }
+
+    func with<T>(_ key: WritableKeyPath<WatchedFilter, T>, _ value: T) -> WatchedFilter {
+        var copy = self
+        copy[keyPath: key] = value
+        return copy
     }
 }
 

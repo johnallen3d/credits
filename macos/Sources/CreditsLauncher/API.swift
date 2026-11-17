@@ -605,6 +605,72 @@ struct ListServices: Decodable {
     let staleSince: String?
 }
 
+/// Every title with a watched mark, however it was made.
+struct WatchedList: Decodable {
+    let titles: [WatchedTitle]
+    /// Titles whose name, year and poster couldn't be loaded from TMDB.
+    let unavailable: Int
+    let staleSince: String?
+}
+
+struct WatchedTitle: Decodable {
+    let kind: Kind
+    let id: Int
+    /// Nil when TMDB couldn't be reached and nothing was cached.
+    let title: String?
+    let year: String?
+    let posterUrl: String?
+    let lastWatchedAt: String
+    /// TV only: what is marked.
+    let progress: ShowProgress?
+    /// `manual` and/or `apple_tv`: how its marks were made.
+    let sources: [String]
+
+    /// "TV show #1420" when its details couldn't be loaded, as on the web.
+    var displayTitle: String { title ?? "\(kind == .tv ? "TV show" : "Movie") #\(id)" }
+}
+
+/// What of a show is marked watched.
+struct ShowProgress: Decodable {
+    let show: Bool
+    let seasons: [Int]
+    let episodes: Int
+
+    /// "Whole show", "Seasons 1–6 · 141 episodes", "1 episode", as on the web.
+    var label: String {
+        if show { return "Whole show" }
+        var parts: [String] = []
+        if let s = seasonsLabel(seasons) { parts.append(s) }
+        if episodes > 0 { parts.append(episodes == 1 ? "1 episode" : "\(episodes) episodes") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// Ascending seasons with runs collapsed and season 0 as specials, as the web
+/// words them: "Season 2", "Seasons 1–3, 5", "Seasons 1–9, specials", "Specials".
+func seasonsLabel(_ seasons: [Int]) -> String? {
+    var runs: [(Int, Int)] = []
+    for n in seasons where n > 0 {
+        if let last = runs.last, last.1 + 1 == n { runs[runs.count - 1].1 = n } else { runs.append((n, n)) }
+    }
+    var parts = runs.map { start, end in
+        end == start ? "\(start)" : end == start + 1 ? "\(start), \(end)" : "\(start)–\(end)"
+    }
+    let numbered = !parts.isEmpty
+    let specials = seasons.contains(0)
+    if specials { parts.append(numbered ? "specials" : "Specials") }
+    guard numbered else { return specials ? parts.joined(separator: ", ") : nil }
+    let one = runs.count == 1 && runs[0].0 == runs[0].1
+    return (one ? "Season " : "Seasons ") + parts.joined(separator: ", ")
+}
+
+/// How Watched is ordered, which the server does.
+enum WatchedSort: String, CaseIterable {
+    case recent, title
+
+    var name: String { self == .recent ? "Last watched" : "Title" }
+}
+
 struct NowPlaying: Decodable {
     let titles: [ReleaseEntry]
     let ratings: SortRatings
@@ -686,8 +752,16 @@ struct CreditsAPI {
         try await get(base.appendingPathComponent("api/recent"))
     }
 
-    func favorites() async throws -> Watchlist {
-        try await get(base.appendingPathComponent("api/favorites"))
+    func favorites(sort: WatchlistSort = .added) async throws -> Watchlist {
+        var url = URLComponents(url: base.appendingPathComponent("api/favorites"), resolvingAgainstBaseURL: false)!
+        url.queryItems = [URLQueryItem(name: "sort", value: sort.rawValue)]
+        return try await get(url.url!)
+    }
+
+    func watched(sort: WatchedSort) async throws -> WatchedList {
+        var url = URLComponents(url: base.appendingPathComponent("api/watched"), resolvingAgainstBaseURL: false)!
+        url.queryItems = [URLQueryItem(name: "sort", value: sort.rawValue)]
+        return try await get(url.url!)
     }
 
     func watchlist(sort: WatchlistSort) async throws -> Watchlist {

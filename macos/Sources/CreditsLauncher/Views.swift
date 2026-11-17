@@ -86,7 +86,8 @@ struct ResultsView: View {
     }
 }
 
-/// With no query: Recently viewed, To watch and Now playing as tabs.
+/// With no query: Recently viewed, the lists and Now playing as tabs. Tabs
+/// other than the one shown are icons, to fit them all.
 struct HomeView: View {
     @Bindable var model: LauncherModel
 
@@ -94,8 +95,11 @@ struct HomeView: View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
                 ForEach(HomeTab.allCases, id: \.self) { tab in
-                    Label(tab.name, systemImage: tab.icon)
+                    Group {
+                        if tab == model.tab { Label(tab.name, systemImage: tab.icon) } else { Image(systemName: tab.icon) }
+                    }
                         .font(.callout)
+                        .help(tab.name)
                         .foregroundStyle(tab == model.tab ? Theme.fg : Theme.muted)
                         .padding(.horizontal, 10).padding(.vertical, 4)
                         .background(tab == model.tab ? Theme.line : .clear, in: Capsule())
@@ -113,6 +117,12 @@ struct HomeView: View {
 
             if model.tab == .toWatch, let w = model.toWatch, !w.titles.isEmpty {
                 ToWatchFilters(model: model)
+            }
+            if model.tab == .favorites, let f = model.favorites, !f.titles.isEmpty {
+                FavoritesFilters(model: model)
+            }
+            if model.tab == .watched, let w = model.watched, !w.titles.isEmpty {
+                WatchedFilters(model: model)
             }
 
             VStack(spacing: 0) { content }
@@ -135,9 +145,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.top, error != nil || !list.notes.isEmpty ? 8 : 0)
             if list.hits.isEmpty {
-                Notice(icon: model.tab.icon,
-                       text: model.tab == .toWatch && !(model.toWatch?.titles.isEmpty ?? true)
-                           ? "Nothing on To watch matches these filters" : model.tab.empty)
+                Notice(icon: model.tab.icon, text: model.emptyText(model.tab))
             } else {
                 HitList(model: model, hits: list.hits).id(model.tab)
             }
@@ -195,12 +203,63 @@ struct ToWatchFilters: View {
                 }
             }
         }
-        .pickerStyle(.menu)
-        .controlSize(.small)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .font(.callout)
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
+        .homeFilters()
+    }
+}
+
+/// Favorites' sort and kind filter, as the web's.
+struct FavoritesFilters: View {
+    @Bindable var model: LauncherModel
+
+    var body: some View {
+        FlowLayout(spacing: 14, lineSpacing: 6) {
+            Picker("Sort", selection: $model.favoritesSort) {
+                ForEach(WatchlistSort.allCases, id: \.self) { Text($0.name).tag($0) }
+            }
+            Picker("Show", selection: $model.favoritesKind) {
+                ForEach([nil, Kind.movie, Kind.tv], id: \.self) { k in
+                    Text("\(k == nil ? "All" : k == .movie ? "Movies" : "TV") (\(model.favoritesCount(k)))").tag(k)
+                }
+            }
+        }
+        .homeFilters()
+    }
+}
+
+/// Watched's sort and its kind and marked-by filters, as the web's.
+struct WatchedFilters: View {
+    @Bindable var model: LauncherModel
+
+    var body: some View {
+        let f = model.watchedFilter
+        FlowLayout(spacing: 14, lineSpacing: 6) {
+            Picker("Sort", selection: $model.watchedSort) {
+                ForEach(WatchedSort.allCases, id: \.self) { Text($0.name).tag($0) }
+            }
+            Picker("Show", selection: $model.watchedFilter.kind) {
+                ForEach([nil, Kind.movie, Kind.tv], id: \.self) { k in
+                    Text("\(k == nil ? "All" : k == .movie ? "Movies" : "TV") (\(model.watchedCount(f.with(\.kind, k))))").tag(k)
+                }
+            }
+            Picker("Marked", selection: $model.watchedFilter.source) {
+                ForEach([nil, "manual", "apple_tv"], id: \.self) { s in
+                    Text("\(s == nil ? "Any way" : s == "manual" ? "By hand" : "Apple TV") (\(model.watchedCount(f.with(\.source, s))))").tag(s)
+                }
+            }
+        }
+        .homeFilters()
+    }
+}
+
+extension View {
+    /// A home tab's row of sort and filter menus.
+    func homeFilters() -> some View {
+        pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .font(.callout)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
     }
 }
 
