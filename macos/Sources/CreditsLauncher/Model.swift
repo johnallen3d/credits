@@ -96,6 +96,16 @@ final class LauncherModel {
         let id = UUID()
     }
 
+    /// An image open full size over the panel.
+    var viewing: FullImage?
+
+    struct FullImage: Equatable {
+        /// The copy already on the page, shown until the original loads.
+        let shown: URL
+        let full: URL
+        let label: String
+    }
+
     /// Bumped each time the panel opens, so the view refocuses the field.
     var shown = 0
     var close: () -> Void = {}
@@ -108,6 +118,7 @@ final class LauncherModel {
 
     func panelOpened() {
         shown += 1
+        viewing = nil
         loadHome(tab)
     }
 
@@ -334,6 +345,7 @@ final class LauncherModel {
         }
         detailTask?.cancel()
         resetPerson()
+        viewing = nil
         detailHit = page.hit
         detail = page.detail
         detailError = page.error
@@ -366,6 +378,7 @@ final class LauncherModel {
     }
 
     private func load(_ hit: SearchHit) {
+        viewing = nil
         detailTask?.cancel()
         resetPerson()
         tagDraft = ""
@@ -606,6 +619,28 @@ final class LauncherModel {
         }
     }
 
+    /// Opens an image full size; nothing when there's none.
+    func view(_ url: String?, _ label: String) {
+        guard let shown = url.flatMap(URL.init(string:)) else { return }
+        viewing = FullImage(shown: shown, full: fullSize(shown), label: label)
+    }
+
+    /// What ⌘Y opens on the page in detail: the selected episode's still, else
+    /// the page's poster or photo.
+    var pageImage: (url: String, label: String)? {
+        switch detail {
+        case .title(let t): return t.posterUrl.map { ($0, "\(t.title) poster") }
+        case .person(let p): return p.profileUrl.map { ($0, p.name) }
+        case .season(let s):
+            if let row = detailRow.flatMap({ detailRows[safe: $0] }), row.kind == .episode {
+                let e = s.episodes.first { $0.number == row.episode }
+                return e?.stillUrl.map { ($0, "\(e!.title) still") }
+            }
+            return s.posterUrl.map { ($0, "\(s.name) poster") }
+        case nil: return nil
+        }
+    }
+
     // Keys, routed from the panel's key monitor. Each returns whether it was handled.
 
     func handleReturn(command: Bool) -> Bool {
@@ -689,6 +724,14 @@ struct HomeList {
 }
 
 /// "2026-11-06" or an ISO timestamp as "Nov 6, 2026".
+/// The original upload behind a sized TMDB image URL
+/// (`…/t/p/w342/x.jpg` to `…/t/p/original/x.jpg`), as the web's lightbox opens.
+func fullSize(_ url: URL) -> URL {
+    let sized = url.deletingLastPathComponent()
+    guard sized.deletingLastPathComponent().lastPathComponent == "p" else { return url }
+    return sized.deletingLastPathComponent().appendingPathComponent("original").appendingPathComponent(url.lastPathComponent)
+}
+
 func shortDate(_ iso: String) -> String {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

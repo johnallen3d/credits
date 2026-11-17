@@ -48,7 +48,13 @@ struct LauncherView: View {
                        canGoBack: !model.back.isEmpty,
                        lists: model.listTarget?.isTitle ?? false,
                        tags: model.detailTags != nil,
-                       editingTags: model.editingTags)
+                       editingTags: model.editingTags,
+                       image: model.viewing == nil ? model.pageImage != nil : nil)
+        }
+        .overlay {
+            if let image = model.viewing {
+                ImageViewer(image: image) { model.viewing = nil }
+            }
         }
         .frame(width: 720, height: 480)
         .foregroundStyle(Theme.fg)
@@ -296,7 +302,7 @@ struct DetailContainer: View {
                                             changing: model.changing.contains(hit), credits: credits,
                                             model: model)
                         case .person(let p): PersonDetailView(person: p, credits: credits, model: model)
-                        case .season(let s): SeasonDetailView(season: s, credits: credits)
+                        case .season(let s): SeasonDetailView(season: s, credits: credits, model: model)
                         }
                     }
                     .padding(18)
@@ -371,8 +377,10 @@ struct TitleDetailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Backdrop(url: title.backdropUrl)
+                .fullSize(model, title.backdropUrl, "\(title.title) backdrop")
             HStack(alignment: .top, spacing: 16) {
                 Poster(url: title.posterUrl, width: 120, kind: title.kind)
+                    .fullSize(model, title.posterUrl, "\(title.title) poster")
                 VStack(alignment: .leading, spacing: 8) {
                     Text(title.title).font(.title.bold())
                     Text(facts).foregroundStyle(Theme.muted)
@@ -641,6 +649,7 @@ struct ProviderChip: View {
 struct SeasonDetailView: View {
     let season: SeasonDetail
     let credits: Credits
+    let model: LauncherModel
 
     /// Rows before the episodes: the previous and next seasons.
     private var pager: [SeasonSummary] { [season.previous, season.next].compactMap { $0 } }
@@ -659,6 +668,7 @@ struct SeasonDetailView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 16) {
                 Poster(url: season.posterUrl, width: 120, kind: .tv)
+                    .fullSize(model, season.posterUrl, "\(season.name) poster")
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TV SEASON").font(.caption2.bold()).kerning(0.5).foregroundStyle(Theme.tv)
                     Text(season.name).font(.title.bold())
@@ -719,6 +729,7 @@ struct SeasonDetailView: View {
             .compactMap { $0 }.joined(separator: " · ")
         return HStack(alignment: .top, spacing: 12) {
             Still(url: e.stillUrl)
+                .fullSize(model, e.stillUrl, "\(e.title) still")
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     (Text("\(e.number). ").foregroundColor(Theme.muted) + Text(e.title).bold())
@@ -808,6 +819,7 @@ struct PersonDetailView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 16) {
                 Poster(url: person.profileUrl, width: 120, kind: .person)
+                    .fullSize(model, person.profileUrl, person.name)
                 VStack(alignment: .leading, spacing: 8) {
                     Text(person.name).font(.title.bold())
                     if let knownFor = person.knownFor { Text(knownFor).foregroundStyle(Theme.muted) }
@@ -1054,6 +1066,92 @@ struct Poster: View {
     }
 }
 
+extension View {
+    /// Opens the image full size on a click, when there is one.
+    @ViewBuilder func fullSize(_ model: LauncherModel, _ url: String?, _ label: String) -> some View {
+        if url != nil {
+            onTapGesture { model.view(url, label) }
+                .help("View full size (⌘Y for the poster or photo)")
+        } else {
+            self
+        }
+    }
+}
+
+/// An image full size over the panel, as the web's lightbox: the copy already
+/// shown fills in until the original loads, or if it can't. Pinch to zoom and
+/// drag to pan; a click, esc or ⌘Y closes it.
+struct ImageViewer: View {
+    let image: LauncherModel.FullImage
+    let close: () -> Void
+    @State private var scale: CGFloat = 1
+    @State private var settledScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var settledOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.88)
+            AsyncImage(url: image.full) { phase in
+                switch phase {
+                case .success(let full):
+                    fitted(full)
+                case .failure:
+                    shown.overlay(alignment: .bottom) {
+                        Label("Couldn't load the full-size image; showing the smaller copy", systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(.black.opacity(0.7), in: Capsule())
+                            .padding(.bottom, 12)
+                    }
+                default:
+                    shown.overlay { ProgressView().controlSize(.small).tint(.white) }
+                }
+            }
+            .scaleEffect(scale)
+            .offset(offset)
+            .padding(16)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: close)
+        .gesture(MagnifyGesture()
+            .onChanged { scale = max(1, min(6, settledScale * $0.magnification)) }
+            .onEnded { _ in
+                settledScale = scale
+                if scale == 1 { offset = .zero; settledOffset = .zero }
+            })
+        .simultaneousGesture(DragGesture(minimumDistance: 4)
+            .onChanged { d in
+                guard scale > 1 else { return }
+                offset = CGSize(width: settledOffset.width + d.translation.width,
+                                height: settledOffset.height + d.translation.height)
+            }
+            .onEnded { _ in settledOffset = offset })
+        .overlay(alignment: .topTrailing) {
+            Button(action: close) {
+                Image(systemName: "xmark").font(.title3.bold()).foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(.black.opacity(0.6), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Close (esc)")
+            .padding(12)
+        }
+        .accessibilityLabel(image.label)
+        .transition(.opacity)
+    }
+
+    private var shown: some View {
+        AsyncImage(url: image.shown) { small in fitted(small) } placeholder: { Color.clear }
+    }
+
+    private func fitted(_ image: Image) -> some View {
+        image.resizable().aspectRatio(contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 struct Notice: View {
     let icon: String
     let text: String
@@ -1077,38 +1175,49 @@ struct FooterView: View {
     let lists: Bool
     var tags = false
     var editingTags = false
+    /// Whether the page has an image ⌘Y opens; nil while one is open.
+    var image: Bool? = false
 
     var body: some View {
         HStack(spacing: 16) {
             Spacer()
-            if lists && !inDetail { hint("⌘T ⌘F ⌘W", "To watch, Favorites, Watched") }
-            if editingTags {
-                hint("⏎", "Add tags")
-                hint("esc", "Done")
-            } else if inDetail {
-                if tags { hint("⌘R", "Tag") }
-                if selectedRow?.kind == .episode {
-                    hint("⌘W", "Watched")
-                    hint("⏎", "Open in browser")
-                } else if selectedRow != nil {
-                    if selectedRow!.isTitle { hint("⌘T ⌘F", "To watch, Favorites") }
-                    hint("⏎", "Open")
-                    hint("⌘⏎", "Open in browser")
-                } else {
-                    hint("↑↓", "Select")
-                    hint("⏎", "Open in browser")
-                }
-                hint("esc", canGoBack ? "Back" : home ? "Lists" : "Results")
-            } else {
-                hint("⏎", "Details")
-                hint("⌘⏎", "Open in browser")
+            if image == nil {
                 hint("esc", "Close")
+            } else {
+                hints
             }
         }
         .font(.caption)
         .foregroundStyle(Theme.muted)
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
+    }
+
+    @ViewBuilder private var hints: some View {
+        if inDetail && image == true && !editingTags { hint("⌘Y", "Full size") }
+        if lists && !inDetail { hint("⌘T ⌘F ⌘W", "To watch, Favorites, Watched") }
+        if editingTags {
+            hint("⏎", "Add tags")
+            hint("esc", "Done")
+        } else if inDetail {
+            if tags { hint("⌘R", "Tag") }
+            if selectedRow?.kind == .episode {
+                hint("⌘W", "Watched")
+                hint("⏎", "Open in browser")
+            } else if selectedRow != nil {
+                if selectedRow!.isTitle { hint("⌘T ⌘F", "To watch, Favorites") }
+                hint("⏎", "Open")
+                hint("⌘⏎", "Open in browser")
+            } else {
+                hint("↑↓", "Select")
+                hint("⏎", "Open in browser")
+            }
+            hint("esc", canGoBack ? "Back" : home ? "Lists" : "Results")
+        } else {
+            hint("⏎", "Details")
+            hint("⌘⏎", "Open in browser")
+            hint("esc", "Close")
+        }
     }
 
     private func hint(_ key: String, _ label: String) -> some View {

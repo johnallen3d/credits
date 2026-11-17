@@ -192,6 +192,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     private func handleKey(_ event: NSEvent) -> Bool {
         let commandOnly = event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command
+        // An image open full size takes every key; esc, space or ⌘Y closes it.
+        if model.viewing != nil {
+            switch Int(event.keyCode) {
+            case kVK_Escape, kVK_Space: model.viewing = nil
+            case kVK_ANSI_Y where commandOnly: model.viewing = nil
+            default: break
+            }
+            return true
+        }
+        if commandOnly, Int(event.keyCode) == kVK_ANSI_Y, model.detailHit != nil {
+            if let image = model.pageImage { model.view(image.url, image.label) }
+            return true
+        }
         if commandOnly, Int(event.keyCode) == kVK_ANSI_R, model.detailTags != nil {
             model.focusTags += 1
             return true
