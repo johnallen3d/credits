@@ -14,6 +14,17 @@ final class LauncherModel {
     var searching = false
     var searchError: String?
 
+    /// With no query the panel shows a list instead: one per tab.
+    var tab: HomeTab = .recent
+    var home: [HomeTab: HomeList] = [:]
+    /// Why a tab's last load failed, shown over its saved list if it has one.
+    var homeError: [HomeTab: String] = [:]
+    var homeLoading: Set<HomeTab> = []
+
+    var showingHome: Bool { query.trimmingCharacters(in: .whitespaces).isEmpty }
+    /// What ↑↓ and ⏎ act on: the search results, or the tab's list.
+    var rows: [SearchHit] { showingHome ? home[tab]?.hits ?? [] : results }
+
     /// The page in detail: a result, or a credit opened from another page.
     var detailHit: SearchHit?
     var detail: Detail?
@@ -52,9 +63,90 @@ final class LauncherModel {
     private var searchTask: Task<Void, Never>?
     private var detailTask: Task<Void, Never>?
     private var flashTask: Task<Void, Never>?
+    private var homeTasks: [HomeTab: Task<Void, Never>] = [:]
 
     func panelOpened() {
         shown += 1
+        loadHome(tab)
+    }
+
+    /// Shows the next or previous tab's list, refreshing it.
+    func switchTab(_ delta: Int) {
+        let all = HomeTab.allCases
+        let index = all.firstIndex(of: tab)!
+        selectTab(all[(index + delta + all.count) % all.count])
+    }
+
+    func selectTab(_ next: HomeTab) {
+        tab = next
+        selection = rows.first
+        loadHome(next)
+    }
+
+    /// Reloads a tab's list, keeping the saved one on screen until it's back.
+    private func loadHome(_ tab: HomeTab) {
+        guard homeTasks[tab] == nil else { return }
+        homeLoading.insert(tab)
+        homeTasks[tab] = Task {
+            defer { homeLoading.remove(tab); homeTasks[tab] = nil }
+            do {
+                let list = try await fetch(tab)
+                home[tab] = list
+                homeError[tab] = nil
+            } catch {
+                homeError[tab] = error.localizedDescription
+            }
+            // Keep the selection where it was if it's still listed.
+            if showingHome, self.tab == tab, selection.map({ !rows.contains($0) }) ?? true {
+                selection = rows.first
+            }
+        }
+    }
+
+    private func fetch(_ tab: HomeTab) async throws -> HomeList {
+        switch tab {
+        case .recent:
+            let r = try await api.recent()
+            return HomeList(hits: r.recent.map {
+                SearchHit(kind: $0.kind, id: $0.id, title: $0.name, year: $0.year, posterUrl: $0.imageUrl)
+            })
+        case .toWatch:
+            let w = try await api.watchlist()
+            for t in w.titles {
+                if let m = t.marks { marks[SearchHit(kind: t.kind, id: t.id)] = m }
+            }
+            var notes: [String] = []
+            if let s = w.services {
+                if s.state == "unreadable" { notes.append("Your streaming services couldn't be read") }
+                if let since = s.staleSince { notes.append("Services saved from \(shortDate(since)): TMDB isn't responding") }
+                if s.unknown > 0 {
+                    notes.append("Services couldn't be loaded for \(s.unknown) title\(s.unknown == 1 ? "" : "s")")
+                }
+            }
+            return HomeList(hits: w.titles.map { t in
+                let services = (t.availability?.services ?? []).map(\.name)
+                let info = ([t.year].compactMap { $0 } + services).joined(separator: " · ")
+                return SearchHit(kind: t.kind, id: t.id, title: t.title, year: t.year,
+                                 posterUrl: t.posterUrl, info: info)
+            }, notes: notes)
+        case .nowPlaying:
+            let n = try await api.nowPlaying()
+            var notes: [String] = []
+            if let since = n.ratings.staleSince { notes.append("Ratings saved from \(shortDate(since)): OMDb isn't responding") }
+            switch n.ratings.unavailableReason {
+            case "provider_error": notes.append("Some ratings couldn't be loaded")
+            case "not_configured": notes.append("Ratings aren't set up on the server")
+            default: break
+            }
+            if n.unchecked > 0 {
+                notes.append("\(n.unchecked) movie\(n.unchecked == 1 ? "" : "s") left out: release dates couldn't be loaded")
+            }
+            return HomeList(hits: n.titles.map { m in
+                let opened = m.releaseDate.map { "In theaters since \(shortDate($0))" }
+                let info = [opened, m.rating?.label].compactMap { $0 }.joined(separator: " · ")
+                return SearchHit(kind: .movie, id: m.id, title: m.title, posterUrl: m.posterUrl, info: info)
+            }, notes: notes)
+        }
     }
 
     private func scheduleSearch() {
@@ -62,7 +154,9 @@ final class LauncherModel {
         let q = query.trimmingCharacters(in: .whitespaces)
         backToResults()
         guard !q.isEmpty else {
-            results = []; selection = nil; searchError = nil; searching = false
+            results = []; searchError = nil; searching = false
+            selection = rows.first
+            loadHome(tab)
             return
         }
         searching = true
@@ -95,9 +189,10 @@ final class LauncherModel {
             detailRow = next < 0 ? nil : min(count - 1, next)
             return
         }
-        guard !results.isEmpty else { return }
-        let index = selection.flatMap { results.firstIndex(of: $0) } ?? -1
-        selection = results[max(0, min(results.count - 1, index + delta))]
+        let rows = rows
+        guard !rows.isEmpty else { return }
+        let index = selection.flatMap { rows.firstIndex(of: $0) } ?? -1
+        selection = rows[max(0, min(rows.count - 1, index + delta))]
     }
 
     /// Opens a result's detail, starting a fresh back stack.
@@ -232,6 +327,52 @@ final class LauncherModel {
     func handleEscape() {
         if detailHit != nil { goBack() } else { close() }
     }
+}
+
+enum HomeTab: CaseIterable {
+    case recent, toWatch, nowPlaying
+
+    var name: String {
+        switch self {
+        case .recent: return "Recently viewed"
+        case .toWatch: return "To watch"
+        case .nowPlaying: return "Now playing"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .recent: return "clock"
+        case .toWatch: return "bookmark"
+        case .nowPlaying: return "ticket"
+        }
+    }
+
+    var empty: String {
+        switch self {
+        case .recent: return "Nothing viewed yet"
+        case .toWatch: return "Nothing on To watch"
+        case .nowPlaying: return "Nothing playing in theaters"
+        }
+    }
+}
+
+/// A tab's list as last loaded, with notes on anything it's missing.
+struct HomeList {
+    let hits: [SearchHit]
+    var notes: [String] = []
+    let loadedAt = Date()
+}
+
+/// "2026-11-06" or an ISO timestamp as "Nov 6, 2026".
+func shortDate(_ iso: String) -> String {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let day = ISO8601DateFormatter()
+    day.formatOptions = [.withFullDate]
+    day.timeZone = .current
+    let date = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) ?? day.date(from: iso)
+    return date?.formatted(date: .abbreviated, time: .omitted) ?? iso
 }
 
 extension Collection {

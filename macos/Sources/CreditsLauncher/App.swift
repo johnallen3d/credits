@@ -154,6 +154,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return true
         }
         switch Int(event.keyCode) {
+        case kVK_Tab where model.showingHome && model.detailHit == nil:
+            model.switchTab(event.modifierFlags.contains(.shift) ? -1 : 1)
+            return true
         case kVK_DownArrow: model.move(1); return true
         case kVK_UpArrow: model.move(-1); return true
         case kVK_Return, kVK_ANSI_KeypadEnter:

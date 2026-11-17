@@ -20,6 +20,8 @@ struct SearchHit: Decodable, Identifiable, Hashable {
     let profileUrl: String?
     let knownForDepartment: String?
     let knownFor: [KnownFor]?
+    /// A list entry's own second line, in place of `details`.
+    var info: String? = nil
 
     var displayName: String { title ?? name ?? "Untitled" }
     var imageUrl: String? { posterUrl ?? profileUrl }
@@ -33,6 +35,7 @@ struct SearchHit: Decodable, Identifiable, Hashable {
     }
 
     var details: String {
+        if let info { return info }
         switch kind {
         case .movie, .tv: return year ?? ""
         case .person: return (knownFor ?? []).map(\.title).joined(separator: ", ")
@@ -40,13 +43,15 @@ struct SearchHit: Decodable, Identifiable, Hashable {
     }
 
     /// A credit on a detail page, to open as a page of its own.
-    init(kind: Kind, id: Int, title: String? = nil, name: String? = nil, year: String? = nil) {
+    init(kind: Kind, id: Int, title: String? = nil, name: String? = nil, year: String? = nil,
+         posterUrl: String? = nil, info: String? = nil) {
         self.kind = kind
         self.id = id
         self.title = title
         self.name = name
         self.year = year
-        posterUrl = nil
+        self.posterUrl = posterUrl
+        self.info = info
         profileUrl = nil
         knownForDepartment = nil
         knownFor = nil
@@ -243,6 +248,68 @@ enum Detail {
     }
 }
 
+// The lists the empty panel shows.
+
+struct RecentViews: Decodable {
+    let recent: [RecentView]
+}
+
+struct RecentView: Decodable {
+    let kind: Kind
+    let id: Int
+    let name: String
+    let year: String?
+    let imageUrl: String?
+}
+
+struct Watchlist: Decodable {
+    let titles: [ListEntry]
+    let services: ListServices?
+}
+
+struct ListEntry: Decodable {
+    let kind: Kind
+    let id: Int
+    let title: String
+    let year: String?
+    let posterUrl: String?
+    let availability: Availability?
+    let marks: TitleMarks?
+}
+
+struct Availability: Decodable {
+    let services: [Service]
+}
+
+struct Service: Decodable {
+    let name: String
+}
+
+struct ListServices: Decodable {
+    let state: String
+    let unknown: Int
+    let staleSince: String?
+}
+
+struct NowPlaying: Decodable {
+    let titles: [ReleaseEntry]
+    let ratings: SortRatings
+    let unchecked: Int
+}
+
+struct ReleaseEntry: Decodable {
+    let id: Int
+    let title: String
+    let releaseDate: String?
+    let posterUrl: String?
+    let rating: Rating?
+}
+
+struct SortRatings: Decodable {
+    let staleSince: String?
+    let unavailableReason: String?
+}
+
 private struct ErrorBody: Decodable { let error: String }
 
 struct APIError: LocalizedError {
@@ -293,6 +360,18 @@ struct CreditsAPI {
         case .person: return .person(try await get(url))
         case .movie, .tv: return .title(try await get(url))
         }
+    }
+
+    func recent() async throws -> RecentViews {
+        try await get(base.appendingPathComponent("api/recent"))
+    }
+
+    func watchlist() async throws -> Watchlist {
+        try await get(base.appendingPathComponent("api/watchlist"))
+    }
+
+    func nowPlaying() async throws -> NowPlaying {
+        try await get(base.appendingPathComponent("api/now-playing"))
     }
 
     /// Puts a movie or show on a list or takes it off; returns its marks after.

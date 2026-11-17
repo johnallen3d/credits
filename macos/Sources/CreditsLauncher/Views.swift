@@ -27,6 +27,8 @@ struct LauncherView: View {
             Group {
                 if let hit = model.detailHit {
                     DetailContainer(model: model, hit: hit)
+                } else if model.showingHome {
+                    HomeView(model: model)
                 } else {
                     ResultsView(model: model)
                 }
@@ -41,6 +43,7 @@ struct LauncherView: View {
 
             Rule()
             FooterView(inDetail: model.detailHit != nil,
+                       home: model.showingHome,
                        rowSelected: model.detailRow != nil,
                        canGoBack: !model.back.isEmpty,
                        lists: model.listTarget.map { $0.kind != .person } ?? false)
@@ -62,26 +65,101 @@ struct ResultsView: View {
         if let error = model.searchError {
             Notice(icon: "exclamationmark.triangle", text: error, tint: Theme.love)
         } else if model.results.isEmpty {
-            if model.query.trimmingCharacters(in: .whitespaces).isEmpty || model.searching {
+            if model.searching {
                 Notice(icon: "film", text: "Type to search")
             } else {
                 Notice(icon: "questionmark.circle", text: "No matches for “\(model.query)”")
             }
         } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(model.results) { hit in
-                            ResultRow(hit: hit, selected: hit == model.selection, marks: model.marks[hit])
-                                .id(hit)
-                                .onTapGesture { model.open(hit) }
-                        }
+            HitList(model: model, hits: model.results)
+        }
+    }
+}
+
+/// With no query: Recently viewed, To watch and Now playing as tabs.
+struct HomeView: View {
+    let model: LauncherModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                ForEach(HomeTab.allCases, id: \.self) { tab in
+                    Label(tab.name, systemImage: tab.icon)
+                        .font(.callout)
+                        .foregroundStyle(tab == model.tab ? Theme.fg : Theme.muted)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(tab == model.tab ? Theme.line : .clear, in: Capsule())
+                        .contentShape(Capsule())
+                        .onTapGesture { model.selectTab(tab) }
+                }
+                Spacer()
+                if model.homeLoading.contains(model.tab) && model.home[model.tab] != nil {
+                    ProgressView().controlSize(.small)
+                }
+                Text("⇥ Next list").font(.caption).foregroundStyle(Theme.subtle)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+
+            VStack(spacing: 0) { content }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        let list = model.home[model.tab]
+        let error = model.homeError[model.tab]
+        if let list {
+            VStack(alignment: .leading, spacing: 3) {
+                if let error {
+                    note("Couldn't refresh (\(error)); showing the list from "
+                         + list.loadedAt.formatted(date: .omitted, time: .shortened),
+                         icon: "exclamationmark.triangle", tint: Theme.love)
+                }
+                ForEach(list.notes, id: \.self) { note($0, icon: "clock.arrow.circlepath", tint: Theme.movie) }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, error != nil || !list.notes.isEmpty ? 8 : 0)
+            if list.hits.isEmpty {
+                Notice(icon: model.tab.icon, text: model.tab.empty)
+            } else {
+                HitList(model: model, hits: list.hits).id(model.tab)
+            }
+        } else if let error {
+            Notice(icon: "exclamationmark.triangle", text: "Couldn't load \(model.tab.name): \(error)", tint: Theme.love)
+        } else {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func note(_ text: String, icon: String, tint: Color) -> some View {
+        Label(text, systemImage: icon)
+            .font(.callout)
+            .foregroundStyle(tint)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Search results or a list's entries, selectable with ↑↓.
+struct HitList: View {
+    let model: LauncherModel
+    let hits: [SearchHit]
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(hits) { hit in
+                        ResultRow(hit: hit, selected: hit == model.selection, marks: model.marks[hit])
+                            .id(hit)
+                            .onTapGesture { model.open(hit) }
                     }
-                    .padding(6)
                 }
-                .onChange(of: model.selection) { _, hit in
-                    if let hit { proxy.scrollTo(hit) }
-                }
+                .padding(6)
+            }
+            .onChange(of: model.selection) { _, hit in
+                if let hit { proxy.scrollTo(hit) }
             }
         }
     }
@@ -463,13 +541,6 @@ struct StaleNotice: View {
                 .foregroundStyle(Theme.movie)
         }
     }
-
-    private func shortDate(_ iso: String) -> String {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let date = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
-        return date?.formatted(date: .abbreviated, time: .omitted) ?? iso
-    }
 }
 
 struct Poster: View {
@@ -508,6 +579,7 @@ struct Notice: View {
 
 struct FooterView: View {
     let inDetail: Bool
+    let home: Bool
     let rowSelected: Bool
     let canGoBack: Bool
     let lists: Bool
@@ -524,7 +596,7 @@ struct FooterView: View {
                     hint("↑↓", "Select")
                     hint("⏎", "Open in browser")
                 }
-                hint("esc", canGoBack ? "Back" : "Results")
+                hint("esc", canGoBack ? "Back" : home ? "Lists" : "Results")
             } else {
                 hint("⏎", "Details")
                 hint("⌘⏎", "Open in browser")
