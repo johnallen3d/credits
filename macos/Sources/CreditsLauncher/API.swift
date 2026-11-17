@@ -671,6 +671,142 @@ enum WatchedSort: String, CaseIterable {
     var name: String { self == .recent ? "Last watched" : "Title" }
 }
 
+/// Apple TV playback seen through Home Assistant: how following it is going,
+/// shows waiting on a match, and what played lately.
+struct Playback: Decodable {
+    let live: LiveStatus
+    /// The last read of Home Assistant's history.
+    let status: SyncStatus
+    /// Players read, by Home Assistant entity ID.
+    let players: [String]
+    let pending: [PendingShow]
+    let recent: [Detection]
+    /// Time spent playing untracked apps since the server started, most first.
+    let other: [OtherApp]
+    /// `recent` couldn't be read.
+    let unreadable: Bool
+}
+
+/// The live feed from Home Assistant: `not_configured`, `connecting`,
+/// `connected` (since) or `disconnected` (since, with the error).
+struct LiveStatus: Decodable {
+    let state: String
+    let since: String?
+    let error: String?
+}
+
+/// Reading Home Assistant's history: `not_configured`, `starting`, `ok` (at)
+/// or `failed` (at, with the error and when it last worked).
+struct SyncStatus: Decodable {
+    let state: String
+    let at: String?
+    let error: String?
+    let lastOk: String?
+}
+
+/// A show whose episodes, or a movie, wait for its TMDB show or movie to be picked.
+struct PendingShow: Decodable, Hashable {
+    /// `infuse` or `tv`.
+    let app: String
+    /// `.episode` for a show, or `.movie`.
+    let kind: Kind
+    let showKey: String
+    let showTitle: String
+    /// Why it wasn't matched.
+    let note: String?
+    /// "S1 E3" for each waiting episode; empty for a movie.
+    let episodes: [String]
+    /// TMDB shows or movies found by name; nil if TMDB couldn't be searched.
+    let candidates: [Candidate]?
+
+    var isMovie: Bool { kind == .movie }
+    var noun: String { isMovie ? "movie" : "show" }
+}
+
+/// A TMDB show or movie a pending one might be.
+struct Candidate: Decodable, Hashable {
+    let id: Int
+    let name: String
+    let year: String?
+    let overview: String?
+}
+
+/// An episode or movie seen playing.
+struct Detection: Decodable {
+    let app: String
+    let itemKey: String
+    /// `.episode` or `.movie`.
+    let kind: Kind
+    let showTitle: String
+    let title: String
+    let season: Int
+    let episode: Int
+    let duration: Int?
+    let playingSeconds: Int
+    let maxPosition: Int?
+    let lastSeen: String
+    /// `watching`, `marked`, `needs_confirmation`, `no_match` or `ignored`.
+    let status: String
+    /// The TMDB show or movie it was matched to.
+    let tmdbId: Int?
+    let note: String?
+
+    /// "Dark Matter S1 E3", or a movie's title as the app reported it.
+    var label: String { kind == .movie ? title : "\(showTitle) S\(season) E\(episode)" }
+
+    /// The share played, as the web works it out: time spent or furthest reached.
+    var percent: Int? {
+        guard let d = duration, d > 0 else { return nil }
+        return min(100, max(playingSeconds, maxPosition ?? 0) * 100 / d)
+    }
+
+    var statusLabel: String {
+        switch status {
+        case "watching": return "Watching"
+        case "marked": return "Marked watched"
+        case "needs_confirmation": return "Needs confirmation"
+        case "no_match": return "No TMDB match"
+        case "ignored": return "Ignored"
+        default: return status
+        }
+    }
+
+    /// The matched episode's or movie's page.
+    var hit: SearchHit? {
+        tmdbId.map { id in
+            kind == .movie ? SearchHit(kind: .movie, id: id, title: title)
+                : SearchHit(kind: .episode, id: id, title: label, season: season, episode: episode)
+        }
+    }
+}
+
+/// An untracked app and the seconds spent playing it, sent as `[name, seconds]`.
+struct OtherApp: Decodable, Hashable {
+    let name: String
+    let seconds: Int
+
+    init(from decoder: Decoder) throws {
+        var pair = try decoder.unkeyedContainer()
+        name = try pair.decode(String.self)
+        seconds = try pair.decode(Int.self)
+    }
+
+    /// "YouTube 1 h 05 min", as the web words it.
+    var label: String {
+        let minutes = seconds / 60
+        return "\(name) " + (minutes >= 60 ? String(format: "%d h %02d min", minutes / 60, minutes % 60) : "\(minutes) min")
+    }
+}
+
+/// Infuse or Apple's TV app, as the web names them.
+func appLabel(_ app: String) -> String {
+    switch app {
+    case "infuse": return "Infuse"
+    case "tv": return "TV app"
+    default: return app
+    }
+}
+
 /// A page of Now playing or Coming soon: movies with a theatrical date in the region.
 struct ReleasesPage: Decodable {
     /// From 1; a page past the end gives the last one.
@@ -806,6 +942,23 @@ struct CreditsAPI {
         var url = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         url.queryItems = [URLQueryItem(name: "page", value: String(page))]
         return try await get(url.url!)
+    }
+
+    func playback() async throws -> Playback {
+        try await get(base.appendingPathComponent("api/playback"))
+    }
+
+    /// Says which TMDB show or movie a pending one is, or ignores it with a nil
+    /// ID; its waiting episodes are then marked. Returns playback after.
+    func decidePlayback(_ show: PendingShow, tmdbId: Int?) async throws -> Playback {
+        var request = URLRequest(url: base.appendingPathComponent("api/playback/decide"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "app": show.app, "kind": show.kind.rawValue, "show_key": show.showKey,
+            "tmdb_id": tmdbId.map { $0 as Any } ?? NSNull(),
+        ])
+        return try await send(request)
     }
 
     /// Puts a movie or show on a list or takes it off; returns its marks after.

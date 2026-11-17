@@ -145,7 +145,9 @@ struct HomeView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, error != nil || !list.notes.isEmpty ? 8 : 0)
-            if list.hits.isEmpty {
+            if model.tab == .appleTV, let p = model.playback {
+                PlaybackView(model: model, playback: p)
+            } else if list.hits.isEmpty {
                 Notice(icon: model.tab.icon, text: model.emptyText(model.tab))
             } else {
                 HitList(model: model, hits: list.hits).id(model.tab)
@@ -208,6 +210,177 @@ struct ToWatchFilters: View {
             }
         }
         .homeFilters()
+    }
+}
+
+/// Seen on Apple TV, as the web's playback page: how following Home Assistant
+/// is going, shows waiting to be matched, and what played lately. Matched plays
+/// are the tab's rows, selectable with ↑↓ and opened with ⏎.
+struct PlaybackView: View {
+    let model: LauncherModel
+    let playback: Playback
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) { status }
+                    if !playback.pending.isEmpty {
+                        Text("Which show or movie is this?").font(.headline)
+                        ForEach(playback.pending, id: \.self) { PendingCard(model: model, show: $0) }
+                    }
+                    Text("Recently played").font(.headline)
+                    if playback.recent.isEmpty {
+                        Text("Nothing yet." + (playback.status.state == "ok" ? " Episodes and movies appear here as they're played." : ""))
+                            .foregroundStyle(Theme.muted)
+                    } else {
+                        // Each matched play scrolls into view by its first row.
+                        let firsts = Dictionary(playback.recent.enumerated().compactMap { i, d in d.hit.map { ($0, i) } },
+                                                uniquingKeysWith: min)
+                        VStack(spacing: 6) {
+                            ForEach(Array(playback.recent.enumerated()), id: \.offset) { i, d in
+                                PlayRow(play: d, selected: d.hit != nil && d.hit == model.selection)
+                                    .id(d.hit.flatMap { firsts[$0] == i ? $0 : nil })
+                                    .onTapGesture { if let hit = d.hit { model.open(hit) } }
+                            }
+                        }
+                    }
+                    if !playback.other.isEmpty {
+                        Text("Also played since the server started, not tracked: "
+                             + playback.other.map(\.label).joined(separator: ", ") + ".")
+                            .font(.callout).foregroundStyle(Theme.muted)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .clipped()
+            .onChange(of: model.selection) { _, hit in
+                if let hit { proxy.scrollTo(hit) }
+            }
+        }
+    }
+
+    /// The live feed's and the history read's state, worded as on the web.
+    @ViewBuilder private var status: some View {
+        let live = playback.live
+        let since = live.since.map { " since \(shortTime($0))" } ?? ""
+        switch live.state {
+        case "not_configured":
+            line("Home Assistant isn't set up, so nothing is marked automatically. Set HA_URL and HA_TOKEN on the server.", bad: true)
+        case "connecting":
+            line("Connecting to Home Assistant…")
+        case "connected":
+            line("Following Home Assistant live\(since): episodes and movies are marked as soon as they're watched.")
+        default:
+            line("Disconnected from Home Assistant\(since): \(live.error ?? "unknown error"). Retrying; meanwhile its history is read at least every 5 minutes.", bad: true)
+        }
+        let sync = playback.status
+        let at = sync.at.map { " at \(shortTime($0))" } ?? ""
+        switch sync.state {
+        case "ok":
+            line("Last read Home Assistant's history\(at), to catch up on what played while credits wasn't connected.")
+        case "failed":
+            line("Couldn't read Home Assistant's history\(at): \(sync.error ?? "unknown error")"
+                 + (sync.lastOk.map { "; last read at \(shortTime($0))" } ?? "")
+                 + ". Episodes and movies already played are still marked.", bad: true)
+        default:
+            EmptyView()
+        }
+        if playback.unreadable {
+            line("The playback history couldn't be read from the database.", bad: true)
+        }
+    }
+
+    private func line(_ text: String, bad: Bool = false) -> some View {
+        Label(text, systemImage: bad ? "exclamationmark.triangle" : "dot.radiowaves.left.and.right")
+            .font(.callout)
+            .foregroundStyle(bad ? Theme.love : Theme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A show or movie waiting to be matched: the TMDB ones found by its name,
+/// each with a button to use it, and a button to ignore it. Picking by TMDB ID
+/// is left to the web.
+struct PendingCard: View {
+    let model: LauncherModel
+    let show: PendingShow
+
+    var body: some View {
+        let busy = model.deciding.contains(show.showKey)
+        VStack(alignment: .leading, spacing: 6) {
+            (Text(show.showTitle).font(.headline)
+                + Text(" · \(show.isMovie ? "Movie in " : "")\(appLabel(show.app))").foregroundColor(Theme.muted))
+            let waiting = show.episodes.isEmpty ? nil : "Waiting: " + show.episodes.joined(separator: ", ") + "."
+            if let text = [show.note.map { $0 + "." }, waiting].compactMap({ $0 }).joined(separator: " ").nilIfEmpty {
+                Text(text).font(.callout).foregroundStyle(Theme.muted)
+            }
+            switch show.candidates {
+            case nil:
+                Text("Couldn't search TMDB right now.").font(.callout).foregroundStyle(Theme.love)
+                Button("Match it by TMDB ID on the web") { model.openPlaybackOnWeb() }
+            case let candidates? where candidates.isEmpty:
+                Text("TMDB found no \(show.noun)s by that name.").font(.callout).foregroundStyle(Theme.muted)
+                Button("Match it by TMDB ID on the web") { model.openPlaybackOnWeb() }
+            case let candidates?:
+                ForEach(candidates, id: \.self) { c in
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            (Text(c.name).bold() + Text(c.year.map { "  (\($0))" } ?? "").foregroundColor(Theme.muted))
+                                .onTapGesture {
+                                    model.open(SearchHit(kind: show.isMovie ? .movie : .tv, id: c.id, title: c.name, year: c.year))
+                                }
+                                .help("Open its page")
+                            if let o = c.overview, !o.isEmpty {
+                                Text(o).font(.callout).foregroundStyle(Theme.muted).lineLimit(2)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        Button("Use this \(show.noun)") { model.decide(show, c) }
+                    }
+                }
+            }
+            HStack {
+                Button("Ignore this \(show.noun)") { model.decide(show, nil) }
+                if busy { ProgressView().controlSize(.small) }
+            }
+        }
+        .disabled(busy)
+        .buttonStyle(.link)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.line))
+    }
+}
+
+/// A play as a row of the web's Recently played table: what, which app, how
+/// much played, its status and when.
+struct PlayRow: View {
+    let play: Detection
+    let selected: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            (Text(play.label).font(.headline).foregroundColor(play.hit == nil ? Theme.muted : Theme.fg)
+                + Text(play.kind == .movie ? " · movie" : "").foregroundColor(Theme.muted))
+                .lineLimit(1)
+            Text([appLabel(play.app), play.percent.map { "\($0)% played" }, play.statusLabel, shortTime(play.lastSeen)]
+                    .compactMap { $0 }.joined(separator: " · "))
+                .font(.callout)
+                .foregroundStyle(play.status == "marked" ? Theme.accent : Theme.muted)
+            if let note = play.note {
+                Text(note).font(.callout).foregroundStyle(Theme.muted).lineLimit(2)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .stroke(selected ? Theme.accent : Theme.line, lineWidth: selected ? 2 : 1))
+        .contentShape(Rectangle())
     }
 }
 

@@ -51,6 +51,12 @@ final class LauncherModel {
         didSet { rebuild(.watched) }
     }
 
+    /// Seen on Apple TV as the server last sent it; the tab lists its matched
+    /// plays as rows.
+    var playback: Playback?
+    /// Pending shows with a match or ignore in flight, by show key.
+    var deciding: Set<String> = []
+
     /// The page each paged tab shows, from 1.
     var pages: [HomeTab: Int] = [:]
 
@@ -243,6 +249,10 @@ final class LauncherModel {
             }
             watched = w
             return watchedList(w)
+        case .appleTV:
+            let p = try await api.playback()
+            playback = p
+            return playbackList(p)
         case .nowPlaying, .comingSoon:
             let page = pages[tab] ?? 1
             let n = try await tab == .nowPlaying ? api.nowPlaying(page: page) : api.comingSoon(page: page)
@@ -351,6 +361,42 @@ final class LauncherModel {
             return SearchHit(kind: t.kind, id: t.id, title: t.displayTitle, year: t.year,
                              posterUrl: t.posterUrl, info: info)
         }, notes: notes)
+    }
+
+    /// The plays that can open a page (those matched to TMDB), each once.
+    private func playbackList(_ p: Playback) -> HomeList {
+        var seen = Set<SearchHit>()
+        return HomeList(hits: p.recent.compactMap(\.hit).filter { seen.insert($0).inserted })
+    }
+
+    /// Matches a pending show to a TMDB show or movie, or ignores it with nil,
+    /// then shows playback as the server answers.
+    func decide(_ show: PendingShow, _ candidate: Candidate?) {
+        guard deciding.insert(show.showKey).inserted else { return }
+        Task {
+            defer { deciding.remove(show.showKey) }
+            do {
+                let p = try await api.decidePlayback(show, tmdbId: candidate?.id)
+                playback = p
+                home[.appleTV] = playbackList(p)
+                homeError[.appleTV] = nil
+                if let c = candidate {
+                    self.show("Matched \(show.showTitle) to \(c.name)" + (c.year.map { " (\($0))" } ?? ""), failed: false)
+                } else {
+                    self.show("Ignored \(show.showTitle)", failed: false)
+                }
+            } catch is CancellationError {
+            } catch {
+                self.show("Couldn't \(candidate == nil ? "ignore" : "match") \(show.showTitle): \(error.localizedDescription)",
+                          failed: true)
+            }
+        }
+    }
+
+    /// Opens the playback page on the web, to match a show by its TMDB ID.
+    func openPlaybackOnWeb() {
+        NSWorkspace.shared.open(api.base.appendingPathComponent("playback"))
+        close()
     }
 
     /// What stood behind a list's by-rating order.
@@ -862,7 +908,7 @@ final class LauncherModel {
 }
 
 enum HomeTab: CaseIterable {
-    case recent, toWatch, favorites, watched, nowPlaying, comingSoon
+    case recent, toWatch, favorites, watched, nowPlaying, comingSoon, appleTV
 
     var name: String {
         switch self {
@@ -872,6 +918,7 @@ enum HomeTab: CaseIterable {
         case .watched: return "Watched"
         case .nowPlaying: return "Now playing"
         case .comingSoon: return "Coming soon"
+        case .appleTV: return "Seen on Apple TV"
         }
     }
 
@@ -883,6 +930,7 @@ enum HomeTab: CaseIterable {
         case .watched: return "eye"
         case .nowPlaying: return "ticket"
         case .comingSoon: return "calendar"
+        case .appleTV: return "appletv"
         }
     }
 
@@ -894,6 +942,7 @@ enum HomeTab: CaseIterable {
         case .watched: return "Nothing watched yet: ⌘W on a movie or show marks it"
         case .nowPlaying: return "Nothing playing in theaters"
         case .comingSoon: return "No movies coming to theaters"
+        case .appleTV: return "Nothing played yet"
         }
     }
 }
@@ -954,6 +1003,16 @@ struct Pager {
     let totalPages: Int
     /// Entries on the whole list.
     let total: Int
+}
+
+/// An ISO timestamp as "Nov 6, 20:12", as the web's playback page shows times.
+func shortTime(_ iso: String) -> String {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let date = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return iso }
+    let out = DateFormatter()
+    out.dateFormat = "MMM d, HH:mm"
+    return out.string(from: date)
 }
 
 /// "2026-11-06" or an ISO timestamp as "Nov 6, 2026".
