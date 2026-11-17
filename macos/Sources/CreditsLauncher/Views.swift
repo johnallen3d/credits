@@ -586,16 +586,14 @@ struct WhereToWatchView: View {
                 } else if w.offers.isEmpty {
                     Text("Not available to watch in your region").foregroundStyle(Theme.muted)
                 } else {
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 6) {
                         ForEach(w.offers, id: \.self) { group in
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            HStack(alignment: .top, spacing: 6) {
                                 Text(group.kind.capitalized)
                                     .foregroundStyle(Theme.muted)
-                                    .frame(width: 56, alignment: .leading)
-                                group.providers.enumerated().reduce(Text("")) { text, item in
-                                    let p = item.element
-                                    let name = p.mine ? Text(p.name).bold().foregroundColor(Theme.accent) : Text(p.name)
-                                    return text + Text(item.offset == 0 ? "" : ", ") + name
+                                    .frame(width: 56, height: 30, alignment: .leading)
+                                FlowLayout(spacing: 6, lineSpacing: 6) {
+                                    ForEach(group.providers, id: \.self) { ProviderChip(provider: $0) }
                                 }
                             }
                         }
@@ -603,6 +601,37 @@ struct WhereToWatchView: View {
                 }
             }
         }
+    }
+}
+
+/// A provider as on the web: its logo and name, outlined in the accent with a
+/// check when it's one of your services. Without a logo, just the name.
+struct ProviderChip: View {
+    let provider: Provider
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let url = provider.logoUrl.flatMap(URL.init(string:)) {
+                AsyncImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Theme.line
+                }
+                .frame(width: 24, height: 24)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+            Text(provider.name).lineLimit(1)
+            if provider.mine {
+                Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(Theme.accent)
+                    .help("One of your services")
+            }
+        }
+        .font(.callout)
+        .padding(.leading, provider.logoUrl == nil ? 8 : 3).padding(.trailing, 8)
+        .frame(height: 30)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7)
+            .stroke(provider.mine ? Theme.accent : Theme.line, lineWidth: provider.mine ? 2 : 1))
     }
 }
 

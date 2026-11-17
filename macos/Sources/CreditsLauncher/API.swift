@@ -320,6 +320,7 @@ struct OfferGroup: Decodable, Hashable {
 
 struct Provider: Decodable, Hashable {
     let name: String
+    let logoUrl: String?
     let mine: Bool
 }
 
