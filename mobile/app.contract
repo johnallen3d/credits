@@ -16,6 +16,7 @@ routes nav
         episode "/tv/:id/season/:n/episode/:e"
     releases "/releases/:list"
     person "/person/:id"
+    photo "/photo/:url"
 
 shape Hit
   kind: string
@@ -419,6 +420,13 @@ fn ratingsNote(r: Ratings): string = (stateOf(r.state) == "unavailable"
   : stateOf(r.state) == "stale"
     ? (match r.fetched_at { case some(at) => `Couldn’t refresh ratings; showing scores from ${day(at)}.`, case none => "Couldn’t refresh ratings." })
     : "")
+// The original upload behind a sized TMDB image URL (…/t/p/w342/x.jpg to
+// …/t/p/original/x.jpg), as the web's lightbox opens.
+fn fullSize(url: string): string = (url.includes("/t/p/")
+  ? `${url.split("/t/p/").slice(0, 1).join("")}/t/p/original/${url.split("/").slice(-1).join("")}`
+  : url)
+// Where a tap on a poster, backdrop, photo or still goes: the image full screen.
+fn photoPath(url: string): string = path("photo", url)
 
 component App
   // The web's theme picker, remembered on the phone. The dark themes keep the
@@ -529,6 +537,8 @@ component App
         if e.name == "releases"
           ReleasesScreen(navKey=`${e.id}`, list=e.params.list, loaded=releasesLoaded, pages=releasesPages,
             pending=pending(releasesLoaded), failed=failed(releasesLoaded), more=releasesMore, retry=releasesRetry)
+        if e.name == "photo"
+          PhotoScreen(navKey=`${e.id}`, url=e.params.url, close=back)
 
 // A search hit or recently viewed page, linking to its title or person screen.
 component Entry
@@ -588,8 +598,16 @@ component TitleScreen
             section
               Notice(testId="stale", message=staleNote(t.metadata))
           section
+            if text(t.backdrop_url) != ""
+              link href=photoPath(text(t.backdrop_url)) aria-label=`Backdrop for ${t.title}, full size` testId="backdrop"
+                background-color="surface.card"
+                image text(t.backdrop_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
             row gap=16 align-items="flex-start" padding-top=12 padding-bottom=12 background-color="surface.card"
-              image text(t.poster_url) aria-label=`Poster for ${t.title}` width=110 height=165 border-radius=8 object-fit="cover"
+              if text(t.poster_url) == ""
+                column width=110 height=165 border-radius=8 background-color="surface.thumb"
+              else
+                link href=photoPath(text(t.poster_url)) aria-label=`Poster for ${t.title}, full size` testId="poster"
+                  image text(t.poster_url) aria-label="" width=110 height=165 border-radius=8 object-fit="cover"
               column flex=1 min-width=0 gap=6
                 text `${text(t.year)}${t.genres.length > 0 ? " · " : ""}${t.genres.join(", ")}` color="text.muted"
                 if theatersOf(t)
@@ -913,8 +931,14 @@ component SeasonScreen
                       text "Watched" font="-exact-footnote" color="mark.watched"
                     else
                       text "Mark Watched" font="-exact-footnote"
-                image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
-                  filter=(seen(w, s.number, ep.number) ? "none" : "blur(14px)")
+                // A watched episode's still opens full size; an unwatched one stays
+                // blurred and shut, so the spoiler guard holds.
+                if seen(w, s.number, ep.number) and text(ep.still_url) != ""
+                  link href=photoPath(text(ep.still_url)) aria-label=`Still from ${ep.title}, full size` testId=`still-${ep.number}`
+                    image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
+                else
+                  image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
+                    filter=(seen(w, s.number, ep.number) ? "none" : "blur(14px)")
                 text text(ep.overview) font="-exact-subheadline"
                   filter=(seen(w, s.number, ep.number) ? "none" : "blur(5px)")
                   testId=`overview-${ep.number}`
@@ -1087,7 +1111,8 @@ component PersonScreen
               if text(p.profile_url) == ""
                 column width=110 height=165 border-radius=8 background-color="surface.thumb" role="img" aria-label="No photo available"
               else
-                image text(p.profile_url) aria-label=`Photo of ${p.name}` width=110 height=165 border-radius=8 object-fit="cover"
+                link href=photoPath(text(p.profile_url)) aria-label=`Photo of ${p.name}, full size` testId="person-photo"
+                  image text(p.profile_url) aria-label="" width=110 height=165 border-radius=8 object-fit="cover"
               column flex=1 min-width=0 gap=6
                 if text(p.known_for) != ""
                   text `Known for ${text(p.known_for)}` font="-exact-headline" testId="known-for"
@@ -1196,6 +1221,9 @@ component EpisodeScreen
             column gap=8 padding-top=12 padding-bottom=12 background-color="surface.card"
               if text(ep.still_url) == ""
                 column width="100%" aspect-ratio="16 / 9" border-radius=8 background-color="surface.thumb"
+              else if seen(ep.watched, ep.season_number, ep.number)
+                link href=photoPath(text(ep.still_url)) aria-label=`Still from ${ep.title}, full size` testId="still"
+                  image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
               else
                 image text(ep.still_url) aria-label=`Still from ${ep.title}` width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
                   filter=(seen(ep.watched, ep.season_number, ep.number) ? "none" : "blur(14px)") testId="still"
@@ -1241,3 +1269,23 @@ component EpisodeScreen
               text "No series regulars listed." color="text.muted" background-color="surface.card"
             for c in ep.cast key=`${c.person_id}`
               Credit(testId=`cast-${c.person_id}`, person=c, line=text(c.role))
+// A poster, backdrop, photo or still full screen, over black, to pinch and zoom.
+// The smaller copy already shown fills in until the original loads, or if it
+// can't, as the web's lightbox does.
+component PhotoScreen
+  props
+    navKey: string
+    url: string
+    close: action
+  view
+    column navigationKey=navKey navigationPresentation="fullscreen" navigationScroll="photo"
+      position="absolute" inset=0 display="flex" flex-direction="column"
+      background-color="photo.backdrop" color-scheme="dark" testId="photo"
+      header display="flex" align-items="center" justify-content="flex-end" padding="8px 16px"
+        button id="close" press=close aria-label="Close" testId="photo-close"
+          image "symbol:close" color="photo.control"
+      scroll id="photo" -exact-max-zoom=4 flex=1 min-height=0
+        column width="100%" height="100%" position="relative"
+          image url aria-label="" position="absolute" inset=0 width="100%" height="100%" object-fit="contain"
+          image fullSize(url) aria-label="Full-size image" position="absolute" inset=0 width="100%" height="100%"
+            object-fit="contain" testId="photo-full"

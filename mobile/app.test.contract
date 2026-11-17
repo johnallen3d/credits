@@ -403,3 +403,33 @@ test "a season rings each rated episode"
   clock data
   expect text "rating-1" == "90IMDb"
   expect tree missing "rating-2"
+test "a title's poster and backdrop open full size and close"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"poster_url":"https://image.tmdb.org/t/p/w342/p.jpg","backdrop_url":"https://image.tmdb.org/t/p/w1280/b.jpg","ratings":{},"cast":[{"person_id":6384,"name":"Keanu Reeves","profile_url":"https://image.tmdb.org/t/p/w185/k.jpg"},{"person_id":2975,"name":"Laurence Fishburne"}],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  tap "recent-movie-603"
+  expect tree has "backdrop"
+  tap "poster"
+  expect tree has "photo-full"
+  tap "photo-close"
+  expect tree missing "photo"
+  expect tree has "poster"
+
+test "a watched episode's still opens full size; an unwatched one stays shut"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"tv","id":1396,"name":"Breaking Bad","year":"2008","image_url":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396" with 200 {"kind":"tv","id":1396,"title":"Breaking Bad","genres":[],"ratings":{},"cast":[],"season_list":[{"number":1,"name":"Season 1","episode_count":2}],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1" with 200 {"show_title":"Breaking Bad","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Pilot","still_url":"https://image.tmdb.org/t/p/w300/s1.jpg"},{"number":2,"title":"Cat's in the Bag...","still_url":"https://image.tmdb.org/t/p/w300/s2.jpg"}],"watched":{"show":false,"seasons":[],"episodes":[{"season":1,"number":1}]}}
+  tap "recent-tv-1396"
+  tap "season-1"
+  expect tree has "still-1"
+  expect tree missing "still-2"
+  tap "still-1"
+  expect tree has "photo-full"
+
+test "a person's photo opens full size from their page"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for":"Acting","biography":null,"birthday":null,"deathday":null,"place_of_birth":null,"profile_url":"https://image.tmdb.org/t/p/w185/k.jpg","known_for_titles":[],"filmography":[],"sort":"date","sort_ratings":{"unrated":0}}
+  tap "recent-person-6384"
+  tap "person-photo"
+  expect tree has "photo-full"
+  tap "photo-close"
+  expect tree has "person-photo"

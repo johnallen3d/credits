@@ -45,6 +45,9 @@ theme
   score.stem = #00912d  scheme=fixed
   score.imdb = #f5c518  scheme=fixed
   score.imdb-ink = #000000  scheme=fixed
+  // The full-size photo viewer is black in every theme, as a photo app is.
+  photo.backdrop = #000000
+  photo.control = #ffffff  pair=photo.backdrop
 
 icons
   icon.theme = icon(sf "paintpalette", svg "icons/palette.svg")
