@@ -693,3 +693,50 @@ test "search results show a mark made on the title's page"
   clock data
   clock settle
   expect tree has "hit-movie-603-to-watch-on"
+
+test "an episode is marked watched from its screen, and says when the Apple TV marked it"
+  at "/tv/1396/season/1/episode/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1/episode/1/watched" with 200 {"state":"read","show":false,"seasons":[],"episodes":[{"season":1,"number":1,"apple_tv":false}]}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1/episode/1" with 200 {"show_title":"Breaking Bad","season_number":1,"season_name":"Season 1","number":1,"title":"Pilot","air_date":null,"overview":"A teacher turns.","runtime_minutes":null,"still_url":null,"rating":null,"episode_ratings":{"state":"fresh","unavailable_reason":null},"key_crew":[],"cast":[],"guest_stars":[],"previous":null,"next":2,"watched":{"state":"read","show":false,"seasons":[],"episodes":[]}}
+  expect tree missing "watched"
+  expect tree has "peek"
+  tap "mark-episode"
+  clock data
+  expect text "watched" == "Watched"
+  expect tree missing "peek"
+  expect enabled "mark-episode"
+
+test "an episode the Apple TV marked says so"
+  at "/tv/1396/season/1/episode/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1/episode/1" with 200 {"show_title":"Breaking Bad","season_number":1,"season_name":"Season 1","number":1,"title":"Pilot","air_date":null,"overview":"A teacher turns.","runtime_minutes":null,"still_url":null,"rating":null,"episode_ratings":{"state":"fresh","unavailable_reason":null},"key_crew":[],"cast":[],"guest_stars":[],"previous":null,"next":2,"watched":{"state":"read","show":false,"seasons":[],"episodes":[{"season":1,"number":1,"apple_tv":true}]}}
+  expect text "watched" == "Watched on Apple TV"
+
+test "a season row says which episodes the Apple TV marked"
+  at "/tv/1396/season/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1" with 200 {"show_title":"Breaking Bad","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Pilot","air_date":"2008-01-20"},{"number":2,"title":"Cat's in the Bag...","air_date":"2008-01-27"}],"watched":{"state":"read","show":false,"seasons":[],"episodes":[{"season":1,"number":1,"apple_tv":true},{"season":1,"number":2,"apple_tv":false}]}}
+  expect text "episode-facts-1" == "Jan 20, 2008 · Watched on Apple TV"
+  expect text "episode-facts-2" == "Jan 27, 2008"
+
+test "an unwatched episode's spoilers can be peeked at and hidden again"
+  at "/tv/1396/season/1/episode/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1/episode/1" with 200 {"show_title":"Breaking Bad","season_number":1,"season_name":"Season 1","number":1,"title":"Pilot","air_date":null,"overview":"A teacher turns.","runtime_minutes":null,"still_url":null,"rating":null,"episode_ratings":{"state":"fresh","unavailable_reason":null},"key_crew":[],"cast":[],"guest_stars":[],"previous":null,"next":2,"watched":{"state":"read","show":false,"seasons":[],"episodes":[]}}
+  expect text "peek" == "Peek at Spoilers"
+  tap "peek"
+  expect text "peek" == "Hide Spoilers"
+  tap "peek"
+  expect text "peek" == "Peek at Spoilers"
+
+test "a season row's hidden summary peeks when tapped, one episode at a time"
+  at "/tv/1396/season/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1" with 200 {"show_title":"Breaking Bad","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Pilot","overview":"A teacher turns."},{"number":2,"title":"Cat's in the Bag...","overview":"Bodies."},{"number":3,"title":"...And the Bag's in the River","overview":"Krazy-8."}],"watched":{"state":"read","show":false,"seasons":[],"episodes":[{"season":1,"number":3}]}}
+  expect tree has "peek-1"
+  expect tree missing "peek-3"
+  tap "peek-1"
+  expect text "peek-1" == "A teacher turns."
+  tap "peek-2"
+  expect text "peek-2" == "Bodies."

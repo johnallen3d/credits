@@ -182,6 +182,7 @@ shape Episode
 shape EpisodeRef
   season: number
   number: number
+  apple_tv: option<bool>
 
 // state is "unreadable" when the marks couldn't be read; then nothing counts as
 // watched and every episode stays blurred.
@@ -555,9 +556,12 @@ fn ratingNote(p: Person): string = match p.sort_ratings {
   case none => "" }
 fn seen(w: SeasonWatched, season: number, ep: number): bool =
   seasonSeen(w, season) or w.episodes.filter(e => e.season == season and e.number == ep).length > 0
+// Whether the episode's own mark came from what played on the Apple TV.
+fn fromAppleTv(w: SeasonWatched, season: number, ep: number): bool =
+  w.episodes.filter(e => e.season == season and e.number == ep and yes(e.apple_tv)).length > 0
 fn episodeScore(e: EpisodeDetail): string = scoreOf(e.rating) != "" ? scoreOf(e.rating) : e.episode_ratings.state == "unavailable" ? "Ratings unavailable" : "No IMDb score"
 fn episodeFacts(e: EpisodeDetail): string = [match e.air_date { case some(d) => formatDate(d, 0, "medium"), case none => "Not announced" }, match e.runtime_minutes { case some(m) => `${m} min`, case none => "" }].filter(x => x != "").join(" · ")
-fn listedEpisodeFacts(e: Episode): string = [match e.air_date { case some(d) => formatDate(d, 0, "medium"), case none => "Air date not announced" }, match e.runtime_minutes { case some(m) => `${m} min`, case none => "" }].filter(x => x != "").join(" · ")
+fn listedEpisodeFacts(e: Episode, appleTv: bool): string = [match e.air_date { case some(d) => formatDate(d, 0, "medium"), case none => "Air date not announced" }, match e.runtime_minutes { case some(m) => `${m} min`, case none => "" }, appleTv ? "Watched on Apple TV" : ""].filter(x => x != "").join(" · ")
 fn titleFacts(t: Title): string = [text(t.year), match t.runtime_minutes { case some(m) => `${m} min`, case none => "" }, t.genres.join(", ")].filter(x => x != "").join(" · ")
 fn offerLabel(k: string): string = k == "stream" ? "Stream" : k == "free" ? "Free" : k == "ads" ? "Free with ads" : k == "rent" ? "Rent" : "Buy"
 fn uniq(xs: string[]): string[] = range(xs.length).filter(i => xs.indexOf(text(xs.at(i))) == i).map(i => text(xs.at(i)))
@@ -1195,8 +1199,6 @@ component ReleaseSection
             text c color="text.muted"
         case none
 
-// A season's episodes. An episode not yet watched keeps its summary and still
-// blurred, as the web's spoiler guard does.
 // A title's scores, preferred first and larger, each a ring beside its source
 // and note, as the web's title page lays them out.
 component RatingRings
@@ -1260,12 +1262,16 @@ component ScoreRing
           align-items="center" justify-content="center" background-color="score.imdb" aria-hidden=true
           text "IMDb" font-size=(size * 0.17) font-weight=900 color="score.imdb-ink" white-space="nowrap"
 
+// A season's episodes. An episode not yet watched keeps its summary, score and
+// still blurred, as the web's spoiler guard does; tapping its summary peeks at
+// them until it's tapped again or another episode is peeked at.
 component SeasonScreen
   props
     navKey: string
     id: string
     n: string
   resource s = season(id, n) as shape Season
+  state peekEp = -1
   // As on TitleScreen, the last mark's reply is the show's watched marks after it.
   mutation marked as shape SeasonWatched queue refreshes s
   derive w = match marked { case some(m) => m, case none => s.watched }
@@ -1273,6 +1279,8 @@ component SeasonScreen
     send marked = setSeasonWatched(id, n, not seasonSeen(w, s.number))
   action toggleEpisode(ep: number)
     send marked = setEpisodeWatched(id, n, ep, not seen(w, s.number, ep))
+  action peekAt(ep: number)
+    peekEp = peekEp == ep ? -1 : ep
   view
     column navigationKey=navKey navigationScroll="season" position="absolute" inset=0
       display="flex" flex-direction="column"
@@ -1323,7 +1331,7 @@ component SeasonScreen
                   match ep.rating
                     case some(r)
                       column testId=`rating-${ep.number}`
-                        filter=(seen(w, s.number, ep.number) ? "none" : "blur(5px)")
+                        filter=(seen(w, s.number, ep.number) or peekEp == ep.number ? "none" : "blur(5px)")
                         ScoreRing(score=r, size=28)
                     case none
                   button press=toggleEpisode(ep.number) aria-pressed=seen(w, s.number, ep.number)
@@ -1333,7 +1341,7 @@ component SeasonScreen
                       text "Watched" font="-exact-footnote" color="mark.watched"
                     else
                       text "Mark Watched" font="-exact-footnote"
-                text listedEpisodeFacts(ep) font="-exact-footnote" color="text.muted" testId=`episode-facts-${ep.number}`
+                text listedEpisodeFacts(ep, fromAppleTv(w, s.number, ep.number)) font="-exact-footnote" color="text.muted" testId=`episode-facts-${ep.number}`
                 // A watched episode's still opens full size; an unwatched one stays
                 // blurred and shut, so the spoiler guard holds.
                 if seen(w, s.number, ep.number) and text(ep.still_url) != ""
@@ -1341,10 +1349,16 @@ component SeasonScreen
                     image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
                 else
                   image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
-                    filter=(seen(w, s.number, ep.number) ? "none" : "blur(14px)")
-                text text(ep.overview) font="-exact-subheadline"
-                  filter=(seen(w, s.number, ep.number) ? "none" : "blur(5px)")
-                  testId=`overview-${ep.number}`
+                    filter=(seen(w, s.number, ep.number) or peekEp == ep.number ? "none" : "blur(14px)")
+                if seen(w, s.number, ep.number) or text(ep.overview) == ""
+                  text text(ep.overview) font="-exact-subheadline" testId=`overview-${ep.number}`
+                else
+                  button press=peekAt(ep.number) aria-pressed=(peekEp == ep.number) text-align="start"
+                    aria-label=(peekEp == ep.number ? text(ep.overview) : `Episode ${ep.number} summary, hidden. Peek`)
+                    testId=`peek-${ep.number}`
+                    text text(ep.overview) font="-exact-subheadline" color="text.primary"
+                      filter=(peekEp == ep.number ? "none" : "blur(5px)")
+                      testId=`overview-${ep.number}`
 
 // To watch, Favorite and Watched on a movie or show, as the web's detail page
 // toggles them. Each press flips one mark; the screen re-reads the title after.
@@ -1599,7 +1613,8 @@ component Notice
 
 // An episode: still, air date, runtime, score, crew, overview, a pager to its
 // neighbours, then guest stars and series cast. Until the episode is watched
-// (itself, its season or the show) its still, score and summary stay blurred.
+// (itself, its season or the show) its still, score and summary stay blurred;
+// Peek shows them until pressed again. Mark Watched flips the episode's own mark.
 component EpisodeScreen
   props
     navKey: string
@@ -1607,6 +1622,16 @@ component EpisodeScreen
     n: string
     e: string
   resource ep = episode(id, n, e) as shape EpisodeDetail
+  // As on SeasonScreen, the last mark's reply is the show's watched marks after it.
+  mutation marked as shape SeasonWatched queue refreshes ep
+  state peek = false
+  derive w = match marked { case some(m) => m, case none => ep.watched }
+  derive watched = current(ep) and seen(w, ep.season_number, ep.number)
+  derive shown = watched or peek
+  action toggleWatched
+    send marked = setEpisodeWatched(id, n, ep.number, not watched)
+  action togglePeek
+    peek = not peek
   view
     column navigationKey=navKey navigationScroll="episode" position="absolute" inset=0
       display="flex" flex-direction="column"
@@ -1628,26 +1653,39 @@ component EpisodeScreen
             column gap=8 padding-top=12 padding-bottom=12 background-color="surface.card"
               if text(ep.still_url) == ""
                 column width="100%" aspect-ratio="16 / 9" border-radius=8 background-color="surface.thumb"
-              else if seen(ep.watched, ep.season_number, ep.number)
+              else if shown
                 link href=photoPath(text(ep.still_url)) aria-label=`Still from ${ep.title}, full size` testId="still"
                   image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
               else
                 image text(ep.still_url) aria-label=`Still from ${ep.title}` width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
-                  filter=(seen(ep.watched, ep.season_number, ep.number) ? "none" : "blur(14px)") testId="still"
+                  filter="blur(14px)" testId="still"
               text `${ep.show_title} · ${ep.season_name} · Episode ${ep.number}` font="-exact-footnote" color="text.muted"
               row gap=8 flex-wrap="wrap"
                 text episodeFacts(ep) color="text.muted" flex=1 flex-basis="10rem" testId="facts"
-                if seen(ep.watched, ep.season_number, ep.number)
-                  text "Watched" font="-exact-footnote" color="mark.watched" testId="watched"
+                if watched
+                  text (fromAppleTv(w, ep.season_number, ep.number) ? "Watched on Apple TV" : "Watched")
+                    font="-exact-footnote" color="mark.watched" testId="watched"
               text episodeScore(ep) font="-exact-headline" testId="episode-score"
-                filter=(seen(ep.watched, ep.season_number, ep.number) or scoreOf(ep.rating) == "" ? "none" : "blur(6px)")
+                filter=(shown or scoreOf(ep.rating) == "" ? "none" : "blur(6px)")
               for k in ep.key_crew key=k.role
                 text `${keyRole(k.role)} ${k.people.map(p => p.name).join(", ")}` font="-exact-footnote"
             if text(ep.overview) == ""
               text "No summary available." padding-top=8 padding-bottom=8 color="text.muted" background-color="surface.card"
             else
               text text(ep.overview) padding-top=8 padding-bottom=8 testId="episode-overview" background-color="surface.card"
-                filter=(seen(ep.watched, ep.season_number, ep.number) ? "none" : "blur(5px)")
+                filter=(shown ? "none" : "blur(5px)")
+          section
+            row gap=8 align-items="center" flex-wrap="wrap" background-color="surface.card"
+              button press=toggleWatched buttonStyle="bordered" aria-pressed=watched
+                disabled=pending(marked) testId="mark-episode"
+                image (watched ? "symbol:checkmark" : "symbol:circle")
+                text "Watched"
+              if not watched
+                button press=togglePeek aria-pressed=peek testId="peek"
+                  text (peek ? "Hide Spoilers" : "Peek at Spoilers")
+            if failed(marked) and not pending(marked)
+              text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite"
+                background-color="surface.card" testId="mark-error"
           if ep.previous != none or ep.next != none
             section
               match ep.previous
