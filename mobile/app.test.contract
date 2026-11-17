@@ -399,6 +399,23 @@ test "an episode watched with its season shows its spoilers and both neighbours"
   expect text "facts" == "Not announced"
   expect text "episode-score" == "Ratings unavailable"
 
+test "a season pages to its neighbouring seasons"
+  at "/tv/1396/season/2"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/2" with 200 {"show_title":"Breaking Bad","number":2,"name":"Season 2","episodes":[],"previous":{"number":1,"name":"Season 1","year":"2008","episode_count":7,"poster_url":null},"next":{"number":3,"name":"Season 3","year":"2010","episode_count":null,"poster_url":null},"watched":{"state":"read","show":false,"seasons":[],"episodes":[]}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/3" with 200 {"show_title":"Breaking Bad","number":3,"name":"Season 3","episodes":[],"previous":{"number":2,"name":"Season 2","year":"2009","episode_count":13,"poster_url":null},"next":null,"watched":{"state":"read","show":false,"seasons":[],"episodes":[]}}
+  expect text "previous-season" == "Season 1"
+  expect text "next-season" == "Season 3"
+  tap "next-season"
+  expect text "season-title" == "Breaking Bad: Season 3"
+
+test "the last season pages back but not forward"
+  at "/tv/1396/season/3"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/3" with 200 {"show_title":"Breaking Bad","number":3,"name":"Season 3","episodes":[],"previous":{"number":2,"name":"Season 2","year":"2009","episode_count":13,"poster_url":null},"next":null,"watched":{"state":"read","show":false,"seasons":[],"episodes":[]}}
+  expect text "previous-season" == "Season 2"
+  expect tree missing "next-season"
+
 test "an episode the server can't load says so"
   at "/tv/1396/season/1/episode/1"
   fail fetch "https://credits.jallen7usa.com/api/recent"

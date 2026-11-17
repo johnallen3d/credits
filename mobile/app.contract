@@ -190,11 +190,18 @@ shape SeasonWatched
   seasons: number[]
   episodes: EpisodeRef[]
 
+// A neighbouring season, for the season pager.
+shape SeasonLink
+  number: number
+  name: string
+
 shape Season
   show_title: string
   number: number
   name: string
   episodes: Episode[]
+  previous: option<SeasonLink>
+  next: option<SeasonLink>
   watched: SeasonWatched
   metadata: option<Metadata>
 
@@ -1291,6 +1298,20 @@ component SeasonScreen
             if failed(marked) and not pending(marked)
               text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite"
                 background-color="surface.card" testId="mark-error"
+          if s.previous != none or s.next != none
+            section
+              match s.previous
+                case some(p)
+                  link href=path("season", id, `${p.number}`) testId="previous-season" background-color="surface.card"
+                    image "symbol:back" color="text.muted"
+                    text p.name flex=1
+                case none
+              match s.next
+                case some(x)
+                  link href=path("season", id, `${x.number}`) testId="next-season" background-color="surface.card"
+                    text x.name flex=1
+                    image "symbol:forward-chevron" color="text.muted"
+                case none
           section
             for ep in s.episodes key=`${ep.number}`
               column gap=6 padding-top=10 padding-bottom=10 testId=`episode-${ep.number}` background-color="surface.card"
