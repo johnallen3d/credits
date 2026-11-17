@@ -608,3 +608,68 @@ test "a movie in theaters says so on search results"
   expect text "hit-movie-7-in-theaters" == "In theaters"
   expect tree missing "hit-movie-8-in-theaters"
   expect tree missing "hit-tv-9-in-theaters"
+
+test "a title result adds to To Watch and Favorites from the search screen"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/search?q=matrix" with 200 {"query":"matrix","results":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","overview":null,"poster_url":null,"in_theaters":false},{"kind":"tv","id":9,"title":"Matrix Show","year":"2001","overview":null,"poster_url":null,"in_theaters":false},{"kind":"person","id":6384,"name":"Keanu Reeves","known_for_department":"Acting","known_for":[],"profile_url":null}]}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[{"kind":"tv","id":9,"title":"Matrix Show"}]}
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603/favorite" with 200 {"marks":{"to_watch":false,"favorite":true,"watched":false}}
+  tap "tab-search"
+  clock settle
+  type "search" "matrix"
+  clock data
+  clock settle
+  expect tree has "hit-tv-9-to-watch-on"
+  expect tree has "hit-movie-603-to-watch-off"
+  expect tree has "hit-movie-603-favorite-off"
+  expect tree missing "hit-person-6384-to-watch"
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[{"kind":"movie","id":603,"title":"The Matrix"}]}
+  tap "hit-movie-603-favorite"
+  clock data
+  clock settle
+  expect tree has "hit-movie-603-favorite-on"
+  expect enabled "hit-movie-603-favorite"
+  expect tree missing "hit-mark-error"
+
+test "search results hold Favorite when Favorites can't be read, and say when a mark fails"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/search?q=matrix" with 200 {"query":"matrix","results":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","overview":null,"poster_url":null,"in_theaters":false}]}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[]}
+  fail fetch "https://credits.jallen7usa.com/api/favorites?sort=added"
+  fail fetch "https://credits.jallen7usa.com/api/movie/603/watchlist"
+  tap "tab-search"
+  clock settle
+  type "search" "matrix"
+  clock data
+  clock settle
+  expect disabled "hit-movie-603-favorite"
+  expect enabled "hit-movie-603-to-watch"
+  tap "hit-movie-603-to-watch"
+  clock data
+  clock settle
+  expect tree has "hit-mark-error"
+
+test "search results show a mark made on the title's page"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/search?q=matrix" with 200 {"query":"matrix","results":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","overview":null,"poster_url":null,"in_theaters":false}]}
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603/watchlist" with 200 {"marks":{"to_watch":true,"favorite":false,"watched":false}}
+  tap "tab-search"
+  clock settle
+  type "search" "matrix"
+  clock data
+  clock settle
+  expect tree has "hit-movie-603-to-watch-off"
+  tap "hit-movie-603"
+  clock data
+  clock settle
+  answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[{"kind":"movie","id":603,"title":"The Matrix"}]}
+  tap "mark-to-watch"
+  clock data
+  tap "tab-search"
+  clock data
+  clock settle
+  expect tree has "hit-movie-603-to-watch-on"

@@ -489,6 +489,8 @@ fn fromHit(h: Hit): Tile = Tile(kind=h.kind, id=`${h.id}`, label=label(h), pictu
 fn knownForList(h: Hit): string = match h.known_for { case some(ks) => ks.map(k => match k.year { case some(y) => `${k.title} (${y})`, case none => k.title }).join(", "), case none => "" }
 fn personLine(dept: string, titles: string): string = dept != "" and titles != "" ? `${dept} · known for ${titles}` : dept != "" ? dept : titles != "" ? `Known for ${titles}` : ""
 fn hitSummary(h: Hit): string = h.kind == "person" ? personLine(text(h.known_for_department), knownForList(h)) : text(h.overview)
+// A list's titles as `kind-id`, to mark search results already on it.
+fn entryKeys(l: SavedList): string[] = l.titles.map(e => `${e.kind}-${e.id}`)
 fn fromRecent(r: Recent): Tile = Tile(kind=r.kind, id=`${r.id}`, label=r.name, picture=text(r.image_url), year=text(r.year))
 fn kindName(k: string): string = k == "movie" ? "Movie" : k == "tv" ? "TV" : "Person"
 fn scoreOf(o: option<Score>): string = match o {
@@ -625,6 +627,15 @@ component App
   state query = ""
   state asked = ""
   resource hits = search(asked) when asked != "" as shape Hit[] else empty()
+  // To Watch and Favorites, read while searching to mark each title result, as the
+  // web's results are. Each is asked again whenever the search screen comes back.
+  resource toWatchList = savedList("watchlist", "added") when asked != "" as shape SavedList
+  resource favoritesList = savedList("favorites", "added") when asked != "" as shape SavedList
+  mutation hitMarked as shape Marks queue refreshes toWatchList, favoritesList
+  derive toWatchKnown = current(toWatchList) and not failed(toWatchList)
+  derive favoritesKnown = current(favoritesList) and not failed(favoritesList)
+  derive toWatchKeys = toWatchKnown ? entryKeys(toWatchList) : []
+  derive favoriteKeys = favoritesKnown ? entryKeys(favoritesList) : []
   resource recents = recent() as shape Recent[] else empty()
   mutation viewed as shape Recent[] refreshes recents
   // The releases screen's pages, one request each: More asks for the next.
@@ -633,6 +644,8 @@ component App
 
   task scheme when theme != "" key=theme
     change(applyScheme)
+  task searchShown when top(nav).name == "search" key="search"
+    change(refreshMarks)
   task opened when top(nav).name == "movie" or top(nav).name == "tv" or top(nav).name == "person" key=top(nav).id
     change(record)
 
@@ -641,6 +654,13 @@ component App
     asked = v.trim()
   action retry
     refresh hits
+  action refreshMarks
+    refresh toWatchList
+    refresh favoritesList
+  action markToWatch(kind: string, id: string, listed: bool)
+    send hitMarked = setToWatch(kind, id, listed)
+  action markFavorite(kind: string, id: string, listed: bool)
+    send hitMarked = setFavorite(kind, id, listed)
   action back
     nav = back(nav)
   action pick(name: string)
@@ -710,10 +730,16 @@ component App
                   else
                     scroll id="hits" flex=1 min-height=0 background-color="surface.page"
                       column gap=24 padding="8px 0 32px"
+                        if failed(hitMarked) and not pending(hitMarked)
+                          text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite"
+                            padding="0 16px" role="status" testId="hit-mark-error"
                         if hits.filter(h => h.kind == "person").length > 0
-                          HitList(heading="People", hits=hits.filter(h => h.kind == "person"))
+                          HitList(heading="People", hits=hits.filter(h => h.kind == "person"), toWatchKeys=[], favoriteKeys=[],
+                            toWatchKnown=false, favoritesKnown=false, busy=false, toWatch=markToWatch, favorite=markFavorite)
                         if hits.filter(h => h.kind != "person").length > 0
-                          HitList(heading="Movies & TV", hits=hits.filter(h => h.kind != "person"))
+                          HitList(heading="Movies & TV", hits=hits.filter(h => h.kind != "person"), toWatchKeys=toWatchKeys,
+                            favoriteKeys=favoriteKeys, toWatchKnown=toWatchKnown, favoritesKnown=favoritesKnown,
+                            busy=pending(hitMarked), toWatch=markToWatch, favorite=markFavorite)
               if e.name == "services"
                 ServicesScreen(navKey=`${e.id}`)
               if e.name == "movie"
@@ -842,17 +868,28 @@ component TileLink
 
 // A section of search results: each hit's artwork, name, type and year, and its
 // overview or known-for line, as the web and macOS results show them, with In theaters
-// on a movie playing now.
+// on a movie playing now. A movie or show has To Watch and Favorite beside it; each
+// waits for its list to be read (`toWatchKeys` and `favoriteKeys`), and all wait
+// while a mark is saving.
 component HitList
   props
     heading: string
     hits: Hit[]
+    toWatchKeys: string[]
+    favoriteKeys: string[]
+    toWatchKnown: bool
+    favoritesKnown: bool
+    busy: bool
+    toWatch: action
+    favorite: action
   view
     column gap=12
       text heading role="heading" aria-level=2 padding="0 16px" font="-exact-title3" font-weight=700
       column gap=16 padding="0 16px"
         for h in hits key=`${h.kind}-${h.id}`
-          HitRow(testId=`hit-${h.kind}-${h.id}`, tile=fromHit(h), summary=hitSummary(h), inTheaters=yes(h.in_theaters))
+          HitRow(testId=`hit-${h.kind}-${h.id}`, tile=fromHit(h), summary=hitSummary(h), inTheaters=yes(h.in_theaters),
+            onToWatch=toWatchKeys.includes(`${h.kind}-${h.id}`), onFavorites=favoriteKeys.includes(`${h.kind}-${h.id}`),
+            toWatchKnown=toWatchKnown, favoritesKnown=favoritesKnown, busy=busy, toWatch=toWatch, favorite=favorite)
 
 component HitRow
   props
@@ -860,27 +897,45 @@ component HitRow
     tile: Tile
     summary: string
     inTheaters: bool
+    onToWatch: bool
+    onFavorites: bool
+    toWatchKnown: bool
+    favoritesKnown: bool
+    busy: bool
+    toWatch: action
+    favorite: action
   derive kind = tile.kind
   derive id = tile.id
   derive year = tile.year
   view
-    link href=(kind == "movie" ? path("movie", id) : kind == "tv" ? path("tv", id) : path("person", id))
-      display="flex" align-items="flex-start" gap=12 testId=testId
-      aria-label=[tile.label, kindName(kind), year, inTheaters ? "in theaters" : ""].filter(x => x != "").join(", ")
-      if tile.picture == ""
-        column width=60 height=(kind == "person" ? 60 : 90) flex-shrink=0 border-radius=(kind == "person" ? "50%" : "8px")
-          background-color="surface.thumb" align-items="center" justify-content="center"
-          image (kind == "person" ? "symbol:person" : "symbol:photo") color="text.muted" width=22 height=22
-      else
-        image tile.picture aria-label="" width=60 height=(kind == "person" ? 60 : 90) flex-shrink=0
-          border-radius=(kind == "person" ? "50%" : "8px") object-fit="cover" background-color="surface.thumb"
-      column flex=1 min-width=0 gap=2
-        text tile.label font="-exact-subheadline" font-weight=600 line-clamp=2
-        text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-caption1" color="text.muted"
-        if inTheaters
-          text "In theaters" font="-exact-caption1" color="accent" testId=`${testId}-in-theaters`
-        if summary != ""
-          text summary font="-exact-footnote" color="text.muted" line-clamp=3 testId=`${testId}-summary`
+    row align-items="flex-start" gap=8
+      link href=(kind == "movie" ? path("movie", id) : kind == "tv" ? path("tv", id) : path("person", id))
+        display="flex" align-items="flex-start" gap=12 flex=1 min-width=0 testId=testId
+        aria-label=[tile.label, kindName(kind), year, inTheaters ? "in theaters" : ""].filter(x => x != "").join(", ")
+        if tile.picture == ""
+          column width=60 height=(kind == "person" ? 60 : 90) flex-shrink=0 border-radius=(kind == "person" ? "50%" : "8px")
+            background-color="surface.thumb" align-items="center" justify-content="center"
+            image (kind == "person" ? "symbol:person" : "symbol:photo") color="text.muted" width=22 height=22
+        else
+          image tile.picture aria-label="" width=60 height=(kind == "person" ? 60 : 90) flex-shrink=0
+            border-radius=(kind == "person" ? "50%" : "8px") object-fit="cover" background-color="surface.thumb"
+        column flex=1 min-width=0 gap=2
+          text tile.label font="-exact-subheadline" font-weight=600 line-clamp=2
+          text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-caption1" color="text.muted"
+          if inTheaters
+            text "In theaters" font="-exact-caption1" color="accent" testId=`${testId}-in-theaters`
+          if summary != ""
+            text summary font="-exact-footnote" color="text.muted" line-clamp=3 testId=`${testId}-summary`
+      if kind != "person"
+        column gap=4 flex-shrink=0
+          button press=toWatch(kind, id, not onToWatch) aria-pressed=onToWatch disabled=(busy or not toWatchKnown)
+            aria-label=`To Watch: ${tile.label}` testId=`${testId}-to-watch` padding=8
+            image (onToWatch ? "symbol:bookmark-fill" : "symbol:bookmark") color="accent" width=22 height=22
+              testId=`${testId}-to-watch-${onToWatch ? "on" : "off"}`
+          button press=favorite(kind, id, not onFavorites) aria-pressed=onFavorites disabled=(busy or not favoritesKnown)
+            aria-label=`Favorite: ${tile.label}` testId=`${testId}-favorite` padding=8
+            image (onFavorites ? "symbol:heart-fill" : "symbol:heart") color=(onFavorites ? "mark.favorite" : "accent") width=22 height=22
+              testId=`${testId}-favorite-${onFavorites ? "on" : "off"}`
 
 component Thumb
   props
