@@ -50,7 +50,7 @@ final class LauncherModel {
 
     /// List state per title, from its detail or the last change.
     var marks: [SearchHit: TitleMarks] = [:]
-    /// Titles with a list change in flight.
+    /// Titles with a list change in flight, and episodes with a watched change.
     var changing: Set<SearchHit> = []
     /// A one-line result of the last list action.
     var flash: Flash?
@@ -299,7 +299,17 @@ final class LauncherModel {
     /// The title a list shortcut applies to: the one in detail, else the selected result.
     var listTarget: SearchHit? { detailHit ?? selection }
 
+    /// The episode selected on the season in detail, which ⌘W marks watched.
+    var selectedEpisode: SearchHit? {
+        guard let row = detailRow.flatMap({ detail?.rows[safe: $0] }), row.kind == .episode else { return nil }
+        return row
+    }
+
     func toggle(_ list: ListAction) {
+        if list == .watched, let episode = selectedEpisode {
+            toggleWatched(episode)
+            return
+        }
         guard let hit = listTarget else { return }
         guard hit.isTitle else {
             show(hit.kind == .season ? "Go back to the show to change its lists" : "Only movies and shows go on lists",
@@ -325,6 +335,30 @@ final class LauncherModel {
             } catch is CancellationError {
             } catch {
                 show("Couldn't update \(list.name): \(error.localizedDescription)", failed: true)
+            }
+        }
+    }
+
+    /// Flips an episode's watched mark on the season in detail, then shows the
+    /// show's marks the server answers with.
+    private func toggleWatched(_ episode: SearchHit) {
+        guard case .season(let season) = detail, let number = episode.episode,
+              !changing.contains(episode) else { return }
+        let on = !(season.watched?.episode(season.number, number) ?? false)
+        let page = detailHit
+        changing.insert(episode)
+        Task {
+            defer { changing.remove(episode) }
+            do {
+                let marks = try await api.setEpisodeWatched(season.showId, season.number, number, on)
+                if detailHit == page, case .season(var current) = detail {
+                    current.watched = marks
+                    detail = .season(current)
+                }
+                show("\(on ? "Marked watched" : "Unmarked watched"): \(number). \(episode.displayName)", failed: false)
+            } catch is CancellationError {
+            } catch {
+                show("Couldn't update Watched: \(error.localizedDescription)", failed: true)
             }
         }
     }

@@ -781,6 +781,7 @@ struct FooterView: View {
             if lists && !inDetail { hint("⌘T ⌘F ⌘W", "To watch, Favorites, Watched") }
             if inDetail {
                 if selectedRow?.kind == .episode {
+                    hint("⌘W", "Watched")
                     hint("⏎", "Open in browser")
                 } else if selectedRow != nil {
                     hint("⏎", "Open")
