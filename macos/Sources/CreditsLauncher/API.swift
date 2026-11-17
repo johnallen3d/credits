@@ -118,6 +118,8 @@ struct TitleDetail: Decodable {
     let backdropUrl: String?
     let ratings: Ratings?
     let whereToWatch: WhereToWatch?
+    /// Movies in theaters only: where to look up showtimes.
+    let showtimesUrl: String?
     let keyCrew: [KeyCrew]
     let cast: [Credit]
     let metadata: Metadata

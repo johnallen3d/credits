@@ -385,7 +385,21 @@ struct TitleDetailView: View {
                     Text(title.title).font(.title.bold())
                     Text(facts).foregroundStyle(Theme.muted)
                     ReleaseDatesView(dates: title.releases?.dates ?? [])
-                    ListMarksView(marks: marks, changing: changing)
+                    HStack(spacing: 6) {
+                        ListMarksView(marks: marks, changing: changing)
+                        if let url = title.showtimesUrl {
+                            Button { model.openLink(url) } label: {
+                                Label("Showtimes", systemImage: "ticket")
+                                    .font(.callout)
+                                    .foregroundStyle(Theme.accent)
+                                    .padding(.horizontal, 8).padding(.vertical, 3)
+                                    .overlay(Capsule().stroke(Theme.accent))
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Look up showtimes in the browser")
+                        }
+                    }
                     RecommendedByView(model: model, changing: changing)
                     if !ratings.isEmpty {
                         HStack {

@@ -474,6 +474,13 @@ final class LauncherModel {
         close()
     }
 
+    /// Opens a link out, like a movie's showtimes, in the browser.
+    func openLink(_ url: String) {
+        guard let url = URL(string: url) else { return }
+        NSWorkspace.shared.open(url)
+        close()
+    }
+
     /// The title a list shortcut applies to: the credit selected on a person's
     /// page, else the one in detail, else the selected result.
     var listTarget: SearchHit? {
