@@ -50,8 +50,17 @@ final class LauncherModel {
     var detailHit: SearchHit?
     var detail: Detail?
     var detailError: String?
-    /// The selected credit on the page in detail, an index into `detail.rows`.
+    /// The selected credit on the page in detail, an index into `detailRows`.
     var detailRow: Int?
+    /// On a person's page: the filmography's Show filter, Movies or TV (nil for all).
+    var personKind: Kind? {
+        didSet { if personKind != oldValue { detailRow = nil } }
+    }
+    /// On a person's page: whether another sort is loading, and why the last one failed.
+    var personSorting = false
+    var personSortError: String?
+    /// On a person's page: the lists whose marks couldn't be read for its credits.
+    var personListsUnread: [ListAction] = []
     /// The pages behind the one in detail, oldest first.
     var back: [Page] = []
     /// Bumped on every page change, so the view starts each page at its top.
@@ -62,7 +71,12 @@ final class LauncherModel {
         let detail: Detail?
         let error: String?
         let row: Int?
+        var kind: Kind? = nil
+        var listsUnread: [ListAction] = []
     }
+
+    /// The rows of the page in detail, as `Detail.rows` numbers them.
+    var detailRows: [SearchHit] { detail?.rows(kind: personKind) ?? [] }
 
     /// Summaries for rows whose list didn't carry one (Recently viewed), from each
     /// page's detail, fetched as the row first shows.
@@ -88,6 +102,7 @@ final class LauncherModel {
 
     private var searchTask: Task<Void, Never>?
     private var detailTask: Task<Void, Never>?
+    private var sortTask: Task<Void, Never>?
     private var flashTask: Task<Void, Never>?
     private var homeTasks: [HomeTab: Task<Void, Never>] = [:]
 
@@ -274,7 +289,7 @@ final class LauncherModel {
     func move(_ delta: Int) {
         if detailHit != nil {
             // Up from the first credit returns to the top of the page.
-            let count = detail?.rows.count ?? 0
+            let count = detailRows.count
             guard count > 0 else { return }
             let next = (detailRow ?? -1) + delta
             detailRow = next < 0 ? nil : min(count - 1, next)
@@ -296,12 +311,13 @@ final class LauncherModel {
     /// Opens a row on the page in detail, keeping that page to go back to.
     /// Episodes have no page here, so they open on the web.
     func openRow(_ index: Int) {
-        guard let hit = detailHit, let row = detail?.rows[safe: index] else { return }
+        guard let hit = detailHit, let row = detailRows[safe: index] else { return }
         if row.kind == .episode {
             openInBrowser(row)
             return
         }
-        back.append(Page(hit: hit, detail: detail, error: detailError, row: index))
+        back.append(Page(hit: hit, detail: detail, error: detailError, row: index, kind: personKind,
+                         listsUnread: personListsUnread))
         load(row)
     }
 
@@ -317,9 +333,12 @@ final class LauncherModel {
             return
         }
         detailTask?.cancel()
+        resetPerson()
         detailHit = page.hit
         detail = page.detail
         detailError = page.error
+        personKind = page.kind
+        personListsUnread = page.listsUnread
         detailRow = page.row
         pageID += 1
     }
@@ -348,6 +367,7 @@ final class LauncherModel {
 
     private func load(_ hit: SearchHit) {
         detailTask?.cancel()
+        resetPerson()
         tagDraft = ""
         detailHit = hit
         detail = nil
@@ -363,6 +383,7 @@ final class LauncherModel {
                     marks[hit] = m
                     if m.toWatch == true { loadKnownTags() }
                 }
+                if case .person(let p) = d { await loadListMarks(p) }
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
@@ -371,8 +392,63 @@ final class LauncherModel {
         }
     }
 
+    /// Forgets the person page's filter, sort in flight and unread lists.
+    private func resetPerson() {
+        sortTask?.cancel()
+        sortTask = nil
+        personKind = nil
+        personSorting = false
+        personSortError = nil
+        personListsUnread = []
+    }
+
+    /// Reads To watch and Favorites to mark the person's credits, as the web
+    /// does: the person's page carries no marks. A list that can't be read
+    /// leaves its marks unknown, and ⌘T or ⌘F reads the title's own first.
+    private func loadListMarks(_ p: PersonDetail) async {
+        async let toWatch = try? api.watchlist(sort: .added)
+        async let favorites = try? api.favorites()
+        let (w, f) = await (toWatch, favorites)
+        guard !Task.isCancelled else { return }
+        let key = { (e: ListEntry) in SearchHit(kind: e.kind, id: e.id) }
+        let listed = w.map { Set($0.titles.map(key)) }
+        let favored = f.map { Set($0.titles.map(key)) }
+        for c in p.knownForTitles + p.filmography.flatMap(\.entries) {
+            let hit = c.hit
+            var m = marks[hit] ?? TitleMarks()
+            if let listed { m.toWatch = listed.contains(hit) }
+            if let favored { m.favorite = favored.contains(hit) }
+            marks[hit] = m
+        }
+        personListsUnread = (listed == nil ? [.toWatch] : []) + (favored == nil ? [.favorite] : [])
+    }
+
+    /// Asks for the person in detail's credits in another order, keeping the
+    /// current order on screen until it's back, and after a failure.
+    func sortPerson(_ sort: FilmographySort) {
+        guard let hit = detailHit, case .person(let p) = detail, p.sort != sort.rawValue else { return }
+        sortTask?.cancel()
+        personSorting = true
+        personSortError = nil
+        sortTask = Task {
+            do {
+                let sorted = try await api.person(p.id, sort: sort)
+                guard !Task.isCancelled, detailHit == hit else { return }
+                detail = .person(sorted)
+                detailRow = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                personSortError = error.localizedDescription
+            }
+            personSorting = false
+        }
+    }
+
     func backToResults() {
         detailTask?.cancel()
+        resetPerson()
         detailHit = nil
         detail = nil
         detailError = nil
@@ -385,21 +461,26 @@ final class LauncherModel {
         close()
     }
 
-    /// The title a list shortcut applies to: the one in detail, else the selected result.
-    var listTarget: SearchHit? { detailHit ?? selection }
+    /// The title a list shortcut applies to: the credit selected on a person's
+    /// page, else the one in detail, else the selected result.
+    var listTarget: SearchHit? {
+        if case .person = detail, let row = detailRow.flatMap({ detailRows[safe: $0] }), row.isTitle { return row }
+        return detailHit ?? selection
+    }
 
     /// The episode selected on the season in detail, which ⌘W marks watched.
     var selectedEpisode: SearchHit? {
-        guard let row = detailRow.flatMap({ detail?.rows[safe: $0] }), row.kind == .episode else { return nil }
+        guard let row = detailRow.flatMap({ detailRows[safe: $0] }), row.kind == .episode else { return nil }
         return row
     }
 
-    func toggle(_ list: ListAction) {
-        if list == .watched, let episode = selectedEpisode {
+    /// Flips a list for `hit`, a credit's button, or else the list shortcut's target.
+    func toggle(_ list: ListAction, hit row: SearchHit? = nil) {
+        if row == nil, list == .watched, let episode = selectedEpisode {
             toggleWatched(episode)
             return
         }
-        guard let hit = listTarget else { return }
+        guard let hit = row ?? listTarget else { return }
         guard hit.isTitle else {
             show(hit.kind == .season ? "Go back to the show to change its lists" : "Only movies and shows go on lists",
                  failed: true)
@@ -531,7 +612,7 @@ final class LauncherModel {
         if let hit = detailHit {
             // ⏎ opens the selected credit's page here; with none selected, and
             // with ⌘, it opens the selected credit, or the page itself, on the web.
-            if let index = detailRow, let row = detail?.rows[safe: index] {
+            if let index = detailRow, let row = detailRows[safe: index] {
                 if command { openInBrowser(row) } else { openRow(index) }
             } else {
                 openInBrowser(hit)

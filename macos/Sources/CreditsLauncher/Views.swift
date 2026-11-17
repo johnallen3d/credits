@@ -44,7 +44,7 @@ struct LauncherView: View {
             Rule()
             FooterView(inDetail: model.detailHit != nil,
                        home: model.showingHome,
-                       selectedRow: model.detailRow.flatMap { model.detail?.rows[safe: $0] },
+                       selectedRow: model.detailRow.flatMap { model.detailRows[safe: $0] },
                        canGoBack: !model.back.isEmpty,
                        lists: model.listTarget?.isTitle ?? false,
                        tags: model.detailTags != nil,
@@ -295,7 +295,7 @@ struct DetailContainer: View {
                             TitleDetailView(title: t, marks: model.marks[hit] ?? t.marks,
                                             changing: model.changing.contains(hit), credits: credits,
                                             model: model)
-                        case .person(let p): PersonDetailView(person: p, credits: credits)
+                        case .person(let p): PersonDetailView(person: p, credits: credits, model: model)
                         case .season(let s): SeasonDetailView(season: s, credits: credits)
                         }
                     }
@@ -314,7 +314,7 @@ struct DetailContainer: View {
 }
 
 /// The credits on a detail page: which one is selected, and how to open one.
-/// Rows are numbered as in `Detail.rows`.
+/// Rows are numbered as in `Detail.rows(kind:)`.
 struct Credits {
     let selected: Int?
     let open: (Int) -> Void
@@ -741,6 +741,7 @@ struct Still: View {
 struct PersonDetailView: View {
     let person: PersonDetail
     let credits: Credits
+    @Bindable var model: LauncherModel
 
     private var born: String? {
         let parts = [person.birthday.map { "Born \($0)" }, person.placeOfBirth].compactMap { $0 }
@@ -783,8 +784,142 @@ struct PersonDetailView: View {
                     }
                 }
             }
+            FilmographyView(person: person, credits: credits, model: model)
         }
     }
+}
+
+/// A person's full filmography by department, as the web's: sorted by date or
+/// rating, shown as All, Movies or TV with counts, and each credit with To watch
+/// and Favorite beside it. Rows follow the known-for titles in `Detail.rows`.
+struct FilmographyView: View {
+    let person: PersonDetail
+    let credits: Credits
+    @Bindable var model: LauncherModel
+
+    /// Each department shown with the row number of its first credit.
+    private var groups: [(group: FilmographyGroup, first: Int)] {
+        var next = person.knownForTitles.count
+        return person.groups(model.personKind).map { g in
+            defer { next += g.entries.count }
+            return (g, next)
+        }
+    }
+
+    private var sort: Binding<FilmographySort> {
+        Binding(get: { FilmographySort(rawValue: person.sort) ?? .date }, set: { model.sortPerson($0) })
+    }
+
+    /// Why scores are missing, or where unscored credits go, worded as on the web.
+    private var ratingNote: String? {
+        guard let r = person.sortRatings else { return nil }
+        switch r.unavailableReason {
+        case "not_configured": return "Ratings aren't configured on this server, so credits stay in date order."
+        case .some: return "Some ratings couldn't be loaded right now."
+        case nil:
+            if let since = r.staleSince { return "Ratings saved from \(shortDate(since)): OMDb isn't responding." }
+            if person.sort == "rating", let n = r.unrated, n > 0 {
+                return "Credits without a Rotten Tomatoes or IMDb score are listed last, newest first."
+            }
+            return nil
+        }
+    }
+
+    private var listsNote: String? {
+        let unread = model.personListsUnread
+        guard !unread.isEmpty else { return nil }
+        let names = unread.map(\.name).joined(separator: " and ")
+        return "\(names) couldn't be read, so \(unread.count == 1 ? "its" : "their") marks are unknown here. Changing one checks the title first."
+    }
+
+    var body: some View {
+        Section(heading: "Filmography") {
+            if person.filmography.isEmpty {
+                Text("TMDB has no credits listed for this person.").foregroundStyle(Theme.muted)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 14) {
+                        Picker("Sort", selection: sort) {
+                            ForEach(FilmographySort.allCases, id: \.self) { Text($0.name).tag($0) }
+                        }
+                        .fixedSize()
+                        Picker("Show", selection: $model.personKind) {
+                            ForEach([nil, Kind.movie, Kind.tv], id: \.self) { k in
+                                Text("\(k == nil ? "All" : k == .movie ? "Movies" : "TV") (\(person.count(k)))").tag(k)
+                            }
+                        }
+                        .fixedSize()
+                        if model.personSorting { ProgressView().controlSize(.small) }
+                    }
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .font(.callout)
+                    if let error = model.personSortError {
+                        note("Couldn't load that order (\(error)); showing the last one.", tint: Theme.love)
+                    } else if let ratingNote {
+                        note(ratingNote, tint: Theme.muted)
+                    }
+                    if let listsNote { note(listsNote, tint: Theme.love) }
+                    if groups.isEmpty {
+                        Text("No \(model.personKind == .tv ? "TV" : "movie") credits listed for this person.")
+                            .foregroundStyle(Theme.muted)
+                    }
+                    ForEach(groups, id: \.group.department) { g in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(g.group.department) (\(g.group.entries.count))")
+                                .font(.callout.bold()).foregroundStyle(Theme.muted)
+                            ForEach(Array(g.group.entries.enumerated()), id: \.offset) { i, c in
+                                credits.row(g.first + i) {
+                                    row(c, acting: g.group.isActing)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func note(_ text: String, tint: Color) -> some View {
+        Text(text).font(.callout).foregroundStyle(tint).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func row(_ c: PersonCredit, acting: Bool) -> some View {
+        let hit = c.hit
+        let marks = model.marks[hit]
+        let changing = model.changing.contains(hit)
+        let role = c.role.flatMap { $0.isEmpty ? nil : acting ? "as \($0)" : $0 }
+        let episodes = c.episodeCount.map { "\($0) episode\($0 == 1 ? "" : "s")" }
+        return HStack(spacing: 6) {
+            Text(c.year ?? "TBA").foregroundStyle(Theme.muted).frame(width: 38, alignment: .leading)
+            Image(systemName: c.kind == .tv ? "tv" : "film")
+                .font(.caption)
+                .foregroundStyle(Theme.color(for: c.kind))
+            Text(c.title).lineLimit(1).layoutPriority(1)
+            if let detail = [role, episodes].compactMap({ $0 }).joined(separator: " · ").nilIfEmpty {
+                Text("· \(detail)").foregroundStyle(Theme.muted).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if let r = c.rating { Text(r.label).font(.callout).foregroundStyle(Theme.muted) }
+            if changing { ProgressView().controlSize(.mini) }
+            ForEach([ListAction.toWatch, .favorite], id: \.self) { list in
+                let on = marks?[list]
+                Button { model.toggle(list, hit: hit) } label: {
+                    Image(systemName: on == true ? list.icon + ".fill" : list.icon)
+                        .foregroundStyle(on == true ? Theme.accent : on == nil ? Theme.subtle : Theme.muted)
+                        .frame(width: 18)
+                }
+                .buttonStyle(.plain)
+                .disabled(changing)
+                .help(on == nil ? "\(list.name): couldn't read; click to check and change"
+                                : "\(on! ? "Remove from" : "Add to") \(list.name)")
+            }
+        }
+    }
+}
+
+extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 /// Lays its children out in rows, wrapping to the width it's given.
@@ -902,6 +1037,7 @@ struct FooterView: View {
                     hint("⌘W", "Watched")
                     hint("⏎", "Open in browser")
                 } else if selectedRow != nil {
+                    if selectedRow!.isTitle { hint("⌘T ⌘F", "To watch, Favorites") }
                     hint("⏎", "Open")
                     hint("⌘⏎", "Open in browser")
                 } else {

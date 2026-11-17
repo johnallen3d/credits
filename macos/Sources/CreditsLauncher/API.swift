@@ -342,7 +342,31 @@ struct PersonDetail: Decodable {
     let placeOfBirth: String?
     let profileUrl: String?
     let knownForTitles: [PersonCredit]
+    /// By department, the main one first, each in `sort` order.
+    let filmography: [FilmographyGroup]
+    /// `date` (newest first) or `rating`.
+    let sort: String
+    /// How complete the credits' scores are.
+    let sortRatings: SortRatings?
     let metadata: Metadata
+
+    /// The departments' credits of one kind (nil for all), leaving out departments with none.
+    func groups(_ kind: Kind?) -> [FilmographyGroup] {
+        filmography.map { FilmographyGroup(department: $0.department, entries: $0.entries.filter { kind == nil || $0.kind == kind }) }
+            .filter { !$0.entries.isEmpty }
+    }
+
+    /// How many credits of a kind (nil for all) there are, as the web's Show filter counts them.
+    func count(_ kind: Kind?) -> Int {
+        filmography.reduce(0) { $0 + $1.entries.filter { kind == nil || $0.kind == kind }.count }
+    }
+}
+
+struct FilmographyGroup: Decodable, Hashable {
+    let department: String
+    let entries: [PersonCredit]
+
+    var isActing: Bool { department == "Acting" }
 }
 
 struct PersonCredit: Decodable, Hashable {
@@ -350,7 +374,21 @@ struct PersonCredit: Decodable, Hashable {
     let id: Int
     let title: String
     let year: String?
+    /// Characters for acting credits, job titles otherwise.
     let role: String?
+    let episodeCount: Int?
+    let posterUrl: String?
+    /// When sorted by rating: the score it was sorted by.
+    let rating: Rating?
+
+    var hit: SearchHit { SearchHit(kind: kind, id: id, title: title, year: year, posterUrl: posterUrl) }
+}
+
+/// How a person's filmography is ordered, which the server does.
+enum FilmographySort: String, CaseIterable {
+    case date, rating
+
+    var name: String { self == .date ? "Date" : "Rating" }
 }
 
 enum Detail {
@@ -362,9 +400,10 @@ enum Detail {
     static let castShown = 8
 
     /// The rows a page lists, in order: a title's key crew, seasons and cast;
-    /// a person's titles; or a season's neighbours and episodes. Each opens a
-    /// page of its own, except episodes, which open on the web.
-    var rows: [SearchHit] {
+    /// a person's known-for titles, then their credits of `kind` (nil for all) by
+    /// department; or a season's neighbours and episodes. Each opens a page of
+    /// its own, except episodes, which open on the web.
+    func rows(kind: Kind? = nil) -> [SearchHit] {
         switch self {
         case .title(let t):
             let person = { (c: Credit) in SearchHit(kind: .person, id: c.personId, name: c.name) }
@@ -372,7 +411,7 @@ enum Detail {
                 + (t.seasonList ?? []).map { SearchHit(kind: .season, id: t.id, title: $0.name, season: $0.number) }
                 + t.cast.prefix(Self.castShown).map(person)
         case .person(let p):
-            return p.knownForTitles.map { SearchHit(kind: $0.kind, id: $0.id, title: $0.title, year: $0.year) }
+            return p.knownForTitles.map(\.hit) + p.groups(kind).flatMap(\.entries).map(\.hit)
         case .season(let s):
             return [s.previous, s.next].compactMap { $0 }
                 .map { SearchHit(kind: .season, id: s.showId, title: $0.name, season: $0.number) }
@@ -501,6 +540,13 @@ struct CreditsAPI {
         return results.results
     }
 
+    /// A person's page with their filmography in `sort` order.
+    func person(_ id: Int, sort: FilmographySort) async throws -> PersonDetail {
+        var url = URLComponents(url: base.appendingPathComponent("api/person/\(id)"), resolvingAgainstBaseURL: false)!
+        url.queryItems = [URLQueryItem(name: "sort", value: sort.rawValue)]
+        return try await get(url.url!)
+    }
+
     func detail(_ hit: SearchHit) async throws -> Detail {
         let url = base.appendingPathComponent("api/" + path(hit))
         switch hit.kind {
@@ -513,6 +559,10 @@ struct CreditsAPI {
 
     func recent() async throws -> RecentViews {
         try await get(base.appendingPathComponent("api/recent"))
+    }
+
+    func favorites() async throws -> Watchlist {
+        try await get(base.appendingPathComponent("api/favorites"))
     }
 
     func watchlist(sort: WatchlistSort) async throws -> Watchlist {
