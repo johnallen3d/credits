@@ -33,6 +33,14 @@ shape Hit
   year: option<string>
   poster_url: option<string>
   profile_url: option<string>
+  overview: option<string>
+  known_for_department: option<string>
+  known_for: option<HitKnownFor[]>
+
+// A title TMDB associates with a person in search.
+shape HitKnownFor
+  title: string
+  year: option<string>
 
 // A search hit or recently viewed page, as the search screen draws it.
 shape Tile
@@ -476,6 +484,10 @@ fn label(h: Hit): string = match h.title { case some(t) => t, case none => text(
 fn picture(h: Hit): string = match h.poster_url { case some(u) => u, case none => text(h.profile_url) }
 fn numberOf(s: string): number = match parseNumber(s) { case some(n) => n, case none => 0 }
 fn fromHit(h: Hit): Tile = Tile(kind=h.kind, id=`${h.id}`, label=label(h), picture=picture(h), year=text(h.year))
+// A title's overview, or a person's department and best-known titles, as on the web.
+fn knownForList(h: Hit): string = match h.known_for { case some(ks) => ks.map(k => match k.year { case some(y) => `${k.title} (${y})`, case none => k.title }).join(", "), case none => "" }
+fn personLine(dept: string, titles: string): string = dept != "" and titles != "" ? `${dept} · known for ${titles}` : dept != "" ? dept : titles != "" ? `Known for ${titles}` : ""
+fn hitSummary(h: Hit): string = h.kind == "person" ? personLine(text(h.known_for_department), knownForList(h)) : text(h.overview)
 fn fromRecent(r: Recent): Tile = Tile(kind=r.kind, id=`${r.id}`, label=r.name, picture=text(r.image_url), year=text(r.year))
 fn kindName(k: string): string = k == "movie" ? "Movie" : k == "tv" ? "TV" : "Person"
 fn scoreOf(o: option<Score>): string = match o {
@@ -696,8 +708,11 @@ component App
                     EmptyState(symbol="symbol:search", title=`No Results for “${asked}”`, message="Check the spelling or try a new search.")
                   else
                     scroll id="hits" flex=1 min-height=0 background-color="surface.page"
-                      Shelves(prefix="hit", people=hits.filter(h => h.kind == "person").map(h => fromHit(h)),
-                        titles=hits.filter(h => h.kind != "person").map(h => fromHit(h)), peopleHeading="People", titlesHeading="Movies & TV")
+                      column gap=24 padding="8px 0 32px"
+                        if hits.filter(h => h.kind == "person").length > 0
+                          HitList(heading="People", hits=hits.filter(h => h.kind == "person"))
+                        if hits.filter(h => h.kind != "person").length > 0
+                          HitList(heading="Movies & TV", hits=hits.filter(h => h.kind != "person"))
               if e.name == "services"
                 ServicesScreen(navKey=`${e.id}`)
               if e.name == "movie"
@@ -823,6 +838,44 @@ component TileLink
           text-align=(kind == "person" ? "center" : "start")
         if kind != "person"
           text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-caption1" color="text.muted"
+
+// A section of search results: each hit's artwork, name, type and year, and its
+// overview or known-for line, as the web and macOS results show them.
+component HitList
+  props
+    heading: string
+    hits: Hit[]
+  view
+    column gap=12
+      text heading role="heading" aria-level=2 padding="0 16px" font="-exact-title3" font-weight=700
+      column gap=16 padding="0 16px"
+        for h in hits key=`${h.kind}-${h.id}`
+          HitRow(testId=`hit-${h.kind}-${h.id}`, tile=fromHit(h), summary=hitSummary(h))
+
+component HitRow
+  props
+    testId: string
+    tile: Tile
+    summary: string
+  derive kind = tile.kind
+  derive id = tile.id
+  derive year = tile.year
+  view
+    link href=(kind == "movie" ? path("movie", id) : kind == "tv" ? path("tv", id) : path("person", id))
+      display="flex" align-items="flex-start" gap=12 testId=testId
+      aria-label=(year == "" ? `${tile.label}, ${kindName(kind)}` : `${tile.label}, ${kindName(kind)}, ${year}`)
+      if tile.picture == ""
+        column width=60 height=(kind == "person" ? 60 : 90) flex-shrink=0 border-radius=(kind == "person" ? "50%" : "8px")
+          background-color="surface.thumb" align-items="center" justify-content="center"
+          image (kind == "person" ? "symbol:person" : "symbol:photo") color="text.muted" width=22 height=22
+      else
+        image tile.picture aria-label="" width=60 height=(kind == "person" ? 60 : 90) flex-shrink=0
+          border-radius=(kind == "person" ? "50%" : "8px") object-fit="cover" background-color="surface.thumb"
+      column flex=1 min-width=0 gap=2
+        text tile.label font="-exact-subheadline" font-weight=600 line-clamp=2
+        text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-caption1" color="text.muted"
+        if summary != ""
+          text summary font="-exact-footnote" color="text.muted" line-clamp=3 testId=`${testId}-summary`
 
 component Thumb
   props

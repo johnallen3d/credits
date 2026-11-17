@@ -582,3 +582,17 @@ test "a refused choice says so and keeps the show waiting"
   clock data
   expect tree has "decide-error"
   expect tree has "pending-infuse-beach trip 2019"
+
+test "search results show a title's overview and a person's department and known-for titles"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/search?q=matrix" with 200 {"query":"matrix","results":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","overview":"Neo wakes up.","poster_url":null,"in_theaters":false},{"kind":"tv","id":9,"name":"Quiet Show","year":"2001","overview":null},{"kind":"person","id":6384,"name":"Keanu Reeves","known_for_department":"Acting","known_for":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999"},{"kind":"movie","id":245891,"title":"John Wick","year":null}],"profile_url":null},{"kind":"person","id":7,"name":"Nobody","known_for_department":null,"known_for":[]}]}
+  tap "tab-search"
+  clock settle
+  type "search" "matrix"
+  clock data
+  clock settle
+  expect text "hit-movie-603-summary" == "Neo wakes up."
+  expect tree has "hit-tv-9"
+  expect tree missing "hit-tv-9-summary"
+  expect text "hit-person-6384-summary" == "Acting · known for The Matrix (1999), John Wick"
+  expect tree missing "hit-person-7-summary"
