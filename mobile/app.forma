@@ -39,6 +39,12 @@ theme
     when palette=tokyo-night: #9ece6a
     when palette=catppuccin: #a6e3a1
     when palette=classic: light-dark(#047857, #6ee7b7)
+  // The score rings' source colours, the same in every theme, as on the web.
+  score.fresh = #fa320a  scheme=fixed
+  score.rotten = #0ac855  scheme=fixed
+  score.stem = #00912d  scheme=fixed
+  score.imdb = #f5c518  scheme=fixed
+  score.imdb-ink = #000000  scheme=fixed
 
 icons
   icon.theme = icon(sf "paintpalette", svg "icons/palette.svg")

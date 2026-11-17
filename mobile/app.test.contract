@@ -327,7 +327,7 @@ test "a fresh title shows its score and no notices"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
   answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":136,"poster_url":null,"backdrop_url":null,"ratings":{"state":"fresh","unavailable_reason":null,"preferred":{"source":"rotten_tomatoes","score":83,"scale":100},"fetched_at":"2026-11-16T08:00:00Z"},"cast":[],"season_list":[],"marks":{"to_watch":false,"favorite":true,"watched":false},"metadata":{"state":"fresh","fetched_at":"2026-11-16T08:00:00Z"}}
   tap "recent-movie-603"
-  expect text "score" == "RT 83%"
+  expect text "score-rotten_tomatoes" == "83Rotten TomatoesFresh"
   expect tree missing "stale"
   expect tree missing "ratings-note"
   expect tree missing "favorites-note"
@@ -336,7 +336,7 @@ test "stale ratings say which day their scores are from"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
   answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":null,"year":"1999","genres":[],"runtime_minutes":136,"poster_url":null,"backdrop_url":null,"ratings":{"state":"stale","unavailable_reason":null,"preferred":{"source":"imdb","score":8.7,"scale":10},"fetched_at":"2026-11-02T08:00:00Z"},"cast":[],"season_list":[],"marks":{"to_watch":false,"favorite":false,"watched":false},"metadata":{"state":"fresh","fetched_at":"2026-11-16T08:00:00Z"}}
   tap "recent-movie-603"
-  expect text "score" == "IMDb 8.7"
+  expect text "score-imdb" == "87IMDbIMDb8.7/10"
   expect text "ratings-note" == "Couldn’t refresh ratings; showing scores from Nov 2, 2026."
 
 test "a stale season with unreadable watched marks says both"
@@ -378,3 +378,28 @@ test "an episode the server can't load says so"
   fail fetch "https://credits.jallen7usa.com/api/tv/1396/season/1/episode/1"
   expect tree missing "facts"
   expect tree missing "episode-overview"
+test "a title shows each score as a ring, the preferred one first"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":["Action"],"ratings":{"preferred":{"source":"rotten_tomatoes","score":83,"scale":100,"votes":null},"others":[{"source":"imdb","score":8.7,"scale":10,"votes":2284373}]},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  clock data
+  expect tree has "ratings"
+  expect text "score-rotten_tomatoes" == "83Rotten TomatoesFresh"
+  expect text "score-imdb" == "87IMDbIMDb8.7/10 · 2,284,373 votes"
+
+test "a title with no scores shows no rings"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{"preferred":null,"others":[]},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  clock data
+  expect tree has "title"
+  expect tree missing "ratings"
+
+test "a season rings each rated episode"
+  at "/tv/1396/season/1"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/season/1" with 200 {"show_title":"Breaking Bad","number":1,"name":"Season 1","episodes":[{"number":1,"title":"Pilot","rating":{"source":"imdb","score":9.0,"scale":10,"votes":null}},{"number":2,"title":"Cat's in the Bag...","rating":null}],"watched":{"show":false,"seasons":[],"episodes":[{"season":1,"number":1}]}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396" with 200 {"kind":"tv","id":1396,"title":"Breaking Bad","genres":[],"ratings":{"preferred":null,"others":[]},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  clock data
+  expect text "rating-1" == "90IMDb"
+  expect tree missing "rating-2"

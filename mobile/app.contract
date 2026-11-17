@@ -37,11 +37,13 @@ shape Score
   source: string
   score: number
   scale: number
+  votes: option<number>
 
 shape Ratings
   state: option<string>
   unavailable_reason: option<string>
   preferred: option<Score>
+  others: option<Score[]>
   fetched_at: option<string>
 
 // How current the TMDB data behind a page is: "stale" when it was served from
@@ -148,6 +150,7 @@ shape Episode
   air_date: option<string>
   overview: option<string>
   still_url: option<string>
+  rating: option<Score>
 
 shape EpisodeRef
   season: number
@@ -342,13 +345,27 @@ fn kindName(k: string): string = k == "movie" ? "Movie" : k == "tv" ? "TV" : "Pe
 fn scoreOf(o: option<Score>): string = match o {
   case some(s) => s.scale == 100 ? `RT ${round(s.score)}%` : `IMDb ${s.score}`,
   case none => "" }
-fn scoreText(r: Ratings): string = scoreOf(r.preferred)
 fn releaseList(l: string): string = l == "coming-soon" ? "Coming Soon" : "Now Playing"
 fn releasesListOf(es: Entry[]): string = match es.filter(e => e.name == "releases").at(-1) { case some(e) => e.params.list, case none => "" }
 fn releasesPageNumbers(es: Entry[], pages: number): number[] = releasesListOf(es) == "" ? [] : range(pages).map(i => i + 1)
 fn releaseLine(r: Release): string = match r.release_date {
   case some(d) => scoreOf(r.rating) == "" ? formatDate(d, 0, "medium") : `${formatDate(d, 0, "medium")} · ${scoreOf(r.rating)}`,
   case none => scoreOf(r.rating) }
+// A score as the web's rings show it: its share of the scale, the source's
+// colour (Rotten Tomatoes by its Fresh or Rotten verdict), and its own form.
+fn isTomatometer(s: Score): bool = s.source == "rotten_tomatoes"
+fn fresh(s: Score): bool = s.score >= 60
+fn ringPercent(s: Score): number = min(100, max(0, round(s.score / max(1, s.scale) * 100)))
+fn tone(s: Score): string = isTomatometer(s) ? (fresh(s) ? "score.fresh" : "score.rotten") : "score.imdb"
+fn sourceName(s: Score): string = isTomatometer(s) ? "Rotten Tomatoes" : "IMDb"
+fn scoreShown(s: Score): string = isTomatometer(s) ? `${round(s.score)}%` : `${s.score.toFixed(1)}/${s.scale}`
+fn verdict(s: Score): string = fresh(s) ? "Fresh" : "Rotten"
+fn ringLabel(s: Score): string = isTomatometer(s) ? `Rotten Tomatoes: ${verdict(s)}, ${scoreShown(s)}` : `IMDb, ${scoreShown(s)}`
+fn scoreNote(s: Score): string = isTomatometer(s) ? verdict(s) : match s.votes {
+  case some(v) => `${scoreShown(s)} · ${formatNumber(v, "decimal", 0)} votes`,
+  case none => scoreShown(s) }
+fn othersOf(r: Ratings): Score[] = match r.others { case some(xs) => xs, case none => [] }
+fn hasScores(r: Ratings): bool = othersOf(r).length > 0 or (match r.preferred { case some(p) => true, case none => false })
 fn seasonsOf(t: Title): SeasonSummary[] = match t.season_list { case some(xs) => xs.filter(x => x.episode_count > 0), case none => [] }
 fn keyRole(r: string): string = r == "creator" ? "Created by" : r == "director" ? "Directed by" : "Written by"
 fn episodes(o: option<number>): string = match o { case some(n) => n == 1 ? "1 episode" : `${n} episodes`, case none => "" }
@@ -575,8 +592,6 @@ component TitleScreen
               image text(t.poster_url) aria-label=`Poster for ${t.title}` width=110 height=165 border-radius=8 object-fit="cover"
               column flex=1 min-width=0 gap=6
                 text `${text(t.year)}${t.genres.length > 0 ? " · " : ""}${t.genres.join(", ")}` color="text.muted"
-                if scoreText(t.ratings) != ""
-                  text scoreText(t.ratings) font="-exact-headline" testId="score"
                 if theatersOf(t)
                   text "In theaters" font="-exact-footnote" color="accent" testId="in-theaters"
                 if ratingsNote(t.ratings) != ""
@@ -591,6 +606,8 @@ component TitleScreen
                     text "Showtimes"
                 if text(t.tagline) != ""
                   text text(t.tagline) font="-exact-footnote" color="text.muted"
+            if hasScores(t.ratings)
+              RatingRings(ratings=t.ratings)
             if text(t.overview) != ""
               text text(t.overview) padding-top=8 padding-bottom=8 testId="overview" background-color="surface.card"
             for k in keyCrewOf(t) key=k.role
@@ -774,6 +791,69 @@ component ReleaseSection
 
 // A season's episodes. An episode not yet watched keeps its summary and still
 // blurred, as the web's spoiler guard does.
+// A title's scores, preferred first and larger, each a ring beside its source
+// and note, as the web's title page lays them out.
+component RatingRings
+  props
+    ratings: Ratings
+  view
+    row flex-wrap="wrap" align-items="center" gap="10px 28px" padding-top=12 padding-bottom=12
+      testId="ratings" background-color="surface.card"
+      match ratings.preferred
+        case some(p)
+          RatedSource(score=p, size=48)
+        case none
+      for o in othersOf(ratings) key=o.source
+        RatedSource(score=o, size=36)
+
+component RatedSource
+  props
+    score: Score
+    size: number
+  view
+    row gap=12 align-items="center" testId=`score-${score.source}`
+      ScoreRing(score=score, size=size)
+      column min-width=0
+        text sourceName(score) font="-exact-subheadline"
+        text scoreNote(score) font="-exact-footnote" color="text.muted"
+
+// The web's score ring: a circle filled to the score's percent in its source's
+// colour, the percent inside and the source's mark on its corner. One image to
+// a reader, named "Rotten Tomatoes: Fresh, 83%" or "IMDb, 8.7/10".
+component ScoreRing
+  props
+    score: Score
+    size: number
+  view
+    column role="img" aria-label=ringLabel(score) position="relative" flex="none"
+      width=size height=size align-items="center" justify-content="center"
+      svg viewBox="0 0 100 100" position="absolute" inset=0 width="100%" height="100%" aria-hidden=true
+        circle cx=50 cy=50 r=44 fill="none" stroke="surface.thumb" stroke-width=12
+        if ringPercent(score) > 0
+          circle cx=50 cy=50 r=44 fill="none" stroke=tone(score) stroke-width=12
+            pathLength=100 stroke-dasharray=`${ringPercent(score)} 100` transform="rotate(-90 50 50)"
+      column position="absolute" inset=0 align-items="center" justify-content="center"
+        text `${ringPercent(score)}` font-size=(size * 0.4) font-weight=700
+          font-variant-numeric="tabular-nums" white-space="nowrap" aria-hidden=true
+      if isTomatometer(score)
+        svg viewBox="0 0 32 32" position="absolute" right=(size * -0.16) bottom=(size * -0.12)
+          width=(size * 0.45) height=(size * 0.45) aria-hidden=true
+          if fresh(score)
+            ellipse cx=16 cy=18.6 rx=14.4 ry=12.6 fill="score.fresh"
+            path d="M16 4.64 L16.94 7.89 L22.85 7.38 L17.52 8.87 L20.23 11.8 L16 9.48 L11.77 11.8 L14.48 8.87 L9.15 7.38 L15.06 7.89Z"
+              fill="score.stem" stroke="score.stem" stroke-width=1.2 stroke-linejoin="round"
+            path d="M16 8.4c0-2.4.8-4.4 2.4-6" fill="none" stroke="score.stem" stroke-width=2 stroke-linecap="round"
+          else
+            path d="M27 14.11 Q28.2 16.6 25.47 18.19 Q22.74 19.78 23.9 24.25 Q25.06 28.71 20.99 26.38 Q16.91 24.05 14.01 25.87 Q11.12 27.7 10.7 24.38 Q10.29 21.05 6.13 20.65 Q1.97 20.25 4.91 17.31 Q7.85 14.38 7.35 10.96 Q6.85 7.54 10.15 9.11 Q13.45 10.68 15.81 6.32 Q18.18 1.96 19.56 6.09 Q20.95 10.23 23.37 10.93 Q25.79 11.63 27 14.11Z"
+              fill="score.rotten"
+            circle cx=28.4 cy=9.4 r=1.8 fill="score.rotten"
+            circle cx=3 cy=25.2 r=1.5 fill="score.rotten"
+      else
+        column position="absolute" right=(size * -0.26) bottom=(size * -0.12)
+          width=(size * 0.56) height=(size * 0.28) border-radius=(size * 0.04)
+          align-items="center" justify-content="center" background-color="score.imdb" aria-hidden=true
+          text "IMDb" font-size=(size * 0.17) font-weight=900 color="score.imdb-ink" white-space="nowrap"
+
 component SeasonScreen
   props
     navKey: string
@@ -820,6 +900,12 @@ component SeasonScreen
                 row gap=8
                   link href=path("episode", id, n, `${ep.number}`) testId=`episode-open-${ep.number}` flex=1
                     text `${ep.number}. ${ep.title}` font="-exact-headline"
+                  match ep.rating
+                    case some(r)
+                      column testId=`rating-${ep.number}`
+                        filter=(seen(w, s.number, ep.number) ? "none" : "blur(5px)")
+                        ScoreRing(score=r, size=28)
+                    case none
                   button press=toggleEpisode(ep.number) aria-pressed=seen(w, s.number, ep.number)
                     aria-label=`Episode ${ep.number} watched` disabled=(seasonSeen(w, s.number) or pending(marked))
                     testId=`mark-episode-${ep.number}`
