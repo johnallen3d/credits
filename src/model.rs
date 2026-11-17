@@ -302,6 +302,23 @@ impl Watched {
         self.season(season) || self.episodes.contains(&(season, number))
     }
 
+    /// How far through a season its own episode marks are, as a whole
+    /// percentage, while it's under way: `None` once the season is watched,
+    /// before any episode is, or when its length isn't known. Rounds down,
+    /// so a season one episode short never reads 100%.
+    pub fn season_percent(&self, number: u32, episode_count: Option<u32>) -> Option<u32> {
+        let total = episode_count.filter(|&n| n > 0)?;
+        if self.season(number) {
+            return None;
+        }
+        let seen = self
+            .episodes
+            .iter()
+            .filter(|&&(season, episode)| season == number && episode <= total)
+            .count() as u32;
+        (seen > 0 && seen < total).then(|| seen * 100 / total)
+    }
+
     /// Whether the episode's own mark came from the Apple TV.
     pub fn from_apple_tv(&self, season: u32, number: u32) -> bool {
         self.apple_tv.contains(&(season, number))

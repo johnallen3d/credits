@@ -103,7 +103,7 @@
         {% endif %}
         <span class="name">{{ s.name }}</span>
         <span class="role">{% if let Some(year) = s.year %}{{ year }}{% endif %}{% if s.year.is_some() && s.episode_count.is_some() %} · {% endif %}{% if let Some(eps) = s.episodes_label() %}{{ eps }}{% endif %}</span>
-        {% if watched.season(*s.number) %}<span class="role watched-mark">✓ Watched</span>{% endif %}
+        {% if watched.season(*s.number) %}<span class="role watched-mark">✓ Watched</span>{% else if let Some(pct) = watched.season_percent(*s.number, *s.episode_count) %}<span class="role watched-mark">{{ pct }}% watched</span>{% endif %}
       </a></li>
       {% endfor %}
     </ul>
