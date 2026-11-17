@@ -22,6 +22,38 @@ run = "UPDATE_OPENAPI=1 cargo test --quiet --test openapi"
 description = "Use the repo's git hooks (pre-commit keeps openapi.json current)"
 run = "git config core.hooksPath .githooks"
 
+[tasks."mac:build"]
+description = "Build the macOS launcher (Option-Space search) into macos/build/Credits Launcher.app"
+dir = "macos"
+run = '''
+swift build -c release
+app="build/Credits Launcher.app"
+rm -rf "$app" && mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp Info.plist "$app/Contents/"
+cp AppIcon.icns "$app/Contents/Resources/"
+cp "$(swift build -c release --show-bin-path)/CreditsLauncher" "$app/Contents/MacOS/"
+codesign --force --sign - "$app"
+'''
+
+[tasks.mac]
+description = "Build the macOS launcher and run it from macos/build"
+depends = ["mac:build"]
+run = '''
+pkill -x CreditsLauncher || true
+open "macos/build/Credits Launcher.app"
+'''
+
+[tasks."mac:install"]
+description = "Build the macOS launcher, install it to ~/Applications and relaunch it"
+depends = ["mac:build"]
+run = '''
+pkill -x CreditsLauncher || true
+mkdir -p ~/Applications
+rm -rf ~/Applications/"Credits Launcher.app"
+ditto "macos/build/Credits Launcher.app" ~/Applications/"Credits Launcher.app"
+open ~/Applications/"Credits Launcher.app"
+'''
+
 # The Exact iOS spike in mobile/. Exact is a source checkout, not a package:
 # mobile:setup clones it into mobile/.exact-sdk at the commit the app was built
 # against.
