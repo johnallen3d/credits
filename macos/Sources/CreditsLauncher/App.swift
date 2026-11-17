@@ -225,6 +225,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             model.goBack()
             return true
         }
+        // ⌘[ and ⌘] turn a paged list's pages, as back and forward do in a browser.
+        if commandOnly, model.detailHit == nil, model.canTurnPage,
+           [kVK_ANSI_LeftBracket, kVK_ANSI_RightBracket].contains(Int(event.keyCode)) {
+            model.turnPage(Int(event.keyCode) == kVK_ANSI_LeftBracket ? -1 : 1)
+            return true
+        }
         if commandOnly,
            let list = ListAction.allCases.first(where: { $0.key == event.charactersIgnoringModifiers?.lowercased() }) {
             model.toggle(list)

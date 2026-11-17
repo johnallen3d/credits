@@ -51,6 +51,9 @@ final class LauncherModel {
         didSet { rebuild(.watched) }
     }
 
+    /// The page each paged tab shows, from 1.
+    var pages: [HomeTab: Int] = [:]
+
     var showingHome: Bool { query.trimmingCharacters(in: .whitespaces).isEmpty }
     /// What ↑↓ and ⏎ act on: the search results, or the tab's list.
     var rows: [SearchHit] { showingHome ? home[tab]?.hits ?? [] : results }
@@ -157,6 +160,18 @@ final class LauncherModel {
         loadHome(next)
     }
 
+    /// Whether the tab shown has pages ⌘[ and ⌘] turn.
+    var canTurnPage: Bool { showingHome && (home[tab]?.pager?.totalPages ?? 1) > 1 }
+
+    /// Shows the tab's next or previous page, if it has one.
+    func turnPage(_ delta: Int) {
+        guard showingHome, let pager = home[tab]?.pager else { return }
+        let next = (pages[tab] ?? pager.page) + delta
+        guard next >= 1, next <= pager.totalPages else { return }
+        pages[tab] = next
+        reloadHome(tab)
+    }
+
     /// Drops a load in flight (its answer would be for an old sort) and starts again.
     private func reloadHome(_ tab: HomeTab) {
         homeTasks[tab]?.cancel()
@@ -167,6 +182,8 @@ final class LauncherModel {
     /// Reloads a tab's list, keeping the saved one on screen until it's back.
     private func loadHome(_ tab: HomeTab) {
         guard homeTasks[tab] == nil else { return }
+        // A new page starts at its top, though a movie on it was selected before.
+        let turned = home[tab]?.pager.map { $0.page != pages[tab] } ?? false
         homeLoading.insert(tab)
         homeTasks[tab] = Task {
             defer {
@@ -182,9 +199,11 @@ final class LauncherModel {
             } catch {
                 guard !Task.isCancelled else { return }
                 homeError[tab] = error.localizedDescription
+                // Stay on the page still shown, so the next turn starts from it.
+                if let shown = home[tab]?.pager { pages[tab] = shown.page }
             }
             // Keep the selection where it was if it's still listed.
-            if showingHome, self.tab == tab, selection.map({ !rows.contains($0) }) ?? true {
+            if showingHome, self.tab == tab, selection.map({ !rows.contains($0) }) ?? true || turned {
                 selection = rows.first
             }
         }
@@ -225,7 +244,8 @@ final class LauncherModel {
             watched = w
             return watchedList(w)
         case .nowPlaying:
-            let n = try await api.nowPlaying()
+            let n = try await api.nowPlaying(page: pages[tab] ?? 1)
+            pages[tab] = n.page
             var notes: [String] = []
             if let since = n.ratings.staleSince { notes.append("Ratings saved from \(shortDate(since)): OMDb isn't responding") }
             switch n.ratings.unavailableReason {
@@ -240,7 +260,7 @@ final class LauncherModel {
                 let opened = m.releaseDate.map { "In theaters since \(shortDate($0))" }
                 let info = [opened, m.rating?.label].compactMap { $0 }.joined(separator: " · ")
                 return SearchHit(kind: .movie, id: m.id, title: m.title, posterUrl: m.posterUrl, info: info)
-            }, notes: notes)
+            }, notes: notes, pager: Pager(page: n.page, totalPages: n.totalPages, total: n.total))
         }
     }
 
@@ -918,7 +938,16 @@ struct ToWatchFilter: Equatable {
 struct HomeList {
     let hits: [SearchHit]
     var notes: [String] = []
+    /// For a list in pages: which this is.
+    var pager: Pager? = nil
     let loadedAt = Date()
+}
+
+struct Pager {
+    let page: Int
+    let totalPages: Int
+    /// Entries on the whole list.
+    let total: Int
 }
 
 /// "2026-11-06" or an ISO timestamp as "Nov 6, 2026".

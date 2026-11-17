@@ -671,7 +671,13 @@ enum WatchedSort: String, CaseIterable {
     var name: String { self == .recent ? "Last watched" : "Title" }
 }
 
-struct NowPlaying: Decodable {
+/// A page of Now playing: movies with a theatrical date in the region.
+struct ReleasesPage: Decodable {
+    /// From 1; a page past the end gives the last one.
+    let page: Int
+    let totalPages: Int
+    /// Movies on the whole list.
+    let total: Int
     let titles: [ReleaseEntry]
     let ratings: SortRatings
     let unchecked: Int
@@ -786,8 +792,11 @@ struct CreditsAPI {
         return body.sources
     }
 
-    func nowPlaying() async throws -> NowPlaying {
-        try await get(base.appendingPathComponent("api/now-playing"))
+    /// A page of Now playing, 20 movies each, from 1.
+    func nowPlaying(page: Int) async throws -> ReleasesPage {
+        var url = URLComponents(url: base.appendingPathComponent("api/now-playing"), resolvingAgainstBaseURL: false)!
+        url.queryItems = [URLQueryItem(name: "page", value: String(page))]
+        return try await get(url.url!)
     }
 
     /// Puts a movie or show on a list or takes it off; returns its marks after.

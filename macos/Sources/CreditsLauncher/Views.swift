@@ -51,7 +51,8 @@ struct LauncherView: View {
                        editingTags: model.editingTags,
                        image: model.viewing == nil ? model.pageImage != nil : nil,
                        watched: model.watchedTarget != nil,
-                       peek: model.canPeek ? model.peeking : nil)
+                       peek: model.canPeek ? model.peeking : nil,
+                       pages: model.canTurnPage && model.detailHit == nil)
         }
         .overlay {
             if let image = model.viewing {
@@ -149,6 +150,9 @@ struct HomeView: View {
             } else {
                 HitList(model: model, hits: list.hits).id(model.tab)
             }
+            if let pager = list.pager, pager.totalPages > 1 {
+                PagerBar(model: model, pager: pager)
+            }
         } else if let error {
             Notice(icon: "exclamationmark.triangle", text: "Couldn't load \(model.tab.name): \(error)", tint: Theme.love)
         } else {
@@ -204,6 +208,29 @@ struct ToWatchFilters: View {
             }
         }
         .homeFilters()
+    }
+}
+
+/// A paged list's page, its neighbours and how many there are, as the web's pager.
+struct PagerBar: View {
+    let model: LauncherModel
+    let pager: Pager
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button("← Previous") { model.turnPage(-1) }
+                .disabled(pager.page <= 1)
+            Text("Page \(pager.page) of \(pager.totalPages) · \(pager.total) movies")
+                .foregroundStyle(Theme.muted)
+            Button("Next →") { model.turnPage(1) }
+                .disabled(pager.page >= pager.totalPages)
+            Spacer()
+            if model.homeLoading.contains(model.tab) { ProgressView().controlSize(.small) }
+        }
+        .buttonStyle(.borderless)
+        .font(.callout)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
     }
 }
 
@@ -1546,6 +1573,8 @@ struct FooterView: View {
     var watched = false
     /// On an unwatched episode: whether ⌘P is peeking; nil elsewhere.
     var peek: Bool? = nil
+    /// Whether the list shown has pages ⌘[ and ⌘] turn.
+    var pages = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -1582,6 +1611,7 @@ struct FooterView: View {
             }
             hint("esc", canGoBack ? "Back" : home ? "Lists" : "Results")
         } else {
+            if pages { hint("⌘[ ⌘]", "Page") }
             hint("⏎", "Details")
             hint("⌘⏎", "Open in browser")
             hint("esc", "Close")
