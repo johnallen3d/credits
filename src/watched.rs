@@ -156,6 +156,76 @@ impl WatchedShows {
         query.execute(&self.pool).await.map(drop)
     }
 
+    /// Unmarks a season or episode that a marked show or season covers, by
+    /// swapping each covering mark for marks on what else it covered, dated
+    /// as it was: the show's for `seasons` (its other seasons), the target
+    /// season's for `episodes` (that season's other episodes). All or nothing.
+    pub async fn unwatch_within(
+        &self,
+        tv_id: u64,
+        target: WatchTarget,
+        seasons: &[u32],
+        episodes: &[u32],
+    ) -> Result<(), sqlx::Error> {
+        let (season, episode) = match target {
+            WatchTarget::Show => return self.set(tv_id, target, false, Timestamp::now()).await,
+            WatchTarget::Season(season) => (season, None),
+            WatchTarget::Episode { season, number } => (season, Some(number)),
+        };
+        let tv_id = tv_id as i64;
+        let mut tx = self.pool.begin().await?;
+        let show_at: Option<(i64,)> =
+            sqlx::query_as("DELETE FROM watched_shows WHERE tv_id = ? RETURNING watched_at")
+                .bind(tv_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if let Some((at,)) = show_at {
+            for &other in seasons.iter().filter(|&&n| n != season) {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO watched_seasons (tv_id, season, watched_at)
+                     VALUES (?, ?, ?)",
+                )
+                .bind(tv_id)
+                .bind(other)
+                .bind(at)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        let season_at: Option<(i64,)> = sqlx::query_as(
+            "DELETE FROM watched_seasons WHERE tv_id = ? AND season = ? RETURNING watched_at",
+        )
+        .bind(tv_id)
+        .bind(season)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(number) = episode {
+            if let Some((at,)) = season_at.or(show_at) {
+                for &other in episodes.iter().filter(|&&n| n != number) {
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO watched_episodes (tv_id, season, episode, watched_at)
+                         VALUES (?, ?, ?, ?)",
+                    )
+                    .bind(tv_id)
+                    .bind(season)
+                    .bind(other)
+                    .bind(at)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            }
+            sqlx::query(
+                "DELETE FROM watched_episodes WHERE tv_id = ? AND season = ? AND episode = ?",
+            )
+            .bind(tv_id)
+            .bind(season)
+            .bind(number)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+
     /// Marks an episode watched by `source` (e.g. "apple_tv"), keeping an
     /// existing mark and its source.
     pub async fn mark_episode(
@@ -365,6 +435,42 @@ mod tests {
         assert!(show.manual && show.apple_tv);
         assert!(all[2].apple_tv && !all[2].manual);
         assert!(all[3].show && all[3].manual && !all[3].apple_tv);
+    }
+
+    #[tokio::test]
+    async fn unwatching_inside_a_mark_keeps_the_rest_dated_as_it_was() {
+        let watched = WatchedShows::new(ProviderCache::open(IN_MEMORY).await.unwrap().pool());
+        let at = Timestamp::from_second(1_700_000_000).unwrap();
+        watched.set(1, WatchTarget::Show, true, at).await.unwrap();
+        watched
+            .set(1, WatchTarget::Season(2), true, at)
+            .await
+            .unwrap();
+        let episode = WatchTarget::Episode {
+            season: 2,
+            number: 3,
+        };
+        watched
+            .unwatch_within(1, episode, &[0, 1, 2], &[1, 2, 3, 4])
+            .await
+            .unwrap();
+        assert_eq!(
+            watched.get(1).await.unwrap(),
+            Watched {
+                show: false,
+                seasons: vec![0, 1],
+                episodes: vec![(2, 1), (2, 2), (2, 4)],
+                apple_tv: vec![],
+            }
+        );
+        let all = watched.all().await.unwrap();
+        assert_eq!(all[0].last_watched_at, at.as_second(), "not re-dated");
+
+        watched
+            .unwatch_within(1, WatchTarget::Season(1), &[0, 1, 2], &[])
+            .await
+            .unwrap();
+        assert_eq!(watched.get(1).await.unwrap().seasons, [0]);
     }
 
     #[tokio::test]

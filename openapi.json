@@ -1905,7 +1905,7 @@
     },
     "/api/tv/{id}/season/{number}/watched": {
       "put": {
-        "summary": "Marks a season watched or not, answering with the show's watched marks.",
+        "summary": "Marks a season watched or not, answering with the show's watched marks.\nUnmarking one the whole show covers marks its other aired seasons instead.",
         "operationId": "api_season_watched",
         "parameters": [
           {
@@ -2013,7 +2013,7 @@
     },
     "/api/tv/{id}/season/{number}/episode/{episode}/watched": {
       "put": {
-        "summary": "Marks an episode watched or not, answering with the show's watched marks.\nUnmarking one the Apple TV marked sticks.",
+        "summary": "Marks an episode watched or not, answering with the show's watched marks.\nUnmarking one its season or show covers marks the rest of them instead.\nUnmarking one the Apple TV marked sticks.",
         "operationId": "api_episode_watched",
         "parameters": [
           {

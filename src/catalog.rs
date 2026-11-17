@@ -102,6 +102,17 @@ pub enum CatalogError {
     Provider(String),
 }
 
+/// Why a watched mark couldn't be saved.
+#[derive(Debug, thiserror::Error)]
+pub enum WatchedError {
+    #[error("saving watched marks failed: {0}")]
+    Save(#[from] sqlx::Error),
+    /// Unmarking inside a watched show or season needs its seasons or
+    /// episodes, and those couldn't be loaded.
+    #[error("loading what else stays watched failed: {0}")]
+    Lookup(#[from] CatalogError),
+}
+
 /// Why the user's services couldn't be saved.
 #[derive(Debug, thiserror::Error)]
 pub enum ServicesError {
@@ -279,21 +290,68 @@ impl Catalog {
 
     /// Marks a whole TV show, a season or an episode as watched or not.
     /// Marking rolls up to whatever that completes; a show marked watched
-    /// as a whole leaves To watch.
+    /// as a whole leaves To watch. Unmarking a season or episode that the
+    /// show or its season covers breaks that mark up into marks on the rest.
     pub async fn set_watched(
         &self,
         tv_id: u64,
         target: WatchTarget,
         watched: bool,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), WatchedError> {
+        if !watched {
+            return self.unwatch(tv_id, target).await;
+        }
         let at = Timestamp::now();
-        self.watched.set(tv_id, target, watched, at).await?;
-        match (watched, target) {
-            (false, _) => {}
-            (true, WatchTarget::Show) => self.leave_watchlist(MediaKind::Tv, tv_id).await,
-            (true, _) => self.roll_up_watched(tv_id, at).await,
+        self.watched.set(tv_id, target, true, at).await?;
+        match target {
+            WatchTarget::Show => self.leave_watchlist(MediaKind::Tv, tv_id).await,
+            _ => self.roll_up_watched(tv_id, at).await,
         }
         Ok(())
+    }
+
+    /// Unmarks a show, season or episode. A show's seasons and episodes keep
+    /// their own marks. When the show or its season covers `target`, that
+    /// mark becomes marks on the show's other aired seasons and the season's
+    /// other episodes, so only `target` turns unwatched.
+    async fn unwatch(&self, tv_id: u64, target: WatchTarget) -> Result<(), WatchedError> {
+        let unmark = || self.watched.set(tv_id, target, false, Timestamp::now());
+        let (season, episode) = match target {
+            WatchTarget::Show => return Ok(unmark().await?),
+            WatchTarget::Season(s) => (s, None),
+            WatchTarget::Episode { season, number } => (season, Some(number)),
+        };
+        let watched = self.watched.get(tv_id).await?;
+        let covered = match episode {
+            Some(_) => watched.season(season),
+            None => watched.show,
+        };
+        if !covered {
+            return Ok(unmark().await?);
+        }
+        let seasons = if watched.show {
+            let (t, _) = self.tv_raw(tv_id).await?;
+            let today = Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
+            current_seasons(&t.seasons, today)
+        } else {
+            Vec::new()
+        };
+        let episodes = match episode {
+            Some(_) => {
+                let (s, _) = self
+                    .cached(
+                        format!("tv/{tv_id}/season/{season}"),
+                        self.tmdb.season(tv_id, season),
+                    )
+                    .await?;
+                s.episodes.iter().map(|e| e.episode_number).collect()
+            }
+            None => Vec::new(),
+        };
+        Ok(self
+            .watched
+            .unwatch_within(tv_id, target, &seasons, &episodes)
+            .await?)
     }
 
     /// Takes a title just marked watched off To watch. Failures are only

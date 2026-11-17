@@ -238,8 +238,7 @@ a.provider:hover, a.provider:focus-visible { border-color: var(--accent); }
 .watch-state p { flex: 1 1 100%; margin: 0; font-size: .9rem; }
 .watch-toggle button { display: inline-flex; align-items: center; gap: .4rem; font: inherit; font-size: .9rem; padding: .35rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); cursor: pointer; }
 .watch-toggle button[aria-pressed="true"] { color: var(--person); border-color: var(--person); }
-.watch-toggle button:hover:not(:disabled), .watch-toggle button:focus-visible { border-color: var(--accent); color: var(--accent); }
-.watch-toggle button:disabled { opacity: .55; cursor: default; }
+.watch-toggle button:hover, .watch-toggle button:focus-visible { border-color: var(--accent); color: var(--accent); }
 .watch-toggle .eye, .bookmark, .heart { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .watchlist-toggle button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .watchlist-toggle button[aria-pressed="true"] .bookmark { fill: currentColor; }

@@ -19,11 +19,7 @@
       <h1>{{ e.title }}</h1>
       <p class="original">{{ e.season_name }} · Episode {{ e.number }}</p>
       <div class="watch-state">
-        {% if watched.season(*e.season_number) %}
-        {% call watch::toggle(action, true, "Episode watched", page, "episode", "Watched", "Watched with the season") %}{% endcall %}
-        {% else %}
-        {% call watch::toggle(action, seen, "Episode watched", page, "episode", "Watched", "") %}{% endcall %}
-        {% endif %}
+        {% call watch::toggle(action, seen, "Episode watched", page, "episode", "Watched") %}{% endcall %}
         {% if watched.from_apple_tv(*e.season_number, *e.number) %}
         <p class="muted auto-marked">Marked watched from what played on the Apple TV. <a href="/playback">Seen on Apple TV</a></p>
         {% endif %}

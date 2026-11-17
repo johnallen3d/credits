@@ -1905,17 +1905,27 @@ async fn episode_spoilers_are_blurred_until_watched() {
     let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
     assert!(body.contains(r#"<li class="episode spoiler" id="episode-1">"#));
 
-    // The season covers its episodes, whose toggles can't undo it.
+    // The season covers its episodes. Unwatching one unmarks the season
+    // and marks its other episodes instead.
     let (status, headers) = post_form(t.app(), "/tv/1396/season/1/watched", "watched=true").await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers[header::LOCATION], "/tv/1396/season/1");
     let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
     assert!(!body.contains("episode spoiler"));
-    assert_eq!(
-        body.matches(r#"title="Watched with the season" disabled"#)
-            .count(),
-        2
-    );
+    assert!(!body.contains("disabled"));
+    post_form(
+        t.app(),
+        "/tv/1396/season/1/episode/1/watched",
+        "watched=false",
+    )
+    .await;
+    let watched = t.catalog.watched(1396).await;
+    assert!(!watched.season(1));
+    assert_eq!(watched.episodes, [(1, 2)]);
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
+    assert!(body.contains(r#"<li class="episode spoiler" id="episode-1">"#));
+    assert!(body.contains(r#"<li class="episode" id="episode-2">"#));
+    post_form(t.app(), "/tv/1396/season/1/watched", "watched=true").await;
     let (_, _, body) = get_page(t.app(), "/tv/1396/season/2", false).await;
     assert!(
         body.contains("episode spoiler"),
@@ -1936,7 +1946,7 @@ async fn episode_spoilers_are_blurred_until_watched() {
     assert_eq!(headers[header::LOCATION], "/tv/1396/season/2");
     let (_, _, body) = get_page(t.app(), "/tv/1396/season/2", false).await;
     assert!(!body.contains("episode spoiler"));
-    assert!(body.contains(r#"title="Watched with the whole show" disabled"#));
+    assert!(!body.contains("disabled"));
     let (_, _, body) = get_page(t.app(), "/tv/1396", false).await;
     assert!(body.contains(r#"aria-pressed="true""#));
     assert!(body.contains(r#"name="watched" value="false""#));
@@ -1948,6 +1958,15 @@ async fn episode_spoilers_are_blurred_until_watched() {
     assert!(body.contains("episode spoiler"));
     let (_, _, body) = get_page(t.app(), "/tv/1396/season/1", false).await;
     assert!(!body.contains("episode spoiler"));
+
+    // Unwatching a season the show covers marks its other seasons instead.
+    post_form(t.app(), "/tv/1396/watched", "watched=true").await;
+    post_form(t.app(), "/tv/1396/season/2/watched", "watched=false").await;
+    let watched = t.catalog.watched(1396).await;
+    assert!(!watched.show && !watched.season(2));
+    assert!(watched.season(0) && watched.season(1));
+    let (_, _, body) = get_page(t.app(), "/tv/1396/season/2", false).await;
+    assert!(body.contains("episode spoiler"));
 
     // Only pages of the same show are valid places to return to.
     for back in [
@@ -3051,13 +3070,19 @@ async fn json_writes_mirror_the_forms_and_answer_with_the_new_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["state"], "read");
     assert_eq!(json["seasons"], json!([0, 1, 2, 3]));
+    // Unwatching an episode the show covers keeps the rest of it watched.
     let (_, json) = put_json(
         t.app(),
         "/api/tv/1396/season/2/episode/1/watched",
         json!({ "watched": false }),
     )
     .await;
-    assert_eq!(json["episodes"], json!([]));
+    assert_eq!(json["show"], false, "{json}");
+    assert_eq!(json["seasons"], json!([0, 1, 3]));
+    assert_eq!(
+        json["episodes"],
+        json!([{ "season": 2, "number": 2, "apple_tv": false }])
+    );
     let (_, json) = put_json(
         t.app(),
         "/api/movie/603/watched",
@@ -6180,8 +6205,8 @@ async fn terminal_client_toggles_to_watch_favorite_and_watched() {
     );
     assert!(show.contains("· Watched x"), "not the whole show: {show}");
 
-    // x unmarks the highlighted season; X marks the whole show, which
-    // still covers it.
+    // x unmarks the highlighted season; X marks the whole show, and x
+    // then unwatches just that season, keeping the others watched.
     let save = press(&mut app, KeyCode::Char('x'));
     assert!(matches!(
         save.as_slice(),
@@ -6198,12 +6223,9 @@ async fn terminal_client_toggles_to_watch_favorite_and_watched() {
     let save = press(&mut app, KeyCode::Char('x'));
     fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
     let show = screen(&mut app);
-    assert!(
-        show.contains("Season unmarked, but still watched with its show."),
-        "{show}"
-    );
-    let save = press(&mut app, KeyCode::Char('X'));
-    fulfil(&client, &mut app, save.into_iter().next().unwrap()).await;
+    assert!(show.contains("Season marked unwatched."), "{show}");
+    let watched = t.catalog.watched(1396).await;
+    assert!(!watched.show && !watched.season(1) && watched.season(2));
 
     // On a season, x marks the highlighted episode, revealing its score.
     let open = app.open(tui::app::Target::Season(1396, 1));

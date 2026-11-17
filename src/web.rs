@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoResponses, OpenApi, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::catalog::{Catalog, CatalogError, RecentError, ServicesError, WatchlistError};
+use crate::catalog::{
+    Catalog, CatalogError, RecentError, ServicesError, WatchedError, WatchlistError,
+};
 use crate::model::{
     EpisodeDetail, EpisodeWithWatched, FilmographyEntry, FilmographyGroup, FilmographySort,
     KindFilter, MediaKind, Metadata, MovieWatched, MovieWithMarks, PersonDetail, RecentKind,
@@ -1293,11 +1295,8 @@ async fn save_watched(
         Ok(()) => Redirect::to(back).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, id, ?target, "saving watched state failed");
-            error_page(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save watched state",
-                "The database couldn't be updated. Please try again.",
-            )
+            let (status, message) = watched_failure(&e);
+            error_page(status, "Couldn't save watched state", message)
         }
     }
 }
@@ -2425,7 +2424,7 @@ async fn api_movie_watched(
     };
     match catalog.set_movie_watched(id, watched).await {
         Ok(()) => api_title_marks(&catalog, MediaKind::Movie, id).await,
-        Err(e) => api_watched_failed(e, id),
+        Err(e) => api_watched_failed(e.into(), id),
     }
 }
 
@@ -2456,6 +2455,7 @@ async fn api_tv_watched(
 }
 
 /// Marks a season watched or not, answering with the show's watched marks.
+/// Unmarking one the whole show covers marks its other aired seasons instead.
 #[utoipa::path(
     put,
     path = "/api/tv/{id}/season/{number}/watched",
@@ -2478,6 +2478,7 @@ async fn api_season_watched(
 }
 
 /// Marks an episode watched or not, answering with the show's watched marks.
+/// Unmarking one its season or show covers marks the rest of them instead.
 /// Unmarking one the Apple TV marked sticks.
 #[utoipa::path(
     put,
@@ -2530,12 +2531,25 @@ async fn api_title_marks(catalog: &Catalog, kind: MediaKind, id: u64) -> Respons
     .into_response()
 }
 
-fn api_watched_failed(error: sqlx::Error, id: u64) -> Response {
+fn api_watched_failed(error: WatchedError, id: u64) -> Response {
     tracing::warn!(error = %error, id, "api watched save failed");
-    api_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "watched marks couldn't be updated, so nothing was saved",
-    )
+    let (status, message) = watched_failure(&error);
+    api_error(status, message)
+}
+
+/// Why a watched mark wasn't saved, for the user. Nothing was changed.
+fn watched_failure(error: &WatchedError) -> (StatusCode, &'static str) {
+    match error {
+        WatchedError::Save(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The watched marks couldn't be saved, so nothing was changed. Please try again.",
+        ),
+        WatchedError::Lookup(e) => (
+            status_for(e),
+            "Unwatching this means marking the rest of the show or season instead, \
+             and TMDB couldn't list it, so nothing was saved. Please try again.",
+        ),
+    }
 }
 
 fn api_result(result: Result<impl Serialize, CatalogError>, what: &'static str) -> Response {

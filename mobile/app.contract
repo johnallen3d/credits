@@ -1172,7 +1172,7 @@ component SeasonScreen
               text (w.show ? "Watched with the whole show" : seasonSeen(w, s.number) ? "Season watched" : "Season not watched")
                 flex=1 color="text.muted" testId="season-state"
               button press=toggleSeason buttonStyle="bordered" aria-pressed=seasonSeen(w, s.number)
-                disabled=(w.show or pending(marked)) testId="mark-season"
+                disabled=pending(marked) testId="mark-season"
                 text (seasonSeen(w, s.number) ? "Unmark Season" : "Mark Season Watched")
             if failed(marked) and not pending(marked)
               text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite"
@@ -1190,7 +1190,7 @@ component SeasonScreen
                         ScoreRing(score=r, size=28)
                     case none
                   button press=toggleEpisode(ep.number) aria-pressed=seen(w, s.number, ep.number)
-                    aria-label=`Episode ${ep.number} watched` disabled=(seasonSeen(w, s.number) or pending(marked))
+                    aria-label=`Episode ${ep.number} watched` disabled=pending(marked)
                     testId=`mark-episode-${ep.number}`
                     if seen(w, s.number, ep.number)
                       text "Watched" font="-exact-footnote" color="mark.watched"

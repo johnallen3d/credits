@@ -32,12 +32,8 @@
   <section class="section" id="episodes" aria-labelledby="episodes-heading">
     <h2 id="episodes-heading">Episodes</h2>
     <div class="watch-state">
-      {% call watch::toggle(show_action, watched.show, "Show watched", page, "episodes", "Show", "") %}{% endcall %}
-      {% if watched.show %}
-      {% call watch::toggle(season_action, true, "Season watched", page, "episodes", "Season", "Watched with the whole show") %}{% endcall %}
-      {% else %}
-      {% call watch::toggle(season_action, revealed, "Season watched", page, "episodes", "Season", "") %}{% endcall %}
-      {% endif %}
+      {% call watch::toggle(show_action, watched.show, "Show watched", page, "episodes", "Show") %}{% endcall %}
+      {% call watch::toggle(season_action, revealed, "Season watched", page, "episodes", "Season") %}{% endcall %}
       {% if !revealed %}
       <p class="muted">Summaries and ratings of unwatched episodes are blurred. Select one to peek, or use its eye to mark it watched.</p>
       {% endif %}
@@ -68,11 +64,7 @@
         <div>
           <div class="episode-head">
             <h3><a href="{{ page }}/episode/{{ e.number }}"><span class="muted">{{ e.number }}.</span> {{ e.title }}</a></h3>
-            {% if revealed %}
-            {% call watch::toggle(episode_action, true, "Episode watched", page, episode_id, "", "Watched with the season") %}{% endcall %}
-            {% else %}
-            {% call watch::toggle(episode_action, seen, "Episode watched", page, episode_id, "", "") %}{% endcall %}
-            {% endif %}
+            {% call watch::toggle(episode_action, seen, "Episode watched", page, episode_id, "") %}{% endcall %}
           </div>
           <p class="muted episode-facts">{% if let Some(day) = e.air_date_display() %}{{ day }}{% else %}Air date not announced{% endif %}{% if let Some(minutes) = e.runtime_minutes %} · {{ minutes }} min{% endif %}{% if watched.from_apple_tv(*s.number, *e.number) %} · <span class="auto-marked" title="Marked watched from what played on the Apple TV">Watched on Apple TV</span>{% endif %}{% if let Some(r) = e.rating %} · <span class="episode-rating"{% if !seen %} tabindex="0" title="Spoiler: select to peek"{% endif %}>{% include "_rating.html" %}</span>{% endif %}</p>
           {% if let Some(overview) = e.overview %}

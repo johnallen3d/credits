@@ -89,7 +89,7 @@
     <h2 id="seasons-heading">Seasons</h2>
     {#- The cast's episode counts show only once the whole show is watched. #}
     <div class="watch-state" hx-select-oob="#cast">
-      {% call watch::toggle(show_action, watched.show, "Show watched", page, "seasons", "", "") %}{% endcall %}
+      {% call watch::toggle(show_action, watched.show, "Show watched", page, "seasons", "") %}{% endcall %}
       {% if !watched.show %}
       <p class="muted">Episode summaries and ratings stay blurred until you mark them, their season or the show watched.</p>
       {% endif %}

@@ -822,20 +822,8 @@ impl App {
                     Target::Season(..) => "Season",
                     _ => "Episode",
                 };
-                // Unmarking a season of a watched show leaves it covered.
-                let covered = !watched && self.watched_of(target) == Some(true);
-                match (watched, covered) {
-                    (true, _) => format!("{what} marked watched."),
-                    (false, false) => format!("{what} marked unwatched."),
-                    (false, true) => format!(
-                        "{what} unmarked, but still watched with its {}.",
-                        if matches!(target, Target::Episode(..)) {
-                            "season or show"
-                        } else {
-                            "show"
-                        }
-                    ),
-                }
+                let state = if watched { "watched" } else { "unwatched" };
+                format!("{what} marked {state}.")
             }
         }
     }
