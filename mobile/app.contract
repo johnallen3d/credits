@@ -9,7 +9,9 @@ routes nav
   search "/"
     services "/services"
     movie "/movie/:id"
+      movieCredits "/movie/:id/credits"
     tv "/tv/:id"
+      tvCredits "/tv/:id/credits"
       season "/tv/:id/season/:n"
     releases "/releases/:list"
 
@@ -41,7 +43,25 @@ shape CastMember
   person_id: number
   name: string
   role: option<string>
+  episode_count: option<number>
   profile_url: option<string>
+
+// Directors and writers (movies), creators and principal directors (TV).
+shape KeyCrew
+  role: string
+  people: CastMember[]
+
+// A title's whole cast and crew. The server leaves TV actors' episode counts
+// out until the show is watched, as the web does.
+shape Department
+  name: string
+  people: CastMember[]
+
+shape Credits
+  title: string
+  year: option<string>
+  cast: CastMember[]
+  crew: Department[]
 
 shape SeasonSummary
   number: number
@@ -98,7 +118,10 @@ shape Title
   poster_url: option<string>
   backdrop_url: option<string>
   ratings: Ratings
+  key_crew: option<KeyCrew[]>
   cast: CastMember[]
+  cast_total: option<number>
+  crew_total: option<number>
   season_list: option<SeasonSummary[]>
   marks: Marks
   in_theaters: option<bool>
@@ -223,6 +246,9 @@ source setEpisodeWatched(id: string, n: string, episode: number, watched: bool) 
   method "PUT"
   body json
 
+source credits(kind: string, id: string) as shape Credits
+  url "https://credits.jallen7usa.com/api/{kind}/{id}/credits"
+
 source season(id: string, n: string) as shape Season
   url "https://credits.jallen7usa.com/api/tv/{id}/season/{n}"
 
@@ -242,6 +268,12 @@ fn releaseLine(r: Release): string = match r.release_date {
   case some(d) => scoreOf(r.rating) == "" ? formatDate(d, 0, "medium") : `${formatDate(d, 0, "medium")} · ${scoreOf(r.rating)}`,
   case none => scoreOf(r.rating) }
 fn seasonsOf(t: Title): SeasonSummary[] = match t.season_list { case some(xs) => xs.filter(x => x.episode_count > 0), case none => [] }
+fn keyRole(r: string): string = r == "creator" ? "Created by" : r == "director" ? "Directed by" : "Written by"
+fn episodes(o: option<number>): string = match o { case some(n) => n == 1 ? "1 episode" : `${n} episodes`, case none => "" }
+fn creditLine(prefix: string, c: CastMember): string = [match c.role { case some(r) => `${prefix}${r}`, case none => "" }, episodes(c.episode_count)].filter(x => x != "").join(" · ")
+fn countOf(o: option<number>): number = match o { case some(n) => n, case none => 0 }
+fn keyCrewOf(t: Title): KeyCrew[] = match t.key_crew { case some(xs) => xs, case none => [] }
+fn moreCredits(t: Title): bool = countOf(t.cast_total) > t.cast.slice(0, 10).length or countOf(t.crew_total) > 0
 fn themeName(t: string): string = t == "tokyo-night" ? "Tokyo Night" : t == "catppuccin" ? "Catppuccin" : t == "classic" ? "Classic" : "Rosé Pine"
 fn seasonSeen(w: SeasonWatched, season: number): bool = w.show or w.seasons.filter(n => n == season).length > 0
 fn theatersOf(t: Title): bool = match t.in_theaters { case some(b) => b, case none => false }
@@ -350,6 +382,10 @@ component App
           TitleScreen(navKey=`${e.id}`, kind="movie", id=e.params.id)
         if e.name == "tv"
           TitleScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
+        if e.name == "movieCredits"
+          CreditsScreen(navKey=`${e.id}`, kind="movie", id=e.params.id)
+        if e.name == "tvCredits"
+          CreditsScreen(navKey=`${e.id}`, kind="tv", id=e.params.id)
         if e.name == "season"
           SeasonScreen(navKey=`${e.id}`, id=e.params.id, n=e.params.n)
         if e.name == "releases"
@@ -436,6 +472,10 @@ component TitleScreen
                   text text(t.tagline) font="-exact-footnote" color="text.muted"
             if text(t.overview) != ""
               text text(t.overview) padding-top=8 padding-bottom=8 testId="overview" background-color="surface.card"
+            for k in keyCrewOf(t) key=k.role
+              column gap=2 padding-top=6 padding-bottom=6 testId=`crew-${k.role}` background-color="surface.card"
+                text keyRole(k.role) font="-exact-footnote" color="text.muted"
+                text k.people.map(p => p.name).join(", ")
           section
             MarkButtons(marks=marks, busy=pending(marked), failed=(failed(marked) and not pending(marked)),
               toWatch=toggleToWatch, favorite=toggleFavorite, watched=toggleWatched)
@@ -464,7 +504,66 @@ component TitleScreen
                 image text(c.profile_url) aria-label="" width=40 height=40 border-radius=999 object-fit="cover"
                 column flex=1 min-width=0
                   text c.name
-                  text text(c.role) font="-exact-footnote" color="text.muted"
+                  text creditLine("", c) font="-exact-footnote" color="text.muted"
+            if moreCredits(t)
+              link href=(kind == "movie" ? path("movieCredits", id) : path("tvCredits", id)) testId="full-credits" background-color="surface.card"
+                text "Full Cast & Crew" flex=1
+                text `${countOf(t.cast_total)} cast, ${countOf(t.crew_total)} crew` color="text.muted"
+                image "symbol:forward-chevron" color="text.muted"
+
+// A title's whole cast, then its crew a department to a section, as the web's
+// credits page lists them.
+component CreditsScreen
+  props
+    navKey: string
+    kind: string
+    id: string
+  resource c = credits(kind, id) as shape Credits
+  action retry
+    refresh c
+  view
+    column navigationKey=navKey navigationScroll="credits" position="absolute" inset=0
+      display="flex" flex-direction="column"
+      header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
+        text (current(c) ? `${c.title}: Cast & Crew` : "") role="heading" aria-level=2 testId="credits-title"
+      if failed(c)
+        EmptyState(symbol="symbol:alert", title="Can’t Load Cast & Crew", message="The server didn’t answer.")
+          button press=retry testId="credits-retry"
+            text "Try Again"
+      else if not current(c)
+        progress aria-label="Loading"
+      else if c.cast.length == 0 and c.crew.length == 0
+        EmptyState(symbol="symbol:person", title="No Cast or Crew", message="TMDB has no one listed for this title.")
+      else
+        list id="credits" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 background-color="surface.page"
+          if c.cast.length > 0
+            section
+              header
+                text `Cast · ${c.cast.length}`
+              for p in c.cast key=`${p.person_id}`
+                Credit(testId=`cast-${p.person_id}`, person=p, line=creditLine("as ", p))
+          for d in c.crew key=d.name
+            section
+              header
+                text `${d.name} · ${d.people.length}`
+              for p in d.people key=`${p.person_id}`
+                Credit(testId=`${d.name}-${p.person_id}`, person=p, line=creditLine("", p))
+
+component Credit
+  props
+    testId: string
+    person: CastMember
+    line: string
+  view
+    row gap=12 testId=testId background-color="surface.card"
+      if text(person.profile_url) == ""
+        column width=40 height=40 border-radius=999 background-color="surface.thumb"
+      else
+        image text(person.profile_url) aria-label="" width=40 height=40 border-radius=999 object-fit="cover"
+      column flex=1 min-width=0
+        text person.name
+        if line != ""
+          text line font="-exact-footnote" color="text.muted"
 
 // The title's offers in the region, grouped as stream, rent and buy, with the
 // user's services marked. Says when the offers couldn't be loaded or refreshed

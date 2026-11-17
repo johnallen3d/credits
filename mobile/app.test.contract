@@ -234,3 +234,36 @@ test "a movie without dates or theaters shows none of them"
   expect tree missing "in-theaters"
   expect tree missing "showtimes"
   expect tree missing "title-releases"
+
+test "a movie shows its key crew and opens the full cast and crew"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603/credits" with 200 {"kind":"movie","id":603,"title":"The Matrix","year":"1999","cast":[{"person_id":6384,"name":"Keanu Reeves","role":"Neo","episode_count":null,"profile_url":null}],"crew":[{"name":"Directing","people":[{"person_id":9340,"name":"Lana Wachowski","role":"Director","episode_count":null,"profile_url":null}]}],"metadata":{}}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{},"marks":{"to_watch":false,"favorite":false,"watched":false},"key_crew":[{"role":"director","people":[{"person_id":9340,"name":"Lana Wachowski"},{"person_id":9339,"name":"Lilly Wachowski"}]}],"cast":[{"person_id":6384,"name":"Keanu Reeves","role":"Neo"}],"cast_total":36,"crew_total":120}
+  clock data
+  expect text "crew-director" == "Directed byLana Wachowski, Lilly Wachowski"
+  expect text "full-credits" == "Full Cast & Crew36 cast, 120 crew"
+  tap "full-credits"
+  clock data
+  clock settle
+  expect text "credits-title" == "The Matrix: Cast & Crew"
+  expect text "cast-6384" == "Keanu Reevesas Neo"
+  expect text "Directing-9340" == "Lana WachowskiDirector"
+
+test "a show's actors keep their episode counts hidden while its crew show them"
+  at "/tv/1396/credits"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396/credits" with 200 {"kind":"tv","id":1396,"title":"Breaking Bad","cast":[{"person_id":17419,"name":"Bryan Cranston","role":"Walter White","episode_count":null}],"crew":[{"name":"Directing","people":[{"person_id":29779,"name":"Michelle MacLaren","role":"Director","episode_count":11}]}],"metadata":{}}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396" with 200 {"kind":"tv","id":1396,"title":"Breaking Bad","genres":[],"ratings":{},"marks":{"to_watch":false,"favorite":false,"watched":false},"key_crew":[],"cast":[],"cast_total":0,"crew_total":0}
+  clock data
+  expect text "cast-17419" == "Bryan Cranstonas Walter White"
+  expect text "Directing-29779" == "Michelle MacLarenDirector · 11 episodes"
+
+test "cast and crew that can't load say so"
+  at "/tv/1396/credits"
+  fail fetch "https://credits.jallen7usa.com/api/tv/1396/credits"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396" with 200 {"kind":"tv","id":1396,"title":"Breaking Bad","genres":[],"ratings":{},"marks":{"to_watch":false,"favorite":false,"watched":false},"key_crew":[],"cast":[],"cast_total":0,"crew_total":0}
+  clock data
+  expect tree missing "cast-17419"
+  expect tree has "credits-retry"
