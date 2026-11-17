@@ -32,9 +32,16 @@ struct LauncherView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .bottom) {
+                if let flash = model.flash {
+                    FlashView(flash: flash).padding(10)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: model.flash)
 
             Rule()
-            FooterView(inDetail: model.detailHit != nil)
+            FooterView(inDetail: model.detailHit != nil,
+                       lists: model.listTarget.map { $0.kind != .person } ?? false)
         }
         .frame(width: 720, height: 480)
         .foregroundStyle(Theme.fg)
@@ -63,7 +70,7 @@ struct ResultsView: View {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(model.results) { hit in
-                            ResultRow(hit: hit, selected: hit == model.selection)
+                            ResultRow(hit: hit, selected: hit == model.selection, marks: model.marks[hit])
                                 .id(hit)
                                 .onTapGesture { model.open(hit) }
                         }
@@ -81,6 +88,7 @@ struct ResultsView: View {
 struct ResultRow: View {
     let hit: SearchHit
     let selected: Bool
+    let marks: TitleMarks?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -92,6 +100,16 @@ struct ResultRow: View {
                     .font(.subheadline).lineLimit(1)
             }
             Spacer()
+            if let marks {
+                HStack(spacing: 6) {
+                    ForEach(ListAction.allCases, id: \.self) { list in
+                        if marks[list] == true {
+                            Image(systemName: list.icon + ".fill").foregroundStyle(Theme.accent)
+                        }
+                    }
+                }
+                .font(.callout)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -112,7 +130,9 @@ struct DetailContainer: View {
             ScrollView {
                 Group {
                     switch detail {
-                    case .title(let t): TitleDetailView(title: t)
+                    case .title(let t):
+                        TitleDetailView(title: t, marks: model.marks[hit] ?? t.marks,
+                                        changing: model.changing.contains(hit))
                     case .person(let p): PersonDetailView(person: p)
                     }
                 }
@@ -127,6 +147,8 @@ struct DetailContainer: View {
 
 struct TitleDetailView: View {
     let title: TitleDetail
+    let marks: TitleMarks?
+    let changing: Bool
 
     private var facts: String {
         var parts: [String] = []
@@ -154,6 +176,7 @@ struct TitleDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(title.title).font(.title.bold())
                     Text(facts).foregroundStyle(Theme.muted)
+                    ListMarksView(marks: marks, changing: changing)
                     if !ratings.isEmpty {
                         HStack {
                             ForEach(ratings, id: \.self) { r in
@@ -205,6 +228,49 @@ struct TitleDetailView: View {
         case "writer": return "Written by"
         default: return role.capitalized
         }
+    }
+}
+
+/// To watch, Favorites and Watched, each on or off, with its shortcut.
+struct ListMarksView: View {
+    let marks: TitleMarks?
+    let changing: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(ListAction.allCases, id: \.self) { list in
+                chip(list, marks?[list])
+            }
+            if changing { ProgressView().controlSize(.small) }
+        }
+    }
+
+    private func chip(_ list: ListAction, _ on: Bool?) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: on == nil ? "questionmark" : on! ? list.icon + ".fill" : list.icon)
+            Text(list.name)
+            Text("⌘" + list.key.uppercased()).foregroundStyle(Theme.subtle)
+        }
+        .font(.callout)
+        .foregroundStyle(on == true ? Theme.accent : Theme.muted)
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .overlay(Capsule().stroke(on == true ? Theme.accent : Theme.line))
+        .help(on == nil ? "\(list.name): couldn't read" : "")
+    }
+}
+
+struct FlashView: View {
+    let flash: LauncherModel.Flash
+
+    var body: some View {
+        Label(flash.text, systemImage: flash.failed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+            .font(.callout)
+            .lineLimit(2)
+            .foregroundStyle(flash.failed ? Theme.love : Theme.fg)
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Theme.line, in: RoundedRectangle(cornerRadius: 8))
+            .shadow(radius: 6)
+            .transition(.opacity)
     }
 }
 
@@ -350,10 +416,12 @@ struct Notice: View {
 
 struct FooterView: View {
     let inDetail: Bool
+    let lists: Bool
 
     var body: some View {
         HStack(spacing: 16) {
             Spacer()
+            if lists && !inDetail { hint("⌘T ⌘F ⌘W", "To watch, Favorites, Watched") }
             if inDetail {
                 hint("⏎", "Open in browser")
                 hint("esc", "Back")

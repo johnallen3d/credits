@@ -143,6 +143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+           let list = ListAction.allCases.first(where: { $0.key == event.charactersIgnoringModifiers?.lowercased() }) {
+            model.toggle(list)
+            return true
+        }
         switch Int(event.keyCode) {
         case kVK_DownArrow: model.move(1); return true
         case kVK_UpArrow: model.move(-1); return true

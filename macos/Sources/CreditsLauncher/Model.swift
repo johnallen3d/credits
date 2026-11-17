@@ -18,12 +18,26 @@ final class LauncherModel {
     var detail: Detail?
     var detailError: String?
 
+    /// List state per title, from its detail or the last change.
+    var marks: [SearchHit: TitleMarks] = [:]
+    /// Titles with a list change in flight.
+    var changing: Set<SearchHit> = []
+    /// A one-line result of the last list action.
+    var flash: Flash?
+
+    struct Flash: Equatable {
+        let text: String
+        let failed: Bool
+        let id = UUID()
+    }
+
     /// Bumped each time the panel opens, so the view refocuses the field.
     var shown = 0
     var close: () -> Void = {}
 
     private var searchTask: Task<Void, Never>?
     private var detailTask: Task<Void, Never>?
+    private var flashTask: Task<Void, Never>?
 
     func panelOpened() {
         shown += 1
@@ -75,6 +89,7 @@ final class LauncherModel {
                 let d = try await api.detail(hit.kind, hit.id)
                 guard !Task.isCancelled else { return }
                 detail = d
+                if case .title(let t) = d, let m = t.marks { marks[hit] = m }
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
@@ -93,6 +108,49 @@ final class LauncherModel {
     func openInBrowser(_ kind: Kind, _ id: Int) {
         NSWorkspace.shared.open(api.webURL(kind, id))
         close()
+    }
+
+    /// The title a list shortcut applies to: the one in detail, else the selected result.
+    var listTarget: SearchHit? { detailHit ?? selection }
+
+    func toggle(_ list: ListAction) {
+        guard let hit = listTarget else { return }
+        guard hit.kind != .person else {
+            show("Only movies and shows go on lists", failed: true)
+            return
+        }
+        guard !changing.contains(hit) else { return }
+        changing.insert(hit)
+        Task {
+            defer { changing.remove(hit) }
+            do {
+                // Results don't carry list state, so learn it before flipping it.
+                if marks[hit]?[list] == nil, case .title(let t) = try await api.detail(hit.kind, hit.id),
+                   let m = t.marks {
+                    marks[hit] = m
+                }
+                guard let current = marks[hit]?[list] else {
+                    show("Couldn't read whether \(hit.displayName) is in \(list.name)", failed: true)
+                    return
+                }
+                marks[hit] = try await api.setList(list, hit.kind, hit.id, !current)
+                show("\(list.done(!current)): \(hit.displayName)", failed: false)
+            } catch is CancellationError {
+            } catch {
+                show("Couldn't update \(list.name): \(error.localizedDescription)", failed: true)
+            }
+        }
+    }
+
+    private func show(_ text: String, failed: Bool) {
+        let f = Flash(text: text, failed: failed)
+        flash = f
+        flashTask?.cancel()
+        flashTask = Task {
+            try? await Task.sleep(for: .seconds(failed ? 6 : 3))
+            guard !Task.isCancelled, flash == f else { return }
+            flash = nil
+        }
     }
 
     // Keys, routed from the panel's key monitor. Each returns whether it was handled.

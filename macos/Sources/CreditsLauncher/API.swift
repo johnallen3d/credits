@@ -71,6 +71,72 @@ struct TitleDetail: Decodable {
     let keyCrew: [KeyCrew]
     let cast: [Credit]
     let metadata: Metadata
+    let marks: TitleMarks?
+}
+
+/// Whether a title is on To watch and Favorites and marked watched. Each is
+/// nil when the server couldn't read it.
+struct TitleMarks: Decodable, Equatable {
+    var toWatch: Bool?
+    var favorite: Bool?
+    var watched: Bool?
+
+    subscript(list: ListAction) -> Bool? {
+        switch list {
+        case .toWatch: return toWatch
+        case .favorite: return favorite
+        case .watched: return watched
+        }
+    }
+}
+
+private struct TitleMarksUpdate: Decodable { let marks: TitleMarks }
+
+/// The lists the launcher can change, and their ⌘ shortcuts.
+enum ListAction: CaseIterable {
+    case toWatch, favorite, watched
+
+    var name: String {
+        switch self {
+        case .toWatch: return "To watch"
+        case .favorite: return "Favorites"
+        case .watched: return "Watched"
+        }
+    }
+
+    var key: String {
+        switch self {
+        case .toWatch: return "t"
+        case .favorite: return "f"
+        case .watched: return "w"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .toWatch: return "bookmark"
+        case .favorite: return "heart"
+        case .watched: return "eye"
+        }
+    }
+
+    fileprivate var path: String {
+        switch self {
+        case .toWatch: return "watchlist"
+        case .favorite: return "favorite"
+        case .watched: return "watched"
+        }
+    }
+
+    fileprivate var bodyKey: String { self == .watched ? "watched" : "listed" }
+
+    /// What happened, for the confirmation line.
+    func done(_ on: Bool) -> String {
+        switch self {
+        case .toWatch, .favorite: return on ? "Added to \(name)" : "Removed from \(name)"
+        case .watched: return on ? "Marked watched" : "Unmarked watched"
+        }
+    }
 }
 
 struct Releases: Decodable {
@@ -201,11 +267,25 @@ struct CreditsAPI {
         }
     }
 
+    /// Puts a movie or show on a list or takes it off; returns its marks after.
+    func setList(_ list: ListAction, _ kind: Kind, _ id: Int, _ on: Bool) async throws -> TitleMarks {
+        var request = URLRequest(url: base.appendingPathComponent("api/\(kind.rawValue)/\(id)/\(list.path)"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [list.bodyKey: on])
+        let update: TitleMarksUpdate = try await send(request)
+        return update.marks
+    }
+
     private func get<T: Decodable>(_ url: URL) async throws -> T {
+        try await send(URLRequest(url: url))
+    }
+
+    private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(from: url)
+            (data, response) = try await URLSession.shared.data(for: request)
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch {
