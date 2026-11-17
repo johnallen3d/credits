@@ -22,6 +22,13 @@ final class LauncherPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    /// The app usually isn't active while the panel has focus, so AppKit
+    /// may skip the main menu; route ⌘C/⌘V/etc. to it directly.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 /// ⌥Space via Carbon's RegisterEventHotKey, which needs no Accessibility
@@ -221,13 +228,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         ThemeStore.shared.reload()
         applyTheme()
-        NSApp.activate()
+        // Take keys without activating the app, like Raycast or Spotlight,
+        // so the app you were in stays frontmost.
+        if NSApp.isHidden { NSApp.unhideWithoutActivation() }
         panel.makeKeyAndOrderFront(nil)
         model.panelOpened()
     }
 
     func hide() {
         panel.orderOut(nil)
+        // If something did activate the app (launching it from Finder or
+        // Spotlight), give focus back to the previous app.
+        if NSApp.isActive { NSApp.hide(nil) }
     }
 
     @objc func openSite() {
