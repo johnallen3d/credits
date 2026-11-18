@@ -2044,6 +2044,51 @@ async fn marking_the_last_episode_or_season_rolls_up_to_the_show() {
 }
 
 #[tokio::test]
+async fn marking_a_season_or_episode_tmdb_lacks_is_refused() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+    // Breaking Bad: specials (9), season 1 (7) and season 2 (13); 9100 has no seasons yet.
+    for uri in [
+        "/api/tv/1396/season/99/watched",
+        "/api/tv/1396/season/1/episode/8/watched",
+        "/api/tv/1396/season/1/episode/0/watched",
+        "/api/tv/1396/season/99/episode/1/watched",
+        "/api/tv/9100/season/1/watched",
+    ] {
+        let (status, json) = put_json(t.app(), uri, json!({ "watched": true })).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        assert!(json["error"].as_str().unwrap().contains("no such"), "{uri}");
+    }
+    let (status, _) = post_form(t.app(), "/tv/1396/season/99/watched", "watched=true").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = post_form(
+        t.app(),
+        "/tv/1396/season/2/episode/14/watched",
+        "watched=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let watched = t.catalog.watched(1396).await;
+    assert!(watched.seasons.is_empty() && watched.episodes.is_empty());
+    assert!(t.catalog.watched(9100).await.seasons.is_empty());
+
+    // The last episode TMDB lists is fine, and unmarking is never refused.
+    let (status, _) = put_json(
+        t.app(),
+        "/api/tv/1396/season/2/episode/13/watched",
+        json!({ "watched": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = put_json(
+        t.app(),
+        "/api/tv/1396/season/99/watched",
+        json!({ "watched": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn watching_a_title_takes_it_off_to_watch() {
     let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
     for path in ["/movie/603", "/tv/1396", "/tv/5150"] {
@@ -3061,13 +3106,13 @@ async fn json_writes_mirror_the_forms_and_answer_with_the_new_state() {
     assert_eq!(json["watched"]["show"], true);
     let (status, json) = put_json(
         t.app(),
-        "/api/tv/1396/season/3/watched",
+        "/api/tv/1396/season/2/watched",
         json!({ "watched": true }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["state"], "read");
-    assert_eq!(json["seasons"], json!([0, 1, 2, 3]));
+    assert_eq!(json["seasons"], json!([0, 1, 2]));
     // Unwatching an episode the show covers keeps the rest of it watched.
     let (_, json) = put_json(
         t.app(),
@@ -3076,7 +3121,7 @@ async fn json_writes_mirror_the_forms_and_answer_with_the_new_state() {
     )
     .await;
     assert_eq!(json["show"], false, "{json}");
-    assert_eq!(json["seasons"], json!([0, 1, 3]));
+    assert_eq!(json["seasons"], json!([0, 1]));
     assert_eq!(
         json["episodes"],
         json!([{ "season": 2, "number": 2, "apple_tv": false }])

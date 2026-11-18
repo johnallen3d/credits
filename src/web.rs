@@ -227,7 +227,8 @@ enum LookupErrors {
 #[derive(IntoResponses)]
 #[allow(dead_code)] // Only describes responses for the spec.
 enum WriteErrors {
-    /// TMDB has nothing with that ID, or an ID isn't a number.
+    /// TMDB has nothing with that ID, or no such season or episode when
+    /// marking one watched, or an ID isn't a number.
     #[response(status = 404)]
     NotFound(#[to_schema] ApiError),
     /// The database couldn't be read or updated; nothing was saved.
@@ -2548,6 +2549,10 @@ fn watched_failure(error: &WatchedError) -> (StatusCode, &'static str) {
             status_for(e),
             "Unwatching this means marking the rest of the show or season instead, \
              and TMDB couldn't list it, so nothing was saved. Please try again.",
+        ),
+        WatchedError::Unknown => (
+            StatusCode::NOT_FOUND,
+            "TMDB lists no such season or episode for this show, so nothing was saved.",
         ),
     }
 }

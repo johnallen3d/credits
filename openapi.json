@@ -116,7 +116,7 @@
             }
           },
           "404": {
-            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "description": "TMDB has nothing with that ID, or no such season or episode when\nmarking one watched, or an ID isn't a number.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1203,7 +1203,7 @@
             }
           },
           "404": {
-            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "description": "TMDB has nothing with that ID, or no such season or episode when\nmarking one watched, or an ID isn't a number.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1300,7 +1300,7 @@
             }
           },
           "404": {
-            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "description": "TMDB has nothing with that ID, or no such season or episode when\nmarking one watched, or an ID isn't a number.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1553,7 +1553,7 @@
             }
           },
           "404": {
-            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "description": "TMDB has nothing with that ID, or no such season or episode when\nmarking one watched, or an ID isn't a number.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1650,7 +1650,7 @@
             }
           },
           "404": {
-            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "description": "TMDB has nothing with that ID, or no such season or episode when\nmarking one watched, or an ID isn't a number.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1747,7 +1747,7 @@
             }
           },
           "404": {
-            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "description": "TMDB has nothing with that ID, or no such season or episode when\nmarking one watched, or an ID isn't a number.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1844,7 +1844,7 @@
             }
           },
           "404": {
-            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "description": "TMDB has nothing with that ID, or no such season or episode when\nmarking one watched, or an ID isn't a number.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1952,7 +1952,7 @@
             }
           },
           "404": {
-            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "description": "TMDB has nothing with that ID, or no such season or episode when\nmarking one watched, or an ID isn't a number.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2071,7 +2071,7 @@
             }
           },
           "404": {
-            "description": "TMDB has nothing with that ID, or an ID isn't a number.",
+            "description": "TMDB has nothing with that ID, or no such season or episode when\nmarking one watched, or an ID isn't a number.",
             "content": {
               "application/json": {
                 "schema": {

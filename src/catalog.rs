@@ -111,6 +111,9 @@ pub enum WatchedError {
     /// episodes, and those couldn't be loaded.
     #[error("loading what else stays watched failed: {0}")]
     Lookup(#[from] CatalogError),
+    /// TMDB lists no such season or episode for the show, or no such show.
+    #[error("TMDB has no such season or episode")]
+    Unknown,
 }
 
 /// Why the user's services couldn't be saved.
@@ -301,6 +304,7 @@ impl Catalog {
         if !watched {
             return self.unwatch(tv_id, target).await;
         }
+        self.check_target_exists(tv_id, target).await?;
         let at = Timestamp::now();
         self.watched.set(tv_id, target, true, at).await?;
         match target {
@@ -308,6 +312,35 @@ impl Catalog {
             _ => self.roll_up_watched(tv_id, at).await,
         }
         Ok(())
+    }
+
+    /// Refuses a season or episode the show's TMDB listing lacks. When TMDB
+    /// can't be reached the mark is allowed, as the listing can't settle it.
+    async fn check_target_exists(
+        &self,
+        tv_id: u64,
+        target: WatchTarget,
+    ) -> Result<(), WatchedError> {
+        let (season, episode) = match target {
+            WatchTarget::Show => return Ok(()),
+            WatchTarget::Season(s) => (s, None),
+            WatchTarget::Episode { season, number } => (season, Some(number)),
+        };
+        let t = match self.tv_raw(tv_id).await {
+            Ok((t, _)) => t,
+            Err(CatalogError::NotFound) => return Err(WatchedError::Unknown),
+            Err(e) => {
+                tracing::warn!(error = %e, tv_id, "checking the season exists failed; saving anyway");
+                return Ok(());
+            }
+        };
+        let Some(listed) = t.seasons.iter().find(|s| s.season_number == season) else {
+            return Err(WatchedError::Unknown);
+        };
+        match (episode, listed.episode_count) {
+            (Some(n), Some(count)) if n == 0 || n > count => Err(WatchedError::Unknown),
+            _ => Ok(()),
+        }
     }
 
     /// Unmarks a show, season or episode. A show's seasons and episodes keep
