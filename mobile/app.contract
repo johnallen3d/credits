@@ -717,6 +717,7 @@ component App
   mutation viewed as shape Recent[] refreshes recents
   // The releases screen's pages, one request each: More asks for the next.
   state releasesPages = 1
+  state edgePull = 0
   resource releasesLoaded = releases(releasesListOf(stack(nav)), n) for n in releasesPageNumbers(stack(nav), releasesPages) key=`${n}` as shape Releases
 
   task scheme when theme != "" key=theme
@@ -752,6 +753,13 @@ component App
     nav = go(nav, url)
   action closeMenu
     close("drawer")
+  // A drag in from Home's left edge pulls the menu out: far enough or fast enough.
+  action edgePan(dx: number, dy: number)
+    edgePull = edgePull + dx
+  action edgeReleased(vx: number, vy: number)
+    if edgePull > 40 or vx > 300
+      showModal("drawer")
+    edgePull = 0
   action open(url: string)
     close("drawer")
     nav = go(nav, url)
@@ -794,6 +802,9 @@ component App
                     EmptyState(symbol="symbol:play", title="Nothing Viewed Yet", message="Titles and people you open show up here.")
                       button press=pick("search") testId="home-search"
                         text "Search"
+                  // The left edge's strip, over the page: a drag in from it opens the menu.
+                  column position="absolute" top=0 bottom=0 left=0 width=20 touch-action="pan-y"
+                    pan=edgePan panrelease=edgeReleased aria-hidden=true testId="menu-edge"
               // Search: the field in the bar, and its results.
               if e.name == "search"
                 column navigationKey=`${e.id}` navigationScroll="hits" position="absolute" inset=0

@@ -968,3 +968,13 @@ test "about still credits the sources when the server doesn't answer"
   expect tree has "about-tmdb-notice"
   expect tree has "about-ha-failed"
   expect tree has "about-ha-retry"
+
+test "a drag in from the start screen's left edge opens the menu"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/playback" with 200 {"live":{"state":"connected","since":"2026-11-16T14:46:31Z"},"status":{"state":"ok","at":"2026-11-16T14:46:31Z"},"players":[],"pending":[],"recent":[],"other":[],"unreadable":false}
+  tap "menu-edge" drag 120 0
+  clock settle
+  expect state edgePull == 0
+  tap "open-about"
+  clock data
+  expect tree has "about-title"
