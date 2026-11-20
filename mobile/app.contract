@@ -170,6 +170,8 @@ shape Title
   showtimes_url: option<string>
   metadata: option<Metadata>
   sources: option<string[]>
+  // A show's watched marks; movies have none.
+  watched: option<SeasonWatched>
 
 shape Episode
   number: number
@@ -573,6 +575,13 @@ fn keyCrewOf(t: Title): KeyCrew[] = match t.key_crew { case some(xs) => xs, case
 fn moreCredits(t: Title): bool = countOf(t.cast_total) > t.cast.slice(0, 10).length or countOf(t.crew_total) > 0
 fn themeName(t: string): string = t == "tokyo-night" ? "Tokyo Night" : t == "catppuccin" ? "Catppuccin" : t == "classic" ? "Classic" : "Rosé Pine"
 fn seasonSeen(w: SeasonWatched, season: number): bool = w.show or w.seasons.filter(n => n == season).length > 0
+// A season's watched label as the web shows it: "✓ Watched" once it's marked,
+// "N% watched" while under way (rounded down so one episode short never reads
+// 100%), empty before any episode is.
+fn seasonProgress(o: option<SeasonWatched>, s: SeasonSummary): string = match o {
+  case some(w) => seasonSeen(w, s.number) ? "✓ Watched" : percentWatched(w.episodes.filter(e => e.season == s.number and e.number <= s.episode_count).length, s.episode_count),
+  case none => "" }
+fn percentWatched(seen: number, total: number): string = seen > 0 and seen < total ? `${floor(seen * 100 / total)}% watched` : ""
 fn theatersOf(t: Title): bool = match t.in_theaters { case some(b) => b, case none => false }
 fn creditScore(o: option<Score>): string = match o {
   case some(s) => s.scale == 100 ? `${round(s.score)}%` : `${s.score}`,
@@ -1178,6 +1187,8 @@ component TitleScreen
               for s in seasonsOf(t) key=`${s.number}`
                 link href=path("season", id, `${s.number}`) testId=`season-${s.number}` background-color="surface.card"
                   text s.name flex=1
+                  if seasonProgress(t.watched, s) != ""
+                    text seasonProgress(t.watched, s) color="mark.watched" testId=`season-${s.number}-progress`
                   text `${s.episode_count} ${s.episode_count == 1 ? "episode" : "episodes"}` color="text.muted"
                   image "symbol:forward-chevron" color="text.muted"
           section

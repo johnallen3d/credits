@@ -455,6 +455,15 @@ test "a stale season with unreadable watched marks says both"
   expect tree has "stale"
   expect text "watched-note" == "Watched marks couldn’t be read, so every episode stays blurred."
 
+test "a watched season says so and one under way shows how much of it is watched"
+  at "/tv/1396"
+  fail fetch "https://credits.jallen7usa.com/api/recent"
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396" with 200 {"kind":"tv","id":1396,"title":"Breaking Bad","tagline":null,"overview":null,"year":"2008","genres":[],"runtime_minutes":null,"poster_url":null,"backdrop_url":null,"ratings":{"state":"fresh","unavailable_reason":null,"preferred":null,"fetched_at":null},"cast":[],"season_list":[{"number":1,"name":"Season 1","year":"2008","episode_count":7},{"number":2,"name":"Season 2","year":"2009","episode_count":7},{"number":3,"name":"Season 3","year":"2010","episode_count":13}],"marks":{"to_watch":false,"favorite":false,"watched":false},"watched":{"state":"fresh","show":false,"seasons":[1],"episodes":[{"season":1,"number":1,"apple_tv":false},{"season":2,"number":1,"apple_tv":false},{"season":2,"number":2,"apple_tv":false},{"season":2,"number":3,"apple_tv":true}]},"metadata":{"state":"fresh","fetched_at":"2026-11-16T08:00:00Z"}}
+  expect tree has "season-2"
+  expect text "season-1-progress" == "✓ Watched"
+  expect text "season-2-progress" == "42% watched"
+  expect tree missing "season-3-progress"
+
 test "tapping an episode in a season opens its screen"
   at "/tv/1396/season/1"
   fail fetch "https://credits.jallen7usa.com/api/recent"
