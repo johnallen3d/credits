@@ -218,10 +218,7 @@ final class LauncherModel {
     private func fetch(_ tab: HomeTab) async throws -> HomeList {
         switch tab {
         case .recent:
-            let r = try await api.recent()
-            return HomeList(hits: r.recent.map {
-                SearchHit(kind: $0.kind, id: $0.id, title: $0.name, year: $0.year, posterUrl: $0.imageUrl)
-            })
+            return recentList(try await api.recent())
         case .toWatch:
             let w = try await api.watchlist(sort: toWatchSort)
             for t in w.titles {
@@ -549,6 +546,28 @@ final class LauncherModel {
         }
     }
 
+    private func recentList(_ r: RecentViews) -> HomeList {
+        HomeList(hits: r.recent.map {
+            SearchHit(kind: $0.kind, id: $0.id, title: $0.name, year: $0.year, posterUrl: $0.imageUrl)
+        })
+    }
+
+    /// Adds a movie, show or person page to Recently viewed, as the web does
+    /// when it serves one. Other pages don't count; a failure only goes
+    /// unrecorded.
+    private func recordView(_ hit: SearchHit) {
+        guard [.movie, .tv, .person].contains(hit.kind) else { return }
+        Task {
+            guard let r = try? await api.recordView(hit.kind, hit.id) else { return }
+            // A load in flight would bring back the list from before this view.
+            homeTasks[.recent]?.cancel()
+            homeTasks[.recent] = nil
+            homeLoading.remove(.recent)
+            home[.recent] = recentList(r)
+            homeError[.recent] = nil
+        }
+    }
+
     private func load(_ hit: SearchHit) {
         viewing = nil
         peeking = false
@@ -565,6 +584,7 @@ final class LauncherModel {
                 let d = try await api.detail(hit)
                 guard !Task.isCancelled else { return }
                 detail = d
+                recordView(hit)
                 if case .title(let t) = d, let m = t.marks {
                     marks[hit] = m
                     if m.toWatch == true { loadKnownTags() }

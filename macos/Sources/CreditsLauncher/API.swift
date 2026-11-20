@@ -916,6 +916,16 @@ struct CreditsAPI {
         try await get(base.appendingPathComponent("api/recent"))
     }
 
+    /// Records that a movie's, show's or person's page was opened, as opening
+    /// its web page does; answers with the new Recently viewed list.
+    func recordView(_ kind: Kind, _ id: Int) async throws -> RecentViews {
+        var request = URLRequest(url: base.appendingPathComponent("api/recent"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["kind": kind.rawValue, "id": id])
+        return try await send(request)
+    }
+
     func favorites(sort: WatchlistSort = .added) async throws -> Watchlist {
         var url = URLComponents(url: base.appendingPathComponent("api/favorites"), resolvingAgainstBaseURL: false)!
         url.queryItems = [URLQueryItem(name: "sort", value: sort.rawValue)]
