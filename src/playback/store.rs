@@ -307,6 +307,20 @@ impl Playback {
         .map(drop)
     }
 
+    /// Makes a row a movie: the TV app gave a movie an episode's kind of ID.
+    pub async fn set_movie(&self, key: &Key<'_>) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE playback_progress SET kind = 'movie', season = 0, episode = 0
+             WHERE player = ? AND app = ? AND item_key = ?",
+        )
+        .bind(key.player)
+        .bind(key.app.id())
+        .bind(key.item_key)
+        .execute(&self.pool)
+        .await
+        .map(drop)
+    }
+
     pub async fn set_status(
         &self,
         key: &Key<'_>,

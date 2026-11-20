@@ -154,7 +154,7 @@ const INFUSE_ID: &str = "com.firecore.infuse";
 const TV_ID: &str = "com.apple.TVWatchList";
 /// The shortest video from the TV app taken to be a movie: 40 minutes, the
 /// Academy's line between a short and a feature.
-const TV_MOVIE_SECONDS: u32 = 40 * 60;
+pub(crate) const TV_MOVIE_SECONDS: u32 = 40 * 60;
 
 pub fn parse(event: &PlaybackEvent) -> Parsed {
     let title = event.title.as_deref().map(str::trim).unwrap_or_default();

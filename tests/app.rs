@@ -115,6 +115,10 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         { "id": 334042, "name": "Dark Matter: The Official Podcast",
                           "first_air_date": "2026-08-27" }
                     ]),
+                    // Played as S1 E1 of no show: the movie (see /3/search/movie).
+                    Some("Mayday") => json!([
+                        { "id": 90, "name": "Mayday", "first_air_date": "2003-09-03" }
+                    ]),
                     Some("Slow Horses") => json!([
                         { "id": 95480, "name": "Slow Horses", "first_air_date": "2022-04-01",
                           "overview": "Disgraced MI5 agents." }
@@ -141,6 +145,10 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                     ]),
                     Some("Good Will Hunting") => json!([
                         { "id": 489, "title": "Good Will Hunting", "release_date": "1997-12-05" }
+                    ]),
+                    Some("Mayday") => json!([
+                        { "id": 1137844, "title": "Mayday", "release_date": "2026-10-10" },
+                        { "id": 672521, "title": "Mayday", "release_date": "2021-01-28" }
                     ]),
                     _ => json!([]),
                 };
@@ -203,6 +211,8 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                     1091 => Some(("The Thing", "1982-06-25", 109)),
                     60935 => Some(("The Thing", "2011-10-12", 103)),
                     489 => Some(("Good Will Hunting", "1997-12-05", 127)),
+                    1137844 => Some(("Mayday", "2026-10-10", 111)),
+                    672521 => Some(("Mayday", "2021-01-28", 100)),
                     _ => None,
                 };
                 if let Some((title, release_date, runtime)) = played {
@@ -4596,6 +4606,39 @@ async fn a_movie_played_in_the_tv_app_is_marked_watched_but_trailers_are_not() {
     ));
     assert!(body.contains("Marked watched"));
     assert!(!body.contains("Which show or movie is this?"));
+}
+
+#[tokio::test]
+async fn a_tv_app_movie_with_an_episode_id_is_marked_as_the_movie() {
+    let p = PlaybackApp::new().await;
+    // Nov 18: Mayday (2026, 111 min) had an episode-style ID, so it read as
+    // S1 E1; the 2003 show has no such episode, and only 2026's runtime fits.
+    p.ha.set_rows(vec![
+        tv_app_row(130, "playing", "Mayday", "A0155401001", 6768),
+        tv_app_row(12, "idle", "", "", 0),
+    ]);
+    p.sync().await.unwrap();
+    assert!(p.t.catalog.movie_watched(1137844).await.apple_tv);
+    assert!(!p.t.catalog.movie_watched(672521).await.apple_tv);
+    let body = p.page().await;
+    assert!(
+        body.contains(r#"<a href="/movie/1137844">Mayday</a> <span class="muted">· movie</span>"#)
+    );
+    assert!(!body.contains("Which show or movie is this?"));
+}
+
+#[tokio::test]
+async fn a_tv_app_pilot_no_show_fits_stays_an_episode_unless_it_runs_feature_length() {
+    let p = PlaybackApp::new().await;
+    // 30 min is too short for a movie, so it waits on a choice of show.
+    p.ha.set_rows(vec![
+        tv_app_row(60, "playing", "Mayday", "A0155401001", 1800),
+        tv_app_row(12, "idle", "", "", 0),
+    ]);
+    p.sync().await.unwrap();
+    assert!(!p.t.catalog.movie_watched(1137844).await.apple_tv);
+    let body = p.page().await;
+    assert!(body.contains("No TMDB show named “Mayday” has a S1 E1 that fits"));
 }
 
 #[tokio::test]

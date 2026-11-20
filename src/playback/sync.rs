@@ -8,8 +8,8 @@ use jiff::{SignedDuration, Timestamp};
 use super::store::{Key, Mapping};
 use super::{
     App, Candidate, Detection, DetectionStatus, HomeAssistant, Kind, Live, PlaybackEvent,
-    accumulate, content_id_block, is_watched, movie_is_watched, movie_title, runtime_fits,
-    show_key,
+    TV_MOVIE_SECONDS, accumulate, content_id_block, is_watched, movie_is_watched, movie_title,
+    runtime_fits, show_key,
 };
 use crate::catalog::{Catalog, CatalogError};
 
@@ -142,6 +142,8 @@ async fn read_players(
 enum Outcome {
     /// Mark the TMDB show's season and episode (0 and 0 for a movie).
     Mark(u64, Place),
+    /// What played as a TV app episode is this TMDB movie: see `movie_instead`.
+    MarkMovie(u64),
     Ask(DetectionStatus, String),
     Ignore,
     /// TMDB failed; try again on the next read.
@@ -178,7 +180,7 @@ async fn resolve_pass(catalog: &Catalog, matched: &mut Vec<(App, Kind, String)>)
             return;
         }
     };
-    for (d, next_started) in ready {
+    for (mut d, next_started) in ready {
         let Some(duration) = duration(catalog, &d).await else {
             continue;
         };
@@ -194,7 +196,18 @@ async fn resolve_pass(catalog: &Catalog, matched: &mut Vec<(App, Kind, String)>)
             app: d.app,
             item_key: &d.item_key,
         };
-        let saved = match resolve(catalog, &d, matched).await {
+        let mut outcome = resolve(catalog, &d, matched).await;
+        if let Outcome::MarkMovie(movie_id) = outcome {
+            if let Err(e) = store.set_movie(&key).await {
+                tracing::warn!(error = %e, "saving that an episode is a movie failed");
+                continue;
+            }
+            d.kind = Kind::Movie;
+            (d.season, d.episode) = (0, 0);
+            outcome = Outcome::Mark(movie_id, (0, 0));
+        }
+        let saved = match outcome {
+            Outcome::MarkMovie(_) => unreachable!("made a movie mark above"),
             Outcome::Mark(tmdb_id, (season, episode)) => {
                 let marked = match d.kind {
                     Kind::Episode => {
@@ -308,6 +321,9 @@ async fn resolve(
                 Err(e) => return Outcome::Retry(retry_note(&e)),
             };
             if named.is_empty() {
+                if let Some(outcome) = movie_instead(catalog, d).await {
+                    return outcome;
+                }
                 return Outcome::Ask(
                     DetectionStatus::NoMatch,
                     format!("No TMDB {noun} is named “{}”", d.show_title),
@@ -339,17 +355,19 @@ async fn resolve(
                     matched.push((d.app, d.kind, d.show_key.clone()));
                     Outcome::Mark(*id, *place)
                 }
-                [] => Outcome::Ask(
-                    DetectionStatus::NeedsConfirmation,
-                    format!(
-                        "No TMDB {noun} named “{}” has {} that fits",
-                        d.show_title,
-                        match d.kind {
-                            Kind::Episode => format!("a {what}"),
-                            Kind::Movie => "a runtime".to_owned(),
-                        }
-                    ),
-                ),
+                [] => movie_instead(catalog, d).await.unwrap_or_else(|| {
+                    Outcome::Ask(
+                        DetectionStatus::NeedsConfirmation,
+                        format!(
+                            "No TMDB {noun} named “{}” has {} that fits",
+                            d.show_title,
+                            match d.kind {
+                                Kind::Episode => format!("a {what}"),
+                                Kind::Movie => "a runtime".to_owned(),
+                            }
+                        ),
+                    )
+                }),
                 more => Outcome::Ask(
                     DetectionStatus::NeedsConfirmation,
                     format!(
@@ -361,6 +379,52 @@ async fn resolve(
             }
         }
     }
+}
+
+/// Whether a TV app "S1 E1" no show fits is a movie: Apple gives some of
+/// its films episode-style content IDs (Mayday's was `A0155401001`). It is
+/// when it ran feature-length and exactly one TMDB movie by its name has a
+/// runtime that fits; that movie is then remembered as the title's match.
+/// `None` leaves it an episode.
+async fn movie_instead(catalog: &Catalog, d: &Detection) -> Option<Outcome> {
+    let feature = d.duration.is_some_and(|s| s >= TV_MOVIE_SECONDS);
+    if d.app != App::Tv || d.kind != Kind::Episode || (d.season, d.episode) != (1, 1) || !feature {
+        return None;
+    }
+    let movies = match catalog.movies_named(&d.show_title).await {
+        Ok(movies) => movies,
+        Err(e) => return Some(Outcome::Retry(retry_note(&e))),
+    };
+    let mut fitting = Vec::new();
+    for m in movies.iter().filter(|m| show_key(&m.name) == d.show_key) {
+        match catalog.movie_runtime(m.id).await {
+            Ok(Some(runtime)) if d.duration.is_some_and(|s| runtime_fits(s, runtime)) => {
+                fitting.push(m.id);
+            }
+            Ok(_) => {}
+            Err(e) => return Some(Outcome::Retry(retry_note(&e))),
+        }
+    }
+    let [movie_id] = fitting[..] else {
+        return None;
+    };
+    if let Err(e) = catalog
+        .playback_store()
+        .set_mapping(
+            d.app,
+            Kind::Movie,
+            &d.show_key,
+            Mapping::Show(movie_id),
+            "auto",
+            Timestamp::now(),
+        )
+        .await
+    {
+        return Some(Outcome::Retry(format!(
+            "couldn't save the movie match: {e}"
+        )));
+    }
+    Some(Outcome::MarkMovie(movie_id))
 }
 
 /// TMDB shows or movies with exactly the name that played, and, for a
@@ -512,11 +576,7 @@ async fn block_place(
 
 /// The `number`th episode counting straight through `seasons` from `start`,
 /// with its runtime.
-fn locate(
-    seasons: &[Season],
-    start: u32,
-    number: u32,
-) -> Option<(Place, Option<u32>)> {
+fn locate(seasons: &[Season], start: u32, number: u32) -> Option<(Place, Option<u32>)> {
     let mut n = number;
     for (season, runtimes) in seasons.iter().filter(|(s, _)| *s >= start) {
         let count = runtimes.len() as u32;
