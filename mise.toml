@@ -28,8 +28,15 @@ rm -rf "$app" && mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp Info.plist "$app/Contents/"
 cp AppIcon.icns "$app/Contents/Resources/"
 cp "$(swift build -c release --show-bin-path)/CreditsLauncher" "$app/Contents/MacOS/"
+./intents-metadata.sh
+cp -R Metadata.appintents "$app/Contents/Resources/"
 codesign --force --sign - "$app"
 '''
+
+[tasks."mac:intents"]
+description = "Regenerate macos/Metadata.appintents (Siri and Shortcuts metadata, committed for the Nix build) after changing the intents"
+dir = "macos"
+run = "swift build -c release && UPDATE_INTENTS=1 ./intents-metadata.sh"
 
 [tasks.mac]
 description = "Build the macOS launcher and run it from macos/build"

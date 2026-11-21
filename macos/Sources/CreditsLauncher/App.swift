@@ -75,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         panel.contentView = host
         applyTheme()
         model.close = { [weak self] in self?.hide() }
+        Launcher.app = self
 
         // Never shown (the app has no menu bar), but routes ⌘A/⌘C/⌘V/⌘Z to the search field.
         let edit = NSMenu(title: "Edit")
@@ -299,14 +300,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // so the app you were in stays frontmost.
         if NSApp.isHidden { NSApp.unhideWithoutActivation() }
         panel.makeKeyAndOrderFront(nil)
+        model.visible = true
         model.panelOpened()
     }
 
     func hide() {
         panel.orderOut(nil)
+        model.visible = false
         // If something did activate the app (launching it from Finder or
         // Spotlight), give focus back to the previous app.
         if NSApp.isActive { NSApp.hide(nil) }
+    }
+
+    var panelVisible: Bool { panel.isVisible }
+
+    /// Opens a title's page in the panel, from Spotlight or Shortcuts.
+    func open(_ hit: SearchHit) {
+        model.open(hit)
+        show()
     }
 
     @objc func openSite() {

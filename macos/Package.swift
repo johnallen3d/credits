@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "CreditsLauncher",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("15.2")],
     targets: [
         .executableTarget(
             name: "CreditsLauncher",

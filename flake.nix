@@ -73,9 +73,12 @@
             ./macos/Sources
             ./macos/Info.plist
             ./macos/AppIcon.icns
+            ./macos/Metadata.appintents
           ];
         };
         nativeBuildInputs = with pkgs; [swift swiftpm swiftPackages.swiftpmHook rcodesign];
+        # App Intents' IndexedEntity and NSUserActivity.appEntityIdentifier need macOS 15.2.
+        buildInputs = [pkgs.apple-sdk_15];
         # The swiftpm hook runs `swift build -c release`. The Info.plist key
         # tells the app it's started at login by the installer (launchd), so it
         # hides Open at Login, whose registered store path would go stale.
@@ -85,6 +88,8 @@
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           sed 's|^</dict>|\t<key>CreditsLoginItemManaged</key><true/>\n</dict>|' Info.plist > "$app/Contents/Info.plist"
           cp AppIcon.icns "$app/Contents/Resources/"
+          # Siri and Shortcuts metadata, extracted with Xcode by `mise run mac:intents`.
+          cp -R Metadata.appintents "$app/Contents/Resources/"
           cp "$(swiftpmBinPath)/CreditsLauncher" "$app/Contents/MacOS/"
           runHook postInstall
         '';

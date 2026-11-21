@@ -24,6 +24,8 @@ watch, and keep track of what you've watched, without spoilers.
 - **Seen on Apple TV:** optional, marks what you watch via Home Assistant
 - **Survives outages:** serves stale cached data, and says when
   something can't be loaded rather than showing it empty
+- **Siri, Shortcuts and Spotlight** (macOS launcher): add to and search
+  To watch; your lists show in Spotlight
 - **Themes:** Rosé Pine, Tokyo Night, Catppuccin, Classic
 - **JSON API** under `/api/…` for every page, described by
   [`openapi.json`](openapi.json)
@@ -58,6 +60,7 @@ theme = "rose-pine"   # optional
 ```sh
 mise run test      # fake TMDB and OMDb; no keys needed
 mise run openapi   # regenerate openapi.json (never edit it by hand)
+mise run mac:intents   # regenerate the launcher's Siri/Shortcuts metadata
 mise run hooks     # pre-commit hook that keeps openapi.json in sync
 nix flake check    # what CI runs
 ```

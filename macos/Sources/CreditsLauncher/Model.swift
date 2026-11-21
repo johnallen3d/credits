@@ -76,7 +76,16 @@ final class LauncherModel {
     var knownTags: [String] = []
 
     /// The page in detail: a result, or a credit opened from another page.
-    var detailHit: SearchHit?
+    var detailHit: SearchHit? {
+        didSet { onScreen.update(detailHit, visible: visible) }
+    }
+    /// Whether the panel is on screen, so Siri is told about its page only then.
+    var visible = false {
+        didSet { onScreen.update(detailHit, visible: visible) }
+    }
+    @ObservationIgnored private let onScreen = OnScreenTitle()
+    /// When Spotlight's index of the lists was last refreshed on opening.
+    @ObservationIgnored private var indexedAt: Date?
     var detail: Detail?
     var detailError: String?
     /// The selected credit on the page in detail, an index into `detailRows`.
@@ -151,6 +160,17 @@ final class LauncherModel {
         shown += 1
         viewing = nil
         loadHome(tab)
+        if indexedAt.map({ Date().timeIntervalSince($0) > 600 }) ?? true {
+            indexedAt = Date()
+            Task { await SpotlightIndex.refresh() }
+        }
+    }
+
+    /// A title's To watch mark changed from Siri or Shortcuts: show it here,
+    /// and read To watch again.
+    func listChangedElsewhere(_ hit: SearchHit, _ m: TitleMarks) {
+        marks[hit] = m
+        reloadHome(.toWatch)
     }
 
     /// Shows the next or previous tab's list, refreshing it.
@@ -750,6 +770,7 @@ final class LauncherModel {
                     return
                 }
                 marks[hit] = try await api.setList(list, hit.kind, hit.id, !current)
+                Task { await SpotlightIndex.refresh() }
                 // Leaving To watch drops its tags on the server.
                 if list == .toWatch, detailHit == hit, case .title(var t) = detail {
                     if current { t.sources = nil } else { loadKnownTags() }
