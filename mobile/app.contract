@@ -959,9 +959,11 @@ component TileLink
   derive label = tile.label
   derive picture = tile.picture
   derive year = tile.year
+  action copyName
+    copyText(label)
   view
     link href=(kind == "movie" ? path("movie", id) : kind == "tv" ? path("tv", id) : path("person", id))
-      display="flex" flex-direction="column" gap=6 testId=testId flex-shrink=0
+      display="flex" flex-direction="column" gap=6 testId=testId flex-shrink=0 contextPopover=`${testId}-menu`
       width=(width == 0 ? "100%" : `${width}px`)
       aria-label=(year == "" ? `${label}, ${kindName(kind)}` : `${label}, ${kindName(kind)}, ${year}`)
       if picture == ""
@@ -976,6 +978,10 @@ component TileLink
           text-align=(kind == "person" ? "center" : "start")
         if kind != "person"
           text (year == "" ? kindName(kind) : `${kindName(kind)} · ${year}`) font="-exact-caption1" color="text.muted"
+    column id=`${testId}-menu` popover="auto" role="menu"
+      button press=copyName popovertarget=`${testId}-menu` popovertargetaction="hide" testId=`${testId}-copy`
+        image "symbol:copy"
+        text "Copy Name"
 
 // A section of search results: each hit's artwork, name, type and year, and its
 // overview or known-for line, as the web and macOS results show them, with In theaters
@@ -1018,10 +1024,12 @@ component HitRow
   derive kind = tile.kind
   derive id = tile.id
   derive year = tile.year
+  action copyName
+    copyText(tile.label)
   view
     row align-items="flex-start" gap=8
       link href=(kind == "movie" ? path("movie", id) : kind == "tv" ? path("tv", id) : path("person", id))
-        display="flex" align-items="flex-start" gap=12 flex=1 min-width=0 testId=testId
+        display="flex" align-items="flex-start" gap=12 flex=1 min-width=0 testId=testId contextPopover=`${testId}-menu`
         aria-label=[tile.label, kindName(kind), year, inTheaters ? "in theaters" : ""].filter(x => x != "").join(", ")
         if tile.picture == ""
           column width=60 height=(kind == "person" ? 60 : 90) flex-shrink=0 border-radius=(kind == "person" ? "50%" : "8px")
@@ -1037,6 +1045,10 @@ component HitRow
             text "In theaters" font="-exact-caption1" color="accent" testId=`${testId}-in-theaters`
           if summary != ""
             text summary font="-exact-footnote" color="text.muted" line-clamp=3 testId=`${testId}-summary`
+      column id=`${testId}-menu` popover="auto" role="menu"
+        button press=copyName popovertarget=`${testId}-menu` popovertargetaction="hide" testId=`${testId}-copy`
+          image "symbol:copy"
+          text "Copy Name"
       if kind != "person"
         column gap=4 flex-shrink=0
           button press=toWatch(kind, id, not onToWatch) aria-pressed=onToWatch disabled=(busy or not toWatchKnown)
@@ -1063,6 +1075,11 @@ component TitleScreen
     kind: string
     id: string
   resource t = title(kind, id) as shape Title
+  state aimedName = ""
+  action aimName(name: string)
+    aimedName = name
+  action copyAimed
+    copyText(aimedName)
   action retry
     refresh t
   // The last mark's reply is the server's marks after it, shown until the screen
@@ -1099,6 +1116,10 @@ component TitleScreen
       display="flex" flex-direction="column"
       header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
         text (current(t) ? t.title : "") role="heading" aria-level=2 testId="title"
+      column id=`${navKey}-name-menu` popover="auto" role="menu"
+        button press=copyAimed popovertarget=`${navKey}-name-menu` popovertargetaction="hide" testId="name-copy"
+          image "symbol:copy"
+          text "Copy Name"
       if failed(t)
         EmptyState(symbol="symbol:alert", title="Can’t Load Title", message="The server didn’t answer.")
           button press=retry testId="title-retry"
@@ -1113,6 +1134,7 @@ component TitleScreen
           section
             if text(t.backdrop_url) != ""
               link href=photoPath(text(t.backdrop_url)) aria-label=`Backdrop for ${t.title}, full size` testId="backdrop"
+                contextmenu=aimName(t.title) contextPopover=`${navKey}-name-menu`
                 background-color="surface.card"
                 image text(t.backdrop_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
             row gap=16 align-items="flex-start" padding-top=12 padding-bottom=12 background-color="surface.card"
@@ -1120,8 +1142,10 @@ component TitleScreen
                 column width=110 height=165 border-radius=8 background-color="surface.thumb"
               else
                 link href=photoPath(text(t.poster_url)) aria-label=`Poster for ${t.title}, full size` testId="poster"
+                  contextmenu=aimName(t.title) contextPopover=`${navKey}-name-menu`
                   image text(t.poster_url) aria-label="" width=110 height=165 border-radius=8 object-fit="cover"
               column flex=1 min-width=0 gap=6
+                text t.title font="-exact-title2" font-weight=700 user-select="all" testId="title-name"
                 text titleFacts(t) color="text.muted" testId="title-facts"
                 if theatersOf(t)
                   text "In theaters" font="-exact-footnote" color="accent" testId="in-theaters"
@@ -1186,6 +1210,7 @@ component TitleScreen
                 text "Seasons"
               for s in seasonsOf(t) key=`${s.number}`
                 link href=path("season", id, `${s.number}`) testId=`season-${s.number}` background-color="surface.card"
+                  contextmenu=aimName(`${t.title} ${s.name}`) contextPopover=`${navKey}-name-menu`
                   text s.name flex=1
                   if seasonProgress(t.watched, s) != ""
                     text seasonProgress(t.watched, s) color="mark.watched" testId=`season-${s.number}-progress`
@@ -1197,6 +1222,7 @@ component TitleScreen
             for c in t.cast.slice(0, 10) key=`${c.person_id}`
               link href=path("person", `${c.person_id}`) display="flex" align-items="center" gap=12
                 testId=`title-cast-${c.person_id}` background-color="surface.card"
+                contextmenu=aimName(c.name) contextPopover=`${navKey}-name-menu`
                 image text(c.profile_url) aria-label="" width=40 height=40 border-radius=999 object-fit="cover"
                 column flex=1 min-width=0
                   text c.name
@@ -1251,8 +1277,11 @@ component Credit
     testId: string
     person: CastMember
     line: string
+  action copyName
+    copyText(person.name)
   view
     link href=path("person", `${person.person_id}`) display="flex" align-items="center" gap=12 testId=testId background-color="surface.card"
+      contextPopover=`${testId}-menu`
       if text(person.profile_url) == ""
         column width=40 height=40 border-radius=999 background-color="surface.thumb"
       else
@@ -1262,6 +1291,10 @@ component Credit
         if line != ""
           text line font="-exact-footnote" color="text.muted"
       image "symbol:forward-chevron" color="text.muted"
+    column id=`${testId}-menu` popover="auto" role="menu"
+      button press=copyName popovertarget=`${testId}-menu` popovertargetaction="hide" testId=`${testId}-copy`
+        image "symbol:copy"
+        text "Copy Name"
 
 // The title's offers in the region, grouped as stream, rent and buy, with the
 // user's services marked. Says when the offers couldn't be loaded or refreshed
@@ -1418,6 +1451,11 @@ component SeasonScreen
     id: string
     n: string
   resource s = season(id, n) as shape Season
+  state aimedName = ""
+  action aimName(name: string)
+    aimedName = name
+  action copyAimed
+    copyText(aimedName)
   action retry
     refresh s
   state peekEp = -1
@@ -1435,6 +1473,10 @@ component SeasonScreen
       display="flex" flex-direction="column"
       header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
         text (current(s) ? `${s.show_title}: ${s.name}` : "") role="heading" aria-level=2 testId="season-title"
+      column id=`${navKey}-name-menu` popover="auto" role="menu"
+        button press=copyAimed popovertarget=`${navKey}-name-menu` popovertargetaction="hide" testId="name-copy"
+          image "symbol:copy"
+          text "Copy Name"
       if failed(s)
         EmptyState(symbol="symbol:alert", title="Can’t Load Season", message="The server didn’t answer.")
           button press=retry testId="season-retry"
@@ -1478,6 +1520,7 @@ component SeasonScreen
               column gap=6 padding-top=10 padding-bottom=10 testId=`episode-${ep.number}` background-color="surface.card"
                 row gap=8
                   link href=path("episode", id, n, `${ep.number}`) testId=`episode-open-${ep.number}` flex=1
+                    contextmenu=aimName(ep.title) contextPopover=`${navKey}-name-menu`
                     text `${ep.number}. ${ep.title}` font="-exact-headline"
                   match ep.rating
                     case some(r)
@@ -1497,6 +1540,7 @@ component SeasonScreen
                 // blurred and shut, so the spoiler guard holds.
                 if seen(w, s.number, ep.number) and text(ep.still_url) != ""
                   link href=photoPath(text(ep.still_url)) aria-label=`Still from ${ep.title}, full size` testId=`still-${ep.number}`
+                    contextmenu=aimName(ep.title) contextPopover=`${navKey}-name-menu`
                     image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
                 else
                   image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
@@ -1550,11 +1594,20 @@ component ReleasesScreen
     retry: action
   derive movies = loaded.map(p => p.titles).flat()
   derive lastPage = match loaded.at(0) { case some(p) => p.total_pages, case none => 1 }
+  state aimedName = ""
+  action aimName(name: string)
+    aimedName = name
+  action copyAimed
+    copyText(aimedName)
   view
     column navigationKey=navKey navigationScroll="releases" position="absolute" inset=0
       display="flex" flex-direction="column"
       header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
         text releaseList(list) role="heading" aria-level=2 testId="releases-title"
+      column id=`${navKey}-name-menu` popover="auto" role="menu"
+        button press=copyAimed popovertarget=`${navKey}-name-menu` popovertargetaction="hide" testId="name-copy"
+          image "symbol:copy"
+          text "Copy Name"
       if failed and movies.length == 0
         EmptyState(symbol="symbol:alert", title=`Can’t Load ${releaseList(list)}`, message="The server didn’t answer.")
           button press=retry testId="retry"
@@ -1568,7 +1621,7 @@ component ReleasesScreen
           section
             for r in movies key=`${r.id}`
               link href=path("movie", `${r.id}`) display="flex" align-items="center" gap=12 testId=`release-${r.id}`
-                background-color="surface.page"
+                background-color="surface.page" contextmenu=aimName(r.title) contextPopover=`${navKey}-name-menu`
                 Thumb(url=text(r.poster_url))
                 column flex=1 min-width=0
                   text r.title
@@ -1679,11 +1732,20 @@ component PersonScreen
     kind = k
   action toggleMore
     more = not more
+  state aimedName = ""
+  action aimName(name: string)
+    aimedName = name
+  action copyAimed
+    copyText(aimedName)
   view
     column navigationKey=navKey navigationScroll="person" position="absolute" inset=0
       display="flex" flex-direction="column"
       header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
         text (p.id > 0 ? p.name : "") role="heading" aria-level=2 testId="person-name"
+      column id=`${navKey}-name-menu` popover="auto" role="menu"
+        button press=copyAimed popovertarget=`${navKey}-name-menu` popovertargetaction="hide" testId="name-copy"
+          image "symbol:copy"
+          text "Copy Name"
       if failed(p) and p.id == 0
         EmptyState(symbol="symbol:alert", title="Can’t Load Person", message="The server didn’t answer.")
           button press=retry testId="person-retry"
@@ -1698,8 +1760,10 @@ component PersonScreen
                 column width=110 height=165 border-radius=8 background-color="surface.thumb" role="img" aria-label="No photo available"
               else
                 link href=photoPath(text(p.profile_url)) aria-label=`Photo of ${p.name}, full size` testId="person-photo"
+                  contextmenu=aimName(p.name) contextPopover=`${navKey}-name-menu`
                   image text(p.profile_url) aria-label="" width=110 height=165 border-radius=8 object-fit="cover"
               column flex=1 min-width=0 gap=6
+                text p.name font="-exact-title2" font-weight=700 user-select="all" testId="person-name-text"
                 if text(p.known_for) != ""
                   text `Known for ${text(p.known_for)}` font="-exact-headline" testId="known-for"
                 if bornText(p) != ""
@@ -1777,9 +1841,11 @@ component FilmRow
     acting: bool
     prefix: string
     chevron: bool
+  action copyName
+    copyText(c.title)
   view
     link href=creditPath(c) display="flex" align-items="center" gap=12 flex=1 min-width=0
-      testId=`${prefix}-${c.kind}-${c.id}` background-color="surface.card"
+      testId=`${prefix}-${c.kind}-${c.id}` background-color="surface.card" contextPopover=`${prefix}-${c.kind}-${c.id}-menu`
       Thumb(url=text(c.poster_url))
       column flex=1 min-width=0
         text c.title
@@ -1788,6 +1854,10 @@ component FilmRow
         text creditScore(c.rating) font="-exact-footnote" color="text.muted" testId=`score-${c.kind}-${c.id}`
       if chevron
         image "symbol:forward-chevron" color="text.muted"
+    column id=`${prefix}-${c.kind}-${c.id}-menu` popover="auto" role="menu"
+      button press=copyName popovertarget=`${prefix}-${c.kind}-${c.id}-menu` popovertargetaction="hide" testId=`${prefix}-${c.kind}-${c.id}-copy`
+        image "symbol:copy"
+        text "Copy Name"
 
 // A credit's To Watch and Favorite toggles, as on a search result.
 component CreditMarks
@@ -1849,11 +1919,20 @@ component EpisodeScreen
     send marked = setEpisodeWatched(id, n, ep.number, not watched)
   action togglePeek
     peek = not peek
+  state aimedName = ""
+  action aimName(name: string)
+    aimedName = name
+  action copyAimed
+    copyText(aimedName)
   view
     column navigationKey=navKey navigationScroll="episode" position="absolute" inset=0
       display="flex" flex-direction="column"
       header display="flex" align-items="center" padding="8px 16px" background-color="surface.page"
         text (current(ep) ? ep.title : "") role="heading" aria-level=2 testId="episode-title"
+      column id=`${navKey}-name-menu` popover="auto" role="menu"
+        button press=copyAimed popovertarget=`${navKey}-name-menu` popovertargetaction="hide" testId="name-copy"
+          image "symbol:copy"
+          text "Copy Name"
       if failed(ep)
         EmptyState(symbol="symbol:alert", title="Can’t Load Episode", message="The server didn’t answer.")
           button press=retry testId="episode-retry"
@@ -1874,6 +1953,7 @@ component EpisodeScreen
                 column width="100%" aspect-ratio="16 / 9" border-radius=8 background-color="surface.thumb"
               else if shown
                 link href=photoPath(text(ep.still_url)) aria-label=`Still from ${ep.title}, full size` testId="still"
+                  contextmenu=aimName(ep.title) contextPopover=`${navKey}-name-menu`
                   image text(ep.still_url) aria-label="" width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
               else
                 image text(ep.still_url) aria-label=`Still from ${ep.title}` width="100%" aspect-ratio="16 / 9" border-radius=8 object-fit="cover"
@@ -2119,8 +2199,11 @@ component ListRow
     label: string
     detail: string
     notes: string
+  action copyName
+    copyText(label)
   view
     link href=href display="flex" align-items="center" gap=12 testId=testId background-color="surface.page"
+      contextPopover=`${testId}-menu`
       Thumb(url=picture)
       column flex=1 min-width=0 gap=2
         text label
@@ -2128,6 +2211,10 @@ component ListRow
         if notes != ""
           text notes font="-exact-footnote" color="mark.watched" testId=`${testId}-notes`
       image "symbol:forward-chevron" color="text.muted"
+    column id=`${testId}-menu` popover="auto" role="menu"
+      button press=copyName popovertarget=`${testId}-menu` popovertargetaction="hide" testId=`${testId}-copy`
+        image "symbol:copy"
+        text "Copy Name"
 // Seen on Apple TV, as the web's /playback page: whether Home Assistant is
 // followed, shows waiting on a choice of TMDB show or movie, and what played.
 fn civilDays(y: number, m: number, d: number): number = eraDays(m <= 2 ? y - 1 : y, m, d)

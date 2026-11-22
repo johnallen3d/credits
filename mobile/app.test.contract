@@ -29,6 +29,26 @@ test "start screen lists recently viewed titles"
   expect tree has "recent-movie-603"
   expect tree has "recent-person-6384"
 
+test "a long press on a title offers to copy its name"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
+  tap "recent-movie-603" contextmenu
+  clock settle
+  expect tree has "recent-movie-603-copy"
+  tap "recent-movie-603-copy"
+  clock settle
+  expect tree missing "title"
+
+test "a title's cast copy their names from a long press"
+  at "/movie/603"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","genres":[],"ratings":{},"cast":[{"person_id":6384,"name":"Keanu Reeves","role":"Neo","profile_url":null}],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  clock data
+  tap "title-cast-6384" contextmenu
+  clock settle
+  tap "name-copy"
+  clock settle
+  expect text "title" == "The Matrix"
+
 test "the theme starts as Rosé Pine and survives a relaunch"
   fail fetch "https://credits.jallen7usa.com/api/recent"
   expect state theme == "rose-pine"
