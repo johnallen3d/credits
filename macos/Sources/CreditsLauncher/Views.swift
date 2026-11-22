@@ -475,6 +475,7 @@ struct HitList: View {
                     ForEach(hits) { hit in
                         ResultRow(hit: hit, summary: hit.summary ?? model.summaries[hit],
                                   selected: hit == model.selection, marks: model.marks[hit])
+                            .copyable(hit.displayName)
                             .id(hit)
                             .onAppear { model.fillSummary(hit) }
                             .onTapGesture { model.open(hit) }
@@ -590,9 +591,11 @@ struct Credits {
 
     static func id(_ row: Int) -> String { "credit-\(row)" }
 
-    /// A credit's row, highlighted when selected, opening its page on click.
-    func row(_ index: Int, @ViewBuilder _ content: () -> some View) -> some View {
+    /// A credit's row, highlighted when selected, opening its page on click;
+    /// right-click copies `copy`, its name.
+    func row(_ index: Int, copy: String? = nil, @ViewBuilder _ content: () -> some View) -> some View {
         content()
+            .copyable(copy)
             .padding(.horizontal, 5).padding(.vertical, 1)
             .background(index == selected ? Theme.line : .clear, in: RoundedRectangle(cornerRadius: 5))
             .padding(.horizontal, -5).padding(.vertical, -1)
@@ -645,7 +648,7 @@ struct TitleDetailView: View {
                 Poster(url: title.posterUrl, width: 120, kind: title.kind)
                     .fullSize(model, title.posterUrl, "\(title.title) poster")
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(title.title).font(.title.bold())
+                    Text(title.title).font(.title.bold()).textSelection(.enabled)
                     Text(facts).foregroundStyle(Theme.muted)
                     ReleaseDatesView(dates: title.releases?.dates ?? [])
                     HStack(spacing: 6) {
@@ -693,7 +696,7 @@ struct TitleDetailView: View {
                     FlowLayout {
                         ForEach(Array(crew.role.people.enumerated()), id: \.offset) { i, person in
                             HStack(spacing: 0) {
-                                credits.row(crew.first + i) { Text(person.name) }
+                                credits.row(crew.first + i, copy: person.name) { Text(person.name) }
                                 if i < crew.role.people.count - 1 {
                                     // Wider than a selected name's highlight spills.
                                     Text("·").foregroundStyle(Theme.muted).padding(.horizontal, 8)
@@ -707,7 +710,7 @@ struct TitleDetailView: View {
                 Section(heading: "Seasons") {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(Array(seasons.enumerated()), id: \.offset) { i, season in
-                            credits.row(crewCount + i) {
+                            credits.row(crewCount + i, copy: "\(title.title) \(season.name)") {
                                 HStack(spacing: 4) {
                                     Text(season.name)
                                     Text(seasonFacts(season)).foregroundStyle(Theme.muted)
@@ -733,7 +736,7 @@ struct TitleDetailView: View {
                 Section(heading: "Cast") {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(Array(castShown.enumerated()), id: \.offset) { i, c in
-                            credits.row(first + i) {
+                            credits.row(first + i, copy: c.name) {
                                 HStack(spacing: 4) {
                                     Text(c.name)
                                     if let role = c.role, !role.isEmpty {
@@ -799,6 +802,7 @@ struct CreditsDetailView: View {
                 Text("CAST & CREW").font(.caption2.bold()).kerning(0.5).foregroundStyle(Theme.color(for: c.kind))
                 (Text(c.title).font(.title.bold())
                     + Text(c.year.map { "  (\($0))" } ?? "").font(.title).foregroundColor(Theme.muted))
+                    .textSelection(.enabled)
                 Text("\(c.cast.count) cast · \(c.crew.reduce(0) { $0 + $1.people.count }) crew")
                     .foregroundStyle(Theme.muted)
             }
@@ -836,7 +840,7 @@ struct PeopleList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             ForEach(Array(people.enumerated()), id: \.offset) { i, p in
-                credits.row(first + i) {
+                credits.row(first + i, copy: p.name) {
                     HStack(spacing: 4) {
                         Text(p.name)
                         let detail = [p.role.flatMap { $0.isEmpty ? nil : prefix + $0 },
@@ -1060,7 +1064,7 @@ struct SeasonDetailView: View {
                     .fullSize(model, season.posterUrl, "\(season.name) poster")
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TV SEASON").font(.caption2.bold()).kerning(0.5).foregroundStyle(Theme.tv)
-                    Text(season.name).font(.title.bold())
+                    Text(season.name).font(.title.bold()).textSelection(.enabled)
                     Text(facts).foregroundStyle(Theme.muted)
                     HStack(spacing: 8) {
                         WatchedChip(model: model, on: seasonWatched)
@@ -1098,7 +1102,7 @@ struct SeasonDetailView: View {
                         Text("TMDB has no episodes listed for this season yet.").foregroundStyle(Theme.muted)
                     }
                     ForEach(Array(season.episodes.enumerated()), id: \.offset) { i, e in
-                        credits.row(pager.count + i) {
+                        credits.row(pager.count + i, copy: e.title) {
                             episode(e, peeking: credits.selected == pager.count + i)
                         }
                     }
@@ -1190,7 +1194,7 @@ struct EpisodeDetailView: View {
                 still
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TV EPISODE").font(.caption2.bold()).kerning(0.5).foregroundStyle(Theme.tv)
-                    Text(e.title).font(.title.bold())
+                    Text(e.title).font(.title.bold()).textSelection(.enabled)
                     Text("\(e.showTitle) · \(e.seasonName) · Episode \(e.number)").foregroundStyle(Theme.muted)
                     Text(facts).foregroundStyle(Theme.muted)
                     HStack(spacing: 8) {
@@ -1224,7 +1228,7 @@ struct EpisodeDetailView: View {
                     FlowLayout {
                         ForEach(Array(crew.role.people.enumerated()), id: \.offset) { i, person in
                             HStack(spacing: 0) {
-                                credits.row(crew.first + i) { Text(person.name) }
+                                credits.row(crew.first + i, copy: person.name) { Text(person.name) }
                                 if i < crew.role.people.count - 1 {
                                     Text("·").foregroundStyle(Theme.muted).padding(.horizontal, 8)
                                 }
@@ -1386,7 +1390,7 @@ struct PersonDetailView: View {
                 Poster(url: person.profileUrl, width: 120, kind: .person)
                     .fullSize(model, person.profileUrl, person.name)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(person.name).font(.title.bold())
+                    Text(person.name).font(.title.bold()).textSelection(.enabled)
                     if let knownFor = person.knownFor { Text(knownFor).foregroundStyle(Theme.muted) }
                     if let born { Text(born).foregroundStyle(Theme.muted) }
                     if let bio = person.biography, !bio.isEmpty {
@@ -1399,7 +1403,7 @@ struct PersonDetailView: View {
                 Section(heading: "Known for") {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(Array(person.knownForTitles.enumerated()), id: \.offset) { i, c in
-                            credits.row(i) {
+                            credits.row(i, copy: c.title) {
                                 HStack(spacing: 4) {
                                     Image(systemName: c.kind == .tv ? "tv" : "film")
                                         .font(.caption)
@@ -1500,7 +1504,7 @@ struct FilmographyView: View {
                             Text("\(g.group.department) (\(g.group.entries.count))")
                                 .font(.callout.bold()).foregroundStyle(Theme.muted)
                             ForEach(Array(g.group.entries.enumerated()), id: \.offset) { i, c in
-                                credits.row(g.first + i) {
+                                credits.row(g.first + i, copy: c.title) {
                                     row(c, acting: g.group.isActing)
                                 }
                             }
@@ -1545,6 +1549,22 @@ struct FilmographyView: View {
                 .help(on == nil ? "\(list.name): couldn't read; click to check and change"
                                 : "\(on! ? "Remove from" : "Add to") \(list.name)")
             }
+        }
+    }
+}
+
+extension View {
+    /// Right-click offers Copy Name, putting `name` on the pasteboard.
+    @ViewBuilder func copyable(_ name: String?) -> some View {
+        if let name, !name.isEmpty {
+            contextMenu {
+                Button("Copy Name") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(name, forType: .string)
+                }
+            }
+        } else {
+            self
         }
     }
 }
