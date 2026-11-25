@@ -81,11 +81,11 @@ env = { EXACT = "{{config_root}}/mobile/.exact-sdk", EXACT_FEEDBACK = "0" }
 run = "bun exact.mjs ios --run"
 
 [tasks."mobile:phone"]
-description = "Build the Exact app and install it on the iPhone plugged in over USB (rerun weekly: free-team installs expire after 7 days)"
+description = "Build the Exact app and install it on the iPhone plugged in over USB (renews expired free-team profiles and prints trust steps)"
 dir = "mobile"
 tools = { bun = "1.4.2", rust = "1.99.1" }
 env = { EXACT = "{{config_root}}/mobile/.exact-sdk", EXACT_FEEDBACK = "0", DEVELOPMENT_TEAM = "{{vars.ios_team}}" }
-run = "bun exact.mjs ios --device --run"
+run = "bun tools/phone.ts"
 
 [tasks."mobile:verify"]
 description = "Run Exact's checks on the app: tests, layout, accessibility, relaunch"
