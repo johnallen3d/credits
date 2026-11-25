@@ -556,6 +556,32 @@ test "a title with no scores shows no rings"
   expect tree has "title"
   expect tree missing "ratings"
 
+test "a movie without a Rotten Tomatoes score says so beside IMDb"
+  at "/movie/12280"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/12280" with 200 {"kind":"movie","id":12280,"title":"The Paper","genres":["Drama"],"ratings":{"state":"fresh","preferred_source":"rotten_tomatoes","preferred":null,"others":[{"source":"imdb","score":6.7,"scale":10,"votes":17580}]},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  clock data
+  expect tree has "ratings"
+  expect text "no-preferred-score" == "No Rotten Tomatoes score"
+  expect text "score-imdb" == "67IMDbIMDb6.7/10 · 17,580 votes"
+
+test "a TV show without an IMDb score says so"
+  at "/tv/1396"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/tv/1396" with 200 {"kind":"tv","id":1396,"title":"Breaking Bad","genres":[],"ratings":{"state":"fresh","preferred_source":"imdb","preferred":null,"others":[]},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  clock data
+  expect tree has "ratings"
+  expect text "no-preferred-score" == "No IMDb score"
+
+test "unavailable ratings do not also say no preferred score"
+  at "/movie/12280"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[]}
+  answer fetch "https://credits.jallen7usa.com/api/movie/12280" with 200 {"kind":"movie","id":12280,"title":"The Paper","genres":[],"ratings":{"state":"unavailable","unavailable_reason":"provider_error","preferred_source":"rotten_tomatoes","preferred":null,"others":[]},"cast":[],"marks":{"to_watch":false,"favorite":false,"watched":false}}
+  clock data
+  expect text "ratings-note" == "Ratings couldn’t be loaded right now."
+  expect tree missing "ratings"
+  expect tree missing "no-preferred-score"
+
 test "a season rings each rated episode"
   at "/tv/1396/season/1"
   fail fetch "https://credits.jallen7usa.com/api/recent"

@@ -21,6 +21,14 @@ pub struct OmdbTitle {
     /// False when OMDb has no entry for the identifier.
     pub listed: bool,
     pub ratings: Vec<Rating>,
+    /// Rotten Tomatoes path (`m/...` or `tv/...`) from OMDb's `tomatoURL`,
+    /// used as a fallback when OMDb omits the Tomatometer score.
+    #[serde(default)]
+    pub rt_path: Option<String>,
+    /// True once fetched with `tomatoes=true`; cached entries saved before
+    /// then are refreshed once so `rt_path` can be populated.
+    #[serde(default)]
+    pub tomato_url_checked: bool,
 }
 
 /// IMDb ratings of one season's episodes. This is the cached payload.
@@ -69,10 +77,15 @@ impl OmdbClient {
     }
 
     pub async fn title(&self, imdb_id: &str) -> Result<OmdbTitle, OmdbError> {
-        let Some(body) = self.get::<Response>(&[("i", imdb_id)]).await? else {
+        let Some(body) = self
+            .get::<Response>(&[("i", imdb_id), ("tomatoes", "true")])
+            .await?
+        else {
             return Ok(OmdbTitle {
                 listed: false,
                 ratings: Vec::new(),
+                rt_path: None,
+                tomato_url_checked: true,
             });
         };
 
@@ -94,9 +107,15 @@ impl OmdbClient {
                 votes: None,
             });
         }
+        let rt_path = body
+            .tomato_url
+            .as_deref()
+            .and_then(crate::rotten_tomatoes::normalize_rt_url);
         Ok(OmdbTitle {
             listed: true,
             ratings,
+            rt_path,
+            tomato_url_checked: true,
         })
     }
 
@@ -239,6 +258,8 @@ struct Response {
     imdb_votes: Option<String>,
     #[serde(rename = "Ratings", default)]
     ratings: Vec<SourceValue>,
+    #[serde(rename = "tomatoURL")]
+    tomato_url: Option<String>,
 }
 
 #[derive(Deserialize)]

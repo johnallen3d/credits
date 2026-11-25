@@ -33,6 +33,7 @@ use crate::playback::{
 };
 use crate::ratings::RatingsService;
 use crate::recent::RecentlyViewed;
+use crate::rotten_tomatoes::RottenTomatoes;
 use crate::services::MyServices;
 use crate::tmdb::{self, MultiResult, TmdbClient};
 use crate::watched::WatchedShows;
@@ -196,6 +197,12 @@ impl Catalog {
             ratings: RatingsService::new(
                 omdb,
                 ImdbRatings::new(&config.imdb_ratings_url, cache.clone()),
+                RottenTomatoes::new(
+                    &config.wikidata_api_base,
+                    &config.rotten_tomatoes_base,
+                    cache.clone(),
+                    config.ratings_ttl,
+                ),
                 cache.clone(),
                 config.ratings_ttl,
             ),
@@ -1199,7 +1206,11 @@ impl Catalog {
                 let (m, metadata) = self.movie_raw(id).await?;
                 let ratings = self
                     .ratings
-                    .for_title(kind, m.external_ids.imdb_id.clone())
+                    .for_title(
+                        kind,
+                        m.external_ids.imdb_id.clone(),
+                        m.external_ids.wikidata_id.clone(),
+                    )
                     .await;
                 Ok(self.movie(m, ratings, metadata))
             }
@@ -1207,7 +1218,11 @@ impl Catalog {
                 let (t, metadata) = self.tv_raw(id).await?;
                 let ratings = self
                     .ratings
-                    .for_title(kind, t.external_ids.imdb_id.clone())
+                    .for_title(
+                        kind,
+                        t.external_ids.imdb_id.clone(),
+                        t.external_ids.wikidata_id.clone(),
+                    )
                     .await;
                 Ok(self.tv(t, ratings, metadata))
             }
@@ -1616,15 +1631,17 @@ impl Catalog {
             let permits = permits.clone();
             lookups.spawn(async move {
                 let _permit = permits.acquire_owned().await;
-                let imdb_id = match kind {
-                    MediaKind::Movie => catalog
-                        .movie_raw(id)
-                        .await
-                        .map(|(m, _)| m.external_ids.imdb_id),
-                    MediaKind::Tv => catalog.tv_raw(id).await.map(|(t, _)| t.external_ids.imdb_id),
+                let ids = match kind {
+                    MediaKind::Movie => catalog.movie_raw(id).await.map(|(m, _)| m.external_ids),
+                    MediaKind::Tv => catalog.tv_raw(id).await.map(|(t, _)| t.external_ids),
                 };
-                let ratings = match imdb_id {
-                    Ok(imdb_id) => catalog.ratings.for_title(kind, imdb_id).await,
+                let ratings = match ids {
+                    Ok(ids) => {
+                        catalog
+                            .ratings
+                            .for_title(kind, ids.imdb_id, ids.wikidata_id)
+                            .await
+                    }
                     Err(CatalogError::NotFound) => {
                         Ratings::unavailable(kind, UnavailableReason::NoImdbId, None)
                     }

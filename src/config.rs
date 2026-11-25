@@ -29,6 +29,10 @@ pub struct Config {
     pub omdb_api_base: String,
     /// IMDb's daily ratings dataset, gzipped TSV.
     pub imdb_ratings_url: String,
+    /// Wikidata API host used to resolve Rotten Tomatoes paths (`P1258`).
+    pub wikidata_api_base: String,
+    /// Rotten Tomatoes host used when OMDb lacks a Tomatometer score.
+    pub rotten_tomatoes_base: String,
     pub ratings_ttl: Duration,
     pub metadata_ttl: Duration,
     /// SQLite file for the provider cache, or `cache::IN_MEMORY`.
@@ -134,6 +138,8 @@ impl Config {
             omdb_api_key,
             omdb_api_base: "https://www.omdbapi.com".to_owned(),
             imdb_ratings_url: "https://datasets.imdbws.com/title.ratings.tsv.gz".to_owned(),
+            wikidata_api_base: "https://www.wikidata.org".to_owned(),
+            rotten_tomatoes_base: "https://www.rottentomatoes.com".to_owned(),
             ratings_ttl: RATINGS_TTL,
             metadata_ttl: METADATA_TTL,
             database_path,

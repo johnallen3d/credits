@@ -3381,7 +3381,7 @@
           },
           "provider": {
             "type": "string",
-            "description": "Always `omdb` today; scores' own origins are in `Rating::source`."
+            "description": "Always `omdb` today; scores' own origins are in `Rating::source`, and\nRotten Tomatoes scores OMDb lacks are filled in directly."
           },
           "imdb_id": {
             "type": [

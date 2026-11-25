@@ -1,6 +1,6 @@
 //! Preferred ratings for a title, and IMDb ratings for a season's episodes: OMDb looked up by IMDb identifier, behind
-//! the persistent provider cache, with episodes OMDb has no score for filled in from IMDb's dataset. Never fails;
-//! problems become `Ratings` states.
+//! the persistent provider cache, with Rotten Tomatoes scores OMDb lacks filled in directly and episodes OMDb has no
+//! score for filled in from IMDb's dataset. Never fails; problems become `Ratings` states.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -10,8 +10,11 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::ProviderCache;
 use crate::imdb::ImdbRatings;
-use crate::model::{EpisodeRatings, MediaKind, Rating, Ratings, RatingsState, UnavailableReason};
-use crate::omdb::{OmdbClient, OmdbError, OmdbSeason};
+use crate::model::{
+    EpisodeRatings, MediaKind, Rating, RatingSource, Ratings, RatingsState, UnavailableReason,
+};
+use crate::omdb::{OmdbClient, OmdbError, OmdbSeason, OmdbTitle};
+use crate::rotten_tomatoes::RottenTomatoes;
 
 const PROVIDER: &str = "omdb";
 
@@ -19,6 +22,7 @@ const PROVIDER: &str = "omdb";
 pub struct RatingsService {
     omdb: Option<OmdbClient>,
     imdb: ImdbRatings,
+    rotten_tomatoes: RottenTomatoes,
     cache: ProviderCache,
     ttl: Duration,
 }
@@ -27,12 +31,14 @@ impl RatingsService {
     pub fn new(
         omdb: Option<OmdbClient>,
         imdb: ImdbRatings,
+        rotten_tomatoes: RottenTomatoes,
         cache: ProviderCache,
         ttl: Duration,
     ) -> Self {
         Self {
             omdb,
             imdb,
+            rotten_tomatoes,
             cache,
             ttl,
         }
@@ -48,14 +54,27 @@ impl RatingsService {
         self.omdb.is_some()
     }
 
-    pub async fn for_title(&self, kind: MediaKind, imdb_id: Option<String>) -> Ratings {
+    pub async fn for_title(
+        &self,
+        kind: MediaKind,
+        imdb_id: Option<String>,
+        wikidata_id: Option<String>,
+    ) -> Ratings {
         let Some(imdb_id) = imdb_id.filter(|id| is_imdb_title_id(id)) else {
             return Ratings::unavailable(kind, UnavailableReason::NoImdbId, None);
         };
         let lookup = self
             .lookup(
                 &imdb_id,
-                |_| true,
+                // Refresh entries cached before `tomatoes=true` was passed so
+                // OMDb's `tomatoURL` fallback is available when RT is missing.
+                |title: &OmdbTitle| {
+                    title.tomato_url_checked
+                        || title
+                            .ratings
+                            .iter()
+                            .any(|r| r.source == RatingSource::RottenTomatoes)
+                },
                 |omdb| {
                     let imdb_id = imdb_id.clone();
                     async move { omdb.title(&imdb_id).await }
@@ -63,7 +82,18 @@ impl RatingsService {
             )
             .await;
         match lookup {
-            Lookup::Found(state, title, fetched_at) => {
+            Lookup::Found(state, mut title, fetched_at) => {
+                if !title
+                    .ratings
+                    .iter()
+                    .any(|r| r.source == RatingSource::RottenTomatoes)
+                    && let Some(rt) = self
+                        .rotten_tomatoes
+                        .score(wikidata_id.as_deref(), title.rt_path.as_deref())
+                        .await
+                {
+                    title.ratings.push(rt);
+                }
                 Ratings::from_scores(kind, state, imdb_id, title.ratings, fetched_at)
             }
             Lookup::Failed(reason) => Ratings::unavailable(kind, reason, Some(imdb_id)),

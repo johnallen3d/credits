@@ -226,6 +226,9 @@ pub struct PersonSummary {
 #[derive(Serialize, Deserialize, Default)]
 pub struct ExternalIds {
     pub imdb_id: Option<String>,
+    /// Absent from cache entries saved before it was kept.
+    #[serde(default)]
+    pub wikidata_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

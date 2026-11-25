@@ -2064,7 +2064,8 @@ pub enum UnavailableReason {
 pub struct Ratings {
     pub state: RatingsState,
     pub unavailable_reason: Option<UnavailableReason>,
-    /// Always `omdb` today; scores' own origins are in `Rating::source`.
+    /// Always `omdb` today; scores' own origins are in `Rating::source`, and
+    /// Rotten Tomatoes scores OMDb lacks are filled in directly.
     pub provider: &'static str,
     pub imdb_id: Option<String>,
     pub preferred_source: RatingSource,

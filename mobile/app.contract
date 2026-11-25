@@ -68,6 +68,7 @@ shape Score
 shape Ratings
   state: option<string>
   unavailable_reason: option<string>
+  preferred_source: option<string>
   preferred: option<Score>
   others: option<Score[]>
   fetched_at: option<string>
@@ -566,6 +567,15 @@ fn scoreNote(s: Score): string = isTomatometer(s) ? verdict(s) : match s.votes {
   case none => scoreShown(s) }
 fn othersOf(r: Ratings): Score[] = match r.others { case some(xs) => xs, case none => [] }
 fn hasScores(r: Ratings): bool = othersOf(r).length > 0 or (match r.preferred { case some(p) => true, case none => false })
+fn preferredSourceName(r: Ratings): string = match r.preferred_source {
+  case some(s) => s == "rotten_tomatoes" ? "Rotten Tomatoes" : s == "imdb" ? "IMDb" : "",
+  case none => "" }
+fn missingPreferred(r: Ratings): string = (stateOf(r.state) != "unavailable"
+  and (match r.preferred { case some(p) => false, case none => true })
+  and preferredSourceName(r) != ""
+  ? `No ${preferredSourceName(r)} score`
+  : "")
+fn showRatings(r: Ratings): bool = stateOf(r.state) != "unavailable" and (hasScores(r) or missingPreferred(r) != "")
 fn seasonsOf(t: Title): SeasonSummary[] = match t.season_list { case some(xs) => xs.filter(x => x.episode_count > 0), case none => [] }
 fn keyRole(r: string): string = r == "creator" ? "Created by" : r == "director" ? "Directed by" : "Written by"
 fn episodes(o: option<number>): string = match o { case some(n) => n == 1 ? "1 episode" : `${n} episodes`, case none => "" }
@@ -1161,7 +1171,7 @@ component TitleScreen
                     text "Showtimes"
                 if text(t.tagline) != ""
                   text text(t.tagline) font="-exact-footnote" color="text.muted"
-            if hasScores(t.ratings)
+            if showRatings(t.ratings)
               RatingRings(ratings=t.ratings)
             if text(t.overview) != ""
               text text(t.overview) padding-top=8 padding-bottom=8 testId="overview" background-color="surface.card"
@@ -1391,6 +1401,8 @@ component RatingRings
         case some(p)
           RatedSource(score=p, size=48)
         case none
+          if missingPreferred(ratings) != ""
+            text missingPreferred(ratings) font="-exact-subheadline" color="text.muted" testId="no-preferred-score"
       for o in othersOf(ratings) key=o.source
         RatedSource(score=o, size=36)
 

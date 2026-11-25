@@ -224,12 +224,18 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                                      "release_dates": { "results": [] } })),
                     );
                 }
-                let imdb_id = match id {
-                    603 => "tt0133093",
+                let (imdb_id, wikidata_id) = match id {
+                    603 => ("tt0133093", None),
                     // Listed on OMDb with an IMDb score but no Rotten Tomatoes score.
-                    6060 => "tt6060000",
+                    6060 => ("tt6060000", None),
                     // Unknown to OMDb, which answers "Error getting data.".
-                    4040 => "tt4040000",
+                    4040 => ("tt4040000", None),
+                    // OMDb has IMDb only; Wikidata P1258 resolves RT.
+                    12280 => ("tt0110771", Some("Q1747211")),
+                    // OMDb has IMDb + tomatoURL; TMDB has no Wikidata ID.
+                    12281 => ("tt8888881", None),
+                    // Wikidata P1258 returns a 404 slug; OMDb tomatoURL resolves RT.
+                    12282 => ("tt8888882", Some("Q8888882")),
                     _ => return (StatusCode::NOT_FOUND, Json(json!({ "status_code": 34 }))),
                 };
                 let watch_providers = if id == 603 {
@@ -296,7 +302,7 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         "release_date": "1999-03-31", "status": "Released", "runtime": 136,
                         "genres": [{ "id": 28, "name": "Action" }, { "id": 878, "name": "Science Fiction" }],
                         "poster_path": "/matrix.jpg", "backdrop_path": null,
-                        "external_ids": { "imdb_id": imdb_id },
+                        "external_ids": { "imdb_id": imdb_id, "wikidata_id": wikidata_id },
                         "watch/providers": watch_providers,
                         "release_dates": release_dates,
                         "credits": {
@@ -340,11 +346,13 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         })),
                     );
                 }
-                let imdb_id = match id {
-                    1396 => json!("tt0903747"),
+                let (imdb_id, wikidata_id) = match id {
+                    1396 => (json!("tt0903747"), Value::Null),
                     // OMDb answers with its quota error for this one.
-                    5150 => json!("tt5150000"),
-                    _ => Value::Null,
+                    5150 => (json!("tt5150000"), Value::Null),
+                    // OMDb has IMDb only; Wikidata P1258 resolves RT for TV.
+                    253941 => (json!("tt32159809"), json!("Q125893974")),
+                    _ => (Value::Null, Value::Null),
                 };
                 (
                     StatusCode::OK,
@@ -355,7 +363,7 @@ async fn fake_tmdb(state: FakeTmdb) -> String {
                         "number_of_seasons": 5, "number_of_episodes": 62,
                         "genres": [{ "id": 18, "name": "Drama" }],
                         "poster_path": null, "backdrop_path": "/bb-back.jpg",
-                        "external_ids": { "imdb_id": imdb_id },
+                        "external_ids": { "imdb_id": imdb_id, "wikidata_id": wikidata_id },
                         "watch/providers": { "results": { "US": {
                             "link": "https://www.themoviedb.org/tv/1396-breaking-bad/watch?locale=US",
                             "ads": [{ "provider_id": 300, "provider_name": "Pluto TV",
@@ -704,6 +712,9 @@ fn imdb_ratings_dataset() -> Vec<u8> {
 struct FakeOmdb {
     calls: Arc<AtomicUsize>,
     down: Arc<AtomicBool>,
+    wikidata_calls: Arc<AtomicUsize>,
+    rt_calls: Arc<AtomicUsize>,
+    rt_down: Arc<AtomicBool>,
 }
 
 impl FakeOmdb {
@@ -711,14 +722,98 @@ impl FakeOmdb {
         self.calls.load(Ordering::SeqCst)
     }
 
+    fn wikidata_calls(&self) -> usize {
+        self.wikidata_calls.load(Ordering::SeqCst)
+    }
+
+    fn rt_calls(&self) -> usize {
+        self.rt_calls.load(Ordering::SeqCst)
+    }
+
     fn set_down(&self, down: bool) {
         self.down.store(down, Ordering::SeqCst);
     }
 
+    fn set_rt_down(&self, down: bool) {
+        self.rt_down.store(down, Ordering::SeqCst);
+    }
+
     async fn start(&self) -> String {
         let state = self.clone();
+        let wd_state = self.clone();
+        let rt_movie_state = self.clone();
+        let rt_tv_state = self.clone();
         let fake = Router::new()
             .route("/title.ratings.tsv.gz", get(|| async { imdb_ratings_dataset() }))
+            .route(
+                "/w/api.php",
+                get(move |Query(q): Query<HashMap<String, String>>| {
+                    let state = wd_state.clone();
+                    async move {
+                        state.wikidata_calls.fetch_add(1, Ordering::SeqCst);
+                        if state.rt_down.load(Ordering::SeqCst) {
+                            return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({})));
+                        }
+                        let slug = match q.get("entity").map(String::as_str) {
+                            Some("Q1747211") => Some("m/paper"),
+                            Some("Q8888882") => Some("m/kodachrome_404"),
+                            Some("Q125893974") => Some("tv/the_paper_2025"),
+                            _ => None,
+                        };
+                        let claims = match slug {
+                            Some(s) => json!({ "P1258": [{ "rank": "normal", "mainsnak": { "datavalue": { "value": s } } }] }),
+                            None => json!({}),
+                        };
+                        (StatusCode::OK, Json(json!({ "claims": claims })))
+                    }
+                }),
+            )
+            .route(
+                "/m/{slug}",
+                get(move |Path(slug): Path<String>| {
+                    let state = rt_movie_state.clone();
+                    async move {
+                        state.rt_calls.fetch_add(1, Ordering::SeqCst);
+                        if state.rt_down.load(Ordering::SeqCst) {
+                            return (StatusCode::SERVICE_UNAVAILABLE, String::new());
+                        }
+                        match slug.as_str() {
+                            "paper" => (
+                                StatusCode::OK,
+                                r#"<html><script id="media-scorecard-json" type="application/json">{"criticsScore":{"scorePercent":"86%"}}</script></html>"#.to_owned(),
+                            ),
+                            "between_me_and_my_mind" => (
+                                StatusCode::OK,
+                                r#"<html><script type="application/ld+json">{"@type":"Movie","aggregateRating":{"@type":"AggregateRating","name":"Tomatometer","ratingValue":"100"}}</script></html>"#.to_owned(),
+                            ),
+                            "kodachrome_2018" => (
+                                StatusCode::OK,
+                                r#"<html><script id="media-scorecard-json" type="application/json">{"criticsScore":{"scorePercent":"73%"}}</script></html>"#.to_owned(),
+                            ),
+                            _ => (StatusCode::NOT_FOUND, String::new()),
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/tv/{slug}",
+                get(move |Path(slug): Path<String>| {
+                    let state = rt_tv_state.clone();
+                    async move {
+                        state.rt_calls.fetch_add(1, Ordering::SeqCst);
+                        if state.rt_down.load(Ordering::SeqCst) {
+                            return (StatusCode::SERVICE_UNAVAILABLE, String::new());
+                        }
+                        match slug.as_str() {
+                            "the_paper_2025" => (
+                                StatusCode::OK,
+                                r#"<html><script id="media-scorecard-json" type="application/json">{"criticsScore":{"scorePercent":"82%"}}</script></html>"#.to_owned(),
+                            ),
+                            _ => (StatusCode::NOT_FOUND, String::new()),
+                        }
+                    }
+                }),
+            )
             .route(
             "/",
             get(move |Query(q): Query<HashMap<String, String>>| {
@@ -765,6 +860,30 @@ impl FakeOmdb {
                         Some("tt6060000") => json!({
                             "Response": "True", "imdbID": "tt6060000",
                             "imdbRating": "6.1", "imdbVotes": "N/A", "Ratings": []
+                        }),
+                        Some("tt0110771") => json!({
+                            "Response": "True", "imdbID": "tt0110771",
+                            "imdbRating": "6.7", "imdbVotes": "17,580",
+                            "Ratings": [{ "Source": "Internet Movie Database", "Value": "6.7/10" }],
+                            "tomatoURL": "https://www.rottentomatoes.com/m/paper/"
+                        }),
+                        Some("tt8888881") => json!({
+                            "Response": "True", "imdbID": "tt8888881",
+                            "imdbRating": "7.6", "imdbVotes": "500",
+                            "Ratings": [{ "Source": "Internet Movie Database", "Value": "7.6/10" }],
+                            "tomatoURL": "https://www.rottentomatoes.com/m/between_me_and_my_mind"
+                        }),
+                        Some("tt8888882") => json!({
+                            "Response": "True", "imdbID": "tt8888882",
+                            "imdbRating": "6.9", "imdbVotes": "12,000",
+                            "Ratings": [{ "Source": "Internet Movie Database", "Value": "6.9/10" }],
+                            "tomatoURL": "https://www.rottentomatoes.com/m/kodachrome_2018"
+                        }),
+                        Some("tt32159809") => json!({
+                            "Response": "True", "imdbID": "tt32159809",
+                            "imdbRating": "6.9", "imdbVotes": "15,687",
+                            "Ratings": [{ "Source": "Internet Movie Database", "Value": "6.9/10" }],
+                            "tomatoURL": "N/A"
                         }),
                         Some("tt5150000") => {
                             return (
@@ -838,6 +957,8 @@ async fn build_from(mut config: Config, ratings_ttl: Duration, metadata_ttl: Dur
     config.tmdb_image_base = "https://img.test/t/p".to_owned();
     config.omdb_api_base = omdb.start().await;
     config.imdb_ratings_url = format!("{}/title.ratings.tsv.gz", config.omdb_api_base);
+    config.wikidata_api_base = config.omdb_api_base.clone();
+    config.rotten_tomatoes_base = config.omdb_api_base.clone();
     config.ratings_ttl = ratings_ttl;
     config.metadata_ttl = metadata_ttl;
     let catalog = Catalog::new(&config).await.unwrap();
@@ -5369,4 +5490,74 @@ async fn watched_page_lists_every_mark_and_filters_by_kind_and_source() {
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{database}{suffix}"));
     }
+}
+
+#[tokio::test]
+async fn rotten_tomatoes_gaps_are_filled_from_wikidata_and_tomato_url() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+
+    // When OMDb already returns Rotten Tomatoes, Wikidata and RT are not touched.
+    let (status, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ratings"]["preferred"]["source"], "rotten_tomatoes");
+    assert_eq!(json["ratings"]["preferred"]["score"], 83.0);
+    assert_eq!(t.omdb.wikidata_calls(), 0);
+    assert_eq!(t.omdb.rt_calls(), 0);
+
+    // Movie missing RT on OMDb fills it in via Wikidata P1258 -> RT scorecard JSON,
+    // and caches both Wikidata and RT across requests.
+    let (status, json) = get_json(t.app(), "/api/movie/12280").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ratings"]["preferred"]["source"], "rotten_tomatoes");
+    assert_eq!(json["ratings"]["preferred"]["score"], 86.0);
+    assert_eq!(json["ratings"]["others"][0]["source"], "imdb");
+    assert_eq!(json["ratings"]["others"][0]["score"], 6.7);
+    assert_eq!(t.omdb.wikidata_calls(), 1);
+    assert_eq!(t.omdb.rt_calls(), 1);
+
+    get_json(t.app(), "/api/movie/12280").await;
+    assert_eq!(t.omdb.wikidata_calls(), 1, "Wikidata P1258 is cached");
+    assert_eq!(t.omdb.rt_calls(), 1, "Rotten Tomatoes score is cached");
+
+    // Movie without a Wikidata ID falls back to OMDb's tomatoURL (and JSON-LD).
+    let (status, json) = get_json(t.app(), "/api/movie/12281").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ratings"]["preferred"]["source"], "rotten_tomatoes");
+    assert_eq!(json["ratings"]["preferred"]["score"], 100.0);
+    assert_eq!(json["ratings"]["others"][0]["score"], 7.6);
+
+    // When Wikidata's slug 404s, falls back to OMDb's tomatoURL.
+    let (status, json) = get_json(t.app(), "/api/movie/12282").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ratings"]["preferred"]["source"], "rotten_tomatoes");
+    assert_eq!(json["ratings"]["preferred"]["score"], 73.0);
+
+    // TV shows get Rotten Tomatoes in `others` beside preferred IMDb.
+    let (status, json) = get_json(t.app(), "/api/tv/253941").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ratings"]["preferred"]["source"], "imdb");
+    assert_eq!(json["ratings"]["preferred"]["score"], 6.9);
+    assert_eq!(json["ratings"]["others"][0]["source"], "rotten_tomatoes");
+    assert_eq!(json["ratings"]["others"][0]["score"], 82.0);
+}
+
+#[tokio::test]
+async fn rotten_tomatoes_outages_degrade_to_imdb_and_stale_cache() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::ZERO).await;
+
+    // Warm cache for movie 12280.
+    let (_, json) = get_json(t.app(), "/api/movie/12280").await;
+    assert_eq!(json["ratings"]["preferred"]["score"], 86.0);
+
+    // When Wikidata and RT go down, expired cached RT score is still served.
+    t.omdb.set_rt_down(true);
+    let (_, json) = get_json(t.app(), "/api/movie/12280").await;
+    assert_eq!(json["ratings"]["preferred"]["score"], 86.0);
+    assert_eq!(json["ratings"]["others"][0]["score"], 6.7);
+
+    // For an uncached movie while RT is down, the page still renders with IMDb only.
+    let (status, _, body) = get_page(t.app(), "/movie/12281", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("No Rotten Tomatoes score"));
+    assert!(body.contains(r#"aria-label="IMDb, 7.6/10""#));
 }

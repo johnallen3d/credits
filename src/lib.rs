@@ -7,6 +7,7 @@ mod omdb;
 pub mod playback;
 mod ratings;
 pub mod recent;
+mod rotten_tomatoes;
 mod services;
 mod tmdb;
 mod watched;
