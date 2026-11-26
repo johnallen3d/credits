@@ -894,17 +894,20 @@ struct CreditsAPI {
         return results.results
     }
 
-    /// A person's page with their filmography in `sort` order.
-    func person(_ id: Int, sort: FilmographySort) async throws -> PersonDetail {
+    /// A person's page with their filmography in `sort` order, or without
+    /// credit ratings when `ratings` is false so the page can render at once.
+    func person(_ id: Int, sort: FilmographySort = .date, ratings: Bool = true) async throws -> PersonDetail {
         var url = URLComponents(url: base.appendingPathComponent("api/person/\(id)"), resolvingAgainstBaseURL: false)!
-        url.queryItems = [URLQueryItem(name: "sort", value: sort.rawValue)]
+        url.queryItems = ratings
+            ? [URLQueryItem(name: "sort", value: sort.rawValue)]
+            : [URLQueryItem(name: "ratings", value: "false")]
         return try await get(url.url!)
     }
 
     func detail(_ hit: SearchHit) async throws -> Detail {
         let url = base.appendingPathComponent("api/" + path(hit))
         switch hit.kind {
-        case .person: return .person(try await get(url))
+        case .person: return .person(try await person(hit.id, sort: .date, ratings: false))
         case .movie, .tv: return .title(try await get(url))
         case .season: return .season(try await get(url))
         case .credits: return .credits(try await get(url))

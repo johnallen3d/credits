@@ -1490,7 +1490,7 @@ struct FilmographyView: View {
                     .controlSize(.small)
                     .font(.callout)
                     if let error = model.personSortError {
-                        note("Couldn't load that order (\(error)); showing the last one.", tint: Theme.love)
+                        note(error, tint: Theme.love)
                     } else if let ratingNote {
                         note(ratingNote, tint: Theme.muted)
                     }

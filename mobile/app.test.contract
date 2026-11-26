@@ -318,6 +318,7 @@ test "cast and crew that can't load say so"
 
 test "a recently viewed person opens their page with photo, facts and credits"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false" with 200 {"id":6384,"name":"Keanu Reeves","known_for":"Acting","biography":"Keanu was born in Beirut.\n\nHe grew up in Toronto.","birthday":"1964-09-02","deathday":null,"place_of_birth":"Beirut, Lebanon","profile_url":null,"known_for_titles":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"},{"kind":"tv","id":1,"title":"A Show","year":null,"role":"Self","episode_count":2}]},{"department":"Production","entries":[{"kind":"movie","id":9,"title":"A Film","year":"2020","role":"Producer"}]}],"sort":"date","sort_ratings":null}
   answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for":"Acting","biography":"Keanu was born in Beirut.\n\nHe grew up in Toronto.","birthday":"1964-09-02","deathday":null,"place_of_birth":"Beirut, Lebanon","profile_url":null,"known_for_titles":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"},{"kind":"tv","id":1,"title":"A Show","year":null,"role":"Self","episode_count":2}]},{"department":"Production","entries":[{"kind":"movie","id":9,"title":"A Film","year":"2020","role":"Producer"}]}],"sort":"date","sort_ratings":{"unrated":0}}
   tap "recent-person-6384"
   clock data
@@ -342,6 +343,7 @@ test "a recently viewed person opens their page with photo, facts and credits"
 
 test "sorting a person's credits by rating shows each score"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
   answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
   answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=rating" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo","rating":{"source":"rotten_tomatoes","score":83.0,"scale":100}}]}],"sort":"rating","sort_ratings":{"unrated":3}}
   tap "recent-person-6384"
@@ -357,6 +359,7 @@ test "a person's credits show All, Movies or TV, counting each"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
   answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[]}
   answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"},{"kind":"tv","id":1,"title":"A Show","year":null,"role":"Self","episode_count":2}]},{"department":"Production","entries":[{"kind":"movie","id":9,"title":"A Film","year":"2020","role":"Producer"}]}],"sort":"date"}
   answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"},{"kind":"tv","id":1,"title":"A Show","year":null,"role":"Self","episode_count":2}]},{"department":"Production","entries":[{"kind":"movie","id":9,"title":"A Film","year":"2020","role":"Producer"}]}],"sort":"date","sort_ratings":{"unrated":0}}
   tap "recent-person-6384"
   clock data
@@ -378,6 +381,7 @@ test "a person with no credits of a kind says so"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
   answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[]}
   answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
   answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
   tap "recent-person-6384"
   clock data
@@ -389,6 +393,7 @@ test "a person's credits add to To Watch and Favorites"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
   answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[{"kind":"movie","id":603,"title":"The Matrix"}]}
   answer fetch "https://credits.jallen7usa.com/api/favorites?sort=added" with 200 {"titles":[]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"},{"kind":"tv","id":1,"title":"A Show","year":null,"role":"Self"}]}],"sort":"date"}
   answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"},{"kind":"tv","id":1,"title":"A Show","year":null,"role":"Self"}]}],"sort":"date"}
   answer fetch "https://credits.jallen7usa.com/api/tv/1/favorite" with 200 {"marks":{"to_watch":false,"favorite":true,"watched":false}}
   tap "recent-person-6384"
@@ -411,6 +416,7 @@ test "a person's credits hold Favorite when Favorites can't be read, and say whe
   answer fetch "https://credits.jallen7usa.com/api/watchlist?sort=added" with 200 {"titles":[]}
   fail fetch "https://credits.jallen7usa.com/api/favorites?sort=added"
   fail fetch "https://credits.jallen7usa.com/api/movie/603/watchlist"
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
   answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
   tap "recent-person-6384"
   clock data
@@ -425,19 +431,36 @@ test "a person's credits hold Favorite when Favorites can't be read, and say whe
 
 test "a person page the server can't answer says so"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
-  fail fetch "https://credits.jallen7usa.com/api/person/6384?sort=date"
+  fail fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false"
   tap "recent-person-6384"
   clock data
   expect text "person-name" == ""
   expect tree missing "loading"
   expect tree missing "known-for"
   expect tree has "person-retry"
-  pass fetch "https://credits.jallen7usa.com/api/person/6384?sort=date"
-  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[],"sort":"date"}
+  pass fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false"
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false" with 200 {"id":6384,"name":"Keanu Reeves","known_for_titles":[],"filmography":[],"sort":"date"}
   tap "person-retry"
   clock data
   expect tree missing "person-retry"
   expect text "person-name" == "Keanu Reeves"
+
+test "a person page renders right away when ratings fail and fills scores when ratings succeed"
+  answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false" with 200 {"id":6384,"name":"Keanu Reeves","known_for":"Acting","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo"}]}],"sort":"date"}
+  fail fetch "https://credits.jallen7usa.com/api/person/6384?sort=date"
+  tap "recent-person-6384"
+  clock data
+  expect text "person-name" == "Keanu Reeves"
+  expect tree has "Acting-movie-603"
+  expect tree missing "person-retry"
+  expect tree missing "sorting"
+  expect text "sort-failed" == "Ratings couldn’t be loaded right now."
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=rating" with 200 {"id":6384,"name":"Keanu Reeves","known_for":"Acting","known_for_titles":[],"filmography":[{"department":"Acting","entries":[{"kind":"movie","id":603,"title":"The Matrix","year":"1999","role":"Neo","rating":{"source":"rotten_tomatoes","score":83.0,"scale":100}}]}],"sort":"rating","sort_ratings":{"unrated":0}}
+  tap "sort-rating"
+  clock data
+  expect tree missing "sort-failed"
+  expect text "score-movie-603" == "83%"
 test "a title served stale from the cache says so, and its ratings note why they're missing"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"movie","id":603,"name":"The Matrix","year":"1999","image_url":null}]}
   answer fetch "https://credits.jallen7usa.com/api/movie/603" with 200 {"kind":"movie","id":603,"title":"The Matrix","tagline":null,"overview":"Neo wakes up.","year":"1999","genres":["Action"],"runtime_minutes":136,"poster_url":null,"backdrop_url":null,"ratings":{"state":"unavailable","unavailable_reason":"provider_error","preferred":null,"fetched_at":null},"cast":[],"season_list":[],"marks":{"to_watch":null,"favorite":null,"watched":null},"metadata":{"state":"stale","fetched_at":"2026-10-16T08:00:00Z"}}
@@ -614,7 +637,7 @@ test "a watched episode's still opens full size; an unwatched one stays shut"
 
 test "a person's photo opens full size from their page"
   answer fetch "https://credits.jallen7usa.com/api/recent" with 200 {"recent":[{"kind":"person","id":6384,"name":"Keanu Reeves"}]}
-  answer fetch "https://credits.jallen7usa.com/api/person/6384?sort=date" with 200 {"id":6384,"name":"Keanu Reeves","known_for":"Acting","biography":null,"birthday":null,"deathday":null,"place_of_birth":null,"profile_url":"https://image.tmdb.org/t/p/w185/k.jpg","known_for_titles":[],"filmography":[],"sort":"date","sort_ratings":{"unrated":0}}
+  answer fetch "https://credits.jallen7usa.com/api/person/6384?ratings=false" with 200 {"id":6384,"name":"Keanu Reeves","known_for":"Acting","biography":null,"birthday":null,"deathday":null,"place_of_birth":null,"profile_url":"https://image.tmdb.org/t/p/w185/k.jpg","known_for_titles":[],"filmography":[],"sort":"date","sort_ratings":null}
   tap "recent-person-6384"
   tap "person-photo"
   expect tree has "photo-full"

@@ -44,6 +44,8 @@ pub struct Config {
     /// Where to read what played on the Apple TVs; `None` turns
     /// auto-marking off.
     pub home_assistant: Option<HomeAssistantConfig>,
+    /// Pre-cache key crew and top cast in the background when a title page loads.
+    pub precache_people: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -146,6 +148,7 @@ impl Config {
             watch_region,
             bind,
             home_assistant,
+            precache_people: true,
         })
     }
 }

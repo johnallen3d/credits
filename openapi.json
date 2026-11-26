@@ -640,6 +640,15 @@
             "schema": {
               "$ref": "#/components/schemas/FilmographySort"
             }
+          },
+          {
+            "name": "ratings",
+            "in": "query",
+            "description": "Defaults to `true`; pass `false` to return right away in date order without waiting for credit ratings",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {

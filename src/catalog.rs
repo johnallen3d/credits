@@ -84,6 +84,13 @@ const ADD_ON_SUFFIXES: [&str; 4] = [
 /// Titles looked up at once when sorting by rating or checking which
 /// services offer them.
 const CONCURRENT_TITLE_LOOKUPS: usize = 8;
+/// Key crew plus top-billed cast pre-cached in the background when a title
+/// page opens, so clicking into them doesn't wait on TMDB.
+const PRECACHE_PEOPLE: usize = 10;
+/// Concurrent background TMDB requests for pre-caching people.
+const PRECACHE_CONCURRENCY: usize = 2;
+/// Maximum person lookups queued for background pre-caching at once.
+const PRECACHE_MAX_QUEUED: usize = 32;
 /// TMDB's Talk and News genres: appearing on these says little about what
 /// someone is known for.
 const TALK_AND_NEWS_GENRES: &[u32] = &[10767, 10763];
@@ -161,6 +168,109 @@ pub struct Catalog {
     playback_players: Vec<String>,
     metadata_ttl: Duration,
     watch_region: String,
+    in_flight: InFlight,
+    precache: PersonPrecache,
+}
+
+/// Deduplicates concurrent cache-miss fetches for the same TMDB key so a live
+/// click joins an in-flight background pre-cache (or another live request)
+/// instead of hitting TMDB twice.
+#[derive(Clone, Default)]
+struct InFlight {
+    locks: Arc<std::sync::Mutex<HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>>,
+}
+
+impl InFlight {
+    fn lock_for(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut map = self.locks.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = map.get(key).and_then(std::sync::Weak::upgrade) {
+            return existing;
+        }
+        if map.len() >= 64 {
+            map.retain(|_, w| w.strong_count() > 0);
+        }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        map.insert(key.to_owned(), Arc::downgrade(&lock));
+        lock
+    }
+}
+
+/// Bounded background pre-cacher for unrated TMDB person payloads.
+#[derive(Clone)]
+struct PersonPrecache {
+    enabled: bool,
+    permits: Arc<Semaphore>,
+    queued: Arc<std::sync::Mutex<HashSet<u64>>>,
+}
+
+impl PersonPrecache {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            permits: Arc::new(Semaphore::new(PRECACHE_CONCURRENCY)),
+            queued: Arc::new(std::sync::Mutex::new(HashSet::new())),
+        }
+    }
+
+    fn enqueue(&self, catalog: &Catalog, ids: Vec<u64>) {
+        if !self.enabled || ids.is_empty() {
+            return;
+        }
+        let mut to_spawn = Vec::new();
+        {
+            let mut queued = self.queued.lock().unwrap_or_else(|e| e.into_inner());
+            for id in ids {
+                if queued.len() >= PRECACHE_MAX_QUEUED {
+                    break;
+                }
+                if queued.insert(id) {
+                    to_spawn.push(id);
+                }
+            }
+        }
+        for id in to_spawn {
+            let catalog = catalog.clone();
+            let permits = self.permits.clone();
+            let queued = self.queued.clone();
+            tokio::spawn(async move {
+                let _queued_guard = QueuedPersonGuard { id, queued };
+                let key = person_cache_key(id);
+                if catalog
+                    .cache
+                    .is_fresh(PROVIDER, &key, Timestamp::now())
+                    .await
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+                let Ok(_permit) = permits.acquire_owned().await else {
+                    return;
+                };
+                if let Err(e) = catalog.person_raw(id).await {
+                    tracing::debug!(error = %e, id, "background person precache failed");
+                }
+            });
+        }
+    }
+}
+
+struct QueuedPersonGuard {
+    id: u64,
+    queued: Arc<std::sync::Mutex<HashSet<u64>>>,
+}
+
+impl Drop for QueuedPersonGuard {
+    fn drop(&mut self) {
+        self.queued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
+    }
+}
+
+fn person_cache_key(id: u64) -> String {
+    // v2: entries cached before vote counts were kept can't rank "Known for".
+    format!("person/{id}/v2")
 }
 
 /// A filmography entry with its full release date, for sorting.
@@ -220,6 +330,8 @@ impl Catalog {
             cache,
             metadata_ttl: config.metadata_ttl,
             watch_region: config.watch_region.clone(),
+            in_flight: InFlight::default(),
+            precache: PersonPrecache::new(config.precache_people),
         })
     }
 
@@ -246,9 +358,37 @@ impl Catalog {
     /// Records a page that a client opened from the JSON API, looking up its
     /// name and artwork; answers with the list.
     pub async fn view(&self, kind: RecentKind, id: u64) -> Result<Vec<RecentView>, RecentError> {
-        let view = match kind.title() {
-            Some(kind) => RecentView::of_title(&self.title_detail(kind, id).await?),
-            None => RecentView::of_person(&self.person(id, FilmographySort::Date).await?),
+        let view = match kind {
+            RecentKind::Movie => {
+                let (m, _) = self.movie_raw(id).await?;
+                RecentView {
+                    kind: RecentKind::Movie,
+                    id: m.id,
+                    name: m.title,
+                    year: year(m.release_date.as_deref()),
+                    image_url: self.image(POSTER_SIZE, m.poster_path),
+                }
+            }
+            RecentKind::Tv => {
+                let (t, _) = self.tv_raw(id).await?;
+                RecentView {
+                    kind: RecentKind::Tv,
+                    id: t.id,
+                    name: t.name,
+                    year: year(t.first_air_date.as_deref()),
+                    image_url: self.image(POSTER_SIZE, t.poster_path),
+                }
+            }
+            RecentKind::Person => {
+                let (p, _) = self.person_raw(id).await?;
+                RecentView {
+                    kind: RecentKind::Person,
+                    id: p.id,
+                    name: p.name,
+                    year: None,
+                    image_url: self.image(PROFILE_SIZE, p.profile_path),
+                }
+            }
         };
         self.recent.record(&view, Timestamp::now()).await?;
         Ok(self.recent.list().await?)
@@ -1197,7 +1337,24 @@ impl Catalog {
         if !self.show_watched(kind, id).await {
             hide_cast_episode_counts(&mut d.cast);
         }
+        self.precache_title_people(&d);
         Ok(d)
+    }
+
+    /// Queues unrated TMDB person lookups for a title's key crew and top cast
+    /// in the background so clicking into them doesn't wait on TMDB.
+    fn precache_title_people(&self, d: &TitleDetail) {
+        let mut seen = HashSet::new();
+        let ids: Vec<u64> = d
+            .key_crew
+            .iter()
+            .flat_map(|k| &k.people)
+            .chain(&d.cast)
+            .map(|p| p.person_id)
+            .filter(|id| seen.insert(*id))
+            .take(PRECACHE_PEOPLE)
+            .collect();
+        self.precache.enqueue(self, ids);
     }
 
     async fn title_detail(&self, kind: MediaKind, id: u64) -> Result<TitleDetail, CatalogError> {
@@ -1413,10 +1570,7 @@ impl Catalog {
         id: u64,
         sort: FilmographySort,
     ) -> Result<PersonDetail, CatalogError> {
-        let (p, metadata): (tmdb::Person, _) = self
-            // v2: entries cached before vote counts were kept can't rank "Known for".
-            .cached(format!("person/{id}/v2"), self.tmdb.person(id))
-            .await?;
+        let (p, metadata) = self.person_raw(id).await?;
         let known_for = non_empty(p.known_for_department);
 
         let mut notability: HashMap<(MediaKind, u64), Notability> = HashMap::new();
@@ -2017,6 +2171,11 @@ impl Catalog {
         .await
     }
 
+    async fn person_raw(&self, id: u64) -> Result<(tmdb::Person, Metadata), CatalogError> {
+        self.cached(person_cache_key(id), self.tmdb.person(id))
+            .await
+    }
+
     async fn tv_raw(&self, id: u64) -> Result<(tmdb::Tv, Metadata), CatalogError> {
         self.cached_if(format!("tv/{id}"), self.tmdb.tv(id), |t| {
             t.watch_providers.is_some()
@@ -2036,13 +2195,23 @@ impl Catalog {
     }
 
     /// `cached`, also refetching fresh entries that aren't `complete`: those
-    /// saved before the request asked TMDB for more.
+    /// saved before the request asked TMDB for more. Concurrent misses for the
+    /// same key serialize behind one in-flight fetch.
     async fn cached_if<T: Serialize + DeserializeOwned>(
         &self,
         key: String,
         fetch: impl Future<Output = Result<T, CatalogError>>,
         complete: impl Fn(&T) -> bool,
     ) -> Result<(T, Metadata), CatalogError> {
+        let now = Timestamp::now();
+        if let Ok(Some(c)) = self.cache.get::<T>(PROVIDER, &key).await
+            && c.is_fresh(now)
+            && complete(&c.value)
+        {
+            return Ok((c.value, Metadata::fresh(c.fetched_at)));
+        }
+        let key_lock = self.in_flight.lock_for(&key);
+        let _guard = key_lock.lock().await;
         let now = Timestamp::now();
         let stale = match self.cache.get::<T>(PROVIDER, &key).await {
             Ok(Some(c)) if c.is_fresh(now) && complete(&c.value) => {

@@ -985,6 +985,8 @@ struct PersonParams {
     kind: Option<String>,
     /// Page only: the department tab to show, by `FilmographyGroup::slug`.
     dept: Option<String>,
+    /// JSON API only: "false" returns date order right away without waiting for credit ratings.
+    ratings: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2193,6 +2195,7 @@ async fn api_episode(
     params(
         ("id" = u64, Path, description = "TMDB person ID"),
         ("sort" = Option<FilmographySort>, Query, description = "Defaults to `date`"),
+        ("ratings" = Option<bool>, Query, description = "Defaults to `true`; pass `false` to return right away in date order without waiting for credit ratings"),
     ),
     responses((status = OK, body = PersonDetail), LookupErrors)
 )]
@@ -2204,8 +2207,21 @@ async fn api_person(
     let Ok(id) = id.parse::<u64>() else {
         return api_not_found();
     };
-    let sort = FilmographySort::from_query(params.sort.as_deref());
-    api_result(catalog.person(id, sort).await, "person")
+    let result = if params.ratings.as_deref() == Some("false") {
+        match catalog.person_unrated(id, FilmographySort::Date).await {
+            Ok(mut person) => {
+                if !catalog.ratings_configured() {
+                    catalog.rate_filmography(&mut person).await;
+                }
+                Ok(person)
+            }
+            Err(e) => Err(e),
+        }
+    } else {
+        let sort = FilmographySort::from_query(params.sort.as_deref());
+        catalog.person(id, sort).await
+    };
+    api_result(result, "person")
 }
 
 fn episode_ids(id: &str, season: &str, number: &str) -> Option<(u64, u32, u32)> {

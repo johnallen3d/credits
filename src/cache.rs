@@ -81,6 +81,26 @@ impl ProviderCache {
         }))
     }
 
+    /// Whether a cached entry exists and has not expired at `now`.
+    pub async fn is_fresh(
+        &self,
+        provider: &str,
+        key: &str,
+        now: Timestamp,
+    ) -> Result<bool, CacheError> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT expires_at FROM provider_cache WHERE provider = ? AND key = ?",
+        )
+        .bind(provider)
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            Some((expires_at,)) => Ok(now < Timestamp::from_second(expires_at)?),
+            None => Ok(false),
+        }
+    }
+
     pub async fn put<T: Serialize>(
         &self,
         provider: &str,

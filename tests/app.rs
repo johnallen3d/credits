@@ -950,7 +950,16 @@ async fn build_with_database(
     build_from(config, ratings_ttl, metadata_ttl).await
 }
 
-async fn build_from(mut config: Config, ratings_ttl: Duration, metadata_ttl: Duration) -> TestApp {
+async fn build_from(config: Config, ratings_ttl: Duration, metadata_ttl: Duration) -> TestApp {
+    build_from_with_precache(config, ratings_ttl, metadata_ttl, false).await
+}
+
+async fn build_from_with_precache(
+    mut config: Config,
+    ratings_ttl: Duration,
+    metadata_ttl: Duration,
+    precache_people: bool,
+) -> TestApp {
     let omdb = FakeOmdb::default();
     let tmdb = FakeTmdb::default();
     config.tmdb_api_base = fake_tmdb(tmdb.clone()).await;
@@ -961,6 +970,7 @@ async fn build_from(mut config: Config, ratings_ttl: Duration, metadata_ttl: Dur
     config.rotten_tomatoes_base = config.omdb_api_base.clone();
     config.ratings_ttl = ratings_ttl;
     config.metadata_ttl = metadata_ttl;
+    config.precache_people = precache_people;
     let catalog = Catalog::new(&config).await.unwrap();
     TestApp {
         router: app(catalog.clone()),
@@ -5560,4 +5570,139 @@ async fn rotten_tomatoes_outages_degrade_to_imdb_and_stale_cache() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("No Rotten Tomatoes score"));
     assert!(body.contains(r#"aria-label="IMDb, 7.6/10""#));
+}
+
+#[tokio::test]
+async fn api_person_without_ratings_skips_omdb_and_title_lookups() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+
+    let (status, json) = get_json(t.app(), "/api/person/6384?ratings=false").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["id"], 6384);
+    assert_eq!(json["name"], "Keanu Reeves");
+    assert_eq!(json["sort"], "date");
+    assert!(json["sort_ratings"].is_null());
+    assert!(!json["known_for_titles"].as_array().unwrap().is_empty());
+    let acting = &json["filmography"][0]["entries"];
+    assert!(!acting.as_array().unwrap().is_empty());
+    assert!(acting[0]["rating"].is_null());
+    assert_eq!(
+        t.tmdb.calls(),
+        1,
+        "only the person endpoint should be fetched"
+    );
+    assert_eq!(t.omdb.calls(), 0, "ratings=false must not touch OMDb");
+
+    // When ratings are not configured, ratings=false reports not_configured right away.
+    let unconfigured = build(TOKEN, None, Duration::from_secs(3600)).await;
+    let (status, json) = get_json(unconfigured.app(), "/api/person/6384?ratings=false").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["sort_ratings"]["unavailable_reason"], "not_configured");
+    assert_eq!(unconfigured.tmdb.calls(), 1);
+    assert_eq!(unconfigured.omdb.calls(), 0);
+}
+
+#[tokio::test]
+async fn post_recent_view_skips_ratings_and_filmography_lookups() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+
+    let (status, json) =
+        post_json(t.app(), "/api/recent", json!({"kind": "person", "id": 6384})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["recent"][0]["kind"], "person");
+    assert_eq!(json["recent"][0]["name"], "Keanu Reeves");
+    assert_eq!(t.tmdb.calls(), 1);
+    assert_eq!(t.omdb.calls(), 0);
+
+    let (status, json) =
+        post_json(t.app(), "/api/recent", json!({"kind": "movie", "id": 603})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["recent"][0]["kind"], "movie");
+    assert_eq!(json["recent"][0]["name"], "The Matrix");
+    assert_eq!(t.tmdb.calls(), 2);
+    assert_eq!(t.omdb.calls(), 0);
+
+    let (status, json) =
+        post_json(t.app(), "/api/recent", json!({"kind": "tv", "id": 1396})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["recent"][0]["kind"], "tv");
+    assert_eq!(json["recent"][0]["name"], "Breaking Bad");
+    assert_eq!(t.tmdb.calls(), 3);
+    assert_eq!(t.omdb.calls(), 0);
+}
+
+#[tokio::test]
+async fn title_load_precaches_people_in_background_without_ratings() {
+    let config = Config::from_lookup(|key| match key {
+        "TMDB_API_TOKEN" => Some(TOKEN.to_owned()),
+        "OMDB_API_KEY" => Some(OMDB_KEY.to_owned()),
+        "CREDITS_DB" => Some(IN_MEMORY.to_owned()),
+        _ => None,
+    })
+    .unwrap();
+    assert!(config.precache_people, "precache_people defaults to true");
+    let t = build_from_with_precache(
+        config,
+        Duration::from_secs(3600),
+        Duration::from_secs(3600),
+        true,
+    )
+    .await;
+
+    let (status, json) = get_json(t.app(), "/api/movie/603").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["title"], "The Matrix");
+    let omdb_after_movie = t.omdb.calls();
+
+    // The Matrix has 4 unique key crew + cast IDs (9340, 9339, 6384, 2975).
+    // Wait for background precache tasks to complete (1 movie + 4 people = 5 TMDB calls).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while t.tmdb.calls() < 5 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        t.tmdb.calls(),
+        5,
+        "background precache should fetch each unique key crew and cast member once"
+    );
+    assert_eq!(
+        t.omdb.calls(),
+        omdb_after_movie,
+        "background precache must not trigger OMDb/ratings lookups"
+    );
+
+    // Clicking Keanu Reeves (6384) via JSON or web now hits SQLite cache with 0 TMDB calls.
+    let (status, json) = get_json(t.app(), "/api/person/6384?ratings=false").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["name"], "Keanu Reeves");
+    let (status, _, body) = get_page(t.app(), "/person/6384", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Keanu Reeves"));
+    assert_eq!(
+        t.tmdb.calls(),
+        5,
+        "pre-cached person should require zero extra TMDB calls"
+    );
+    assert_eq!(t.omdb.calls(), omdb_after_movie);
+}
+
+#[tokio::test]
+async fn concurrent_uncached_person_requests_deduplicate_tmdb_fetch() {
+    let t = build(TOKEN, Some(OMDB_KEY), Duration::from_secs(3600)).await;
+
+    let (r1, r2, r3, r4) = tokio::join!(
+        get_json(t.app(), "/api/person/6384?ratings=false"),
+        get_json(t.app(), "/api/person/6384?ratings=false"),
+        get_json(t.app(), "/api/person/6384?ratings=false"),
+        get_json(t.app(), "/api/person/6384?ratings=false"),
+    );
+    for (status, json) in [r1, r2, r3, r4] {
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["name"], "Keanu Reeves");
+    }
+    assert_eq!(
+        t.tmdb.calls(),
+        1,
+        "concurrent misses for the same person key should share one TMDB fetch"
+    );
 }

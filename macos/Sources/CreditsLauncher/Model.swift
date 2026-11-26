@@ -522,6 +522,9 @@ final class LauncherModel {
         personListsUnread = page.listsUnread
         detailRow = page.row
         pageID += 1
+        if case .person(let p) = page.detail, p.sortRatings == nil, !p.filmography.isEmpty {
+            loadPersonRatings(page.hit, id: p.id)
+        }
     }
 
     /// Fetches a row's summary from its page's detail when its list had none.
@@ -589,7 +592,12 @@ final class LauncherModel {
                     marks[hit] = m
                     if m.toWatch == true { loadKnownTags() }
                 }
-                if case .person(let p) = d { await loadListMarks(p) }
+                if case .person(let p) = d {
+                    if p.sortRatings == nil && !p.filmography.isEmpty {
+                        loadPersonRatings(hit, id: p.id)
+                    }
+                    await loadListMarks(p)
+                }
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
@@ -629,24 +637,46 @@ final class LauncherModel {
         personListsUnread = (listed == nil ? [.toWatch] : []) + (favored == nil ? [.favorite] : [])
     }
 
-    /// Asks for the person in detail's credits in another order, keeping the
-    /// current order on screen until it's back, and after a failure.
-    func sortPerson(_ sort: FilmographySort) {
-        guard let hit = detailHit, case .person(let p) = detail, p.sort != sort.rawValue else { return }
+    /// Fills credit ratings in after a fast unrated person load, keeping the
+    /// page and row selection in place.
+    private func loadPersonRatings(_ hit: SearchHit, id: Int) {
         sortTask?.cancel()
         personSorting = true
         personSortError = nil
         sortTask = Task {
             do {
-                let sorted = try await api.person(p.id, sort: sort)
+                let rated = try await api.person(id, sort: .date, ratings: true)
+                guard !Task.isCancelled, detailHit == hit else { return }
+                detail = .person(rated)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, detailHit == hit else { return }
+                personSortError = "Ratings couldn't be loaded right now (\(error.localizedDescription))."
+            }
+            personSorting = false
+        }
+    }
+
+    /// Asks for the person in detail's credits in another order, keeping the
+    /// current order on screen until it's back, and after a failure.
+    func sortPerson(_ sort: FilmographySort) {
+        guard let hit = detailHit, case .person(let p) = detail,
+              p.sort != sort.rawValue || (p.sortRatings == nil && !personSorting) else { return }
+        sortTask?.cancel()
+        personSorting = true
+        personSortError = nil
+        sortTask = Task {
+            do {
+                let sorted = try await api.person(p.id, sort: sort, ratings: true)
                 guard !Task.isCancelled, detailHit == hit else { return }
                 detail = .person(sorted)
                 detailRow = nil
             } catch is CancellationError {
                 return
             } catch {
-                guard !Task.isCancelled else { return }
-                personSortError = error.localizedDescription
+                guard !Task.isCancelled, detailHit == hit else { return }
+                personSortError = "Couldn't load that order (\(error.localizedDescription)); showing the last one."
             }
             personSorting = false
         }

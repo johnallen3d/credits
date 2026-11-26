@@ -494,6 +494,10 @@ source episode(id: string, n: string, e: string) as shape EpisodeDetail
 source person(id: string, sort: string) as shape Person
   url "https://credits.jallen7usa.com/api/person/{id}?sort={sort}"
 
+// Fast unrated person load so the screen renders before credit ratings finish.
+source personFast(id: string) as shape Person
+  url "https://credits.jallen7usa.com/api/person/{id}?ratings=false"
+
 // The To Watch and Favorites lists (`list` is the API's name for each), sorted by the server.
 source savedList(list: string, sort: string) as shape SavedList
   url "https://credits.jallen7usa.com/api/{list}?sort={sort}"
@@ -1735,9 +1739,12 @@ component PersonScreen
   state sort = "date"
   state kind = "all"
   state more = false
-  resource p = person(id, sort) as shape Person
+  resource base = personFast(id) as shape Person
+  resource rated = person(id, sort) when base.id > 0 and base.filmography.length > 0 and base.sort_ratings == none as shape Person
+  derive p = rated.id > 0 ? rated : base
+  derive loadingRatings = base.id > 0 and base.filmography.length > 0 and base.sort_ratings == none and not current(rated) and not failed(rated)
   action retry
-    refresh p
+    refresh base
   action pickSort(s: string)
     sort = s
   action pickKind(k: string)
@@ -1758,7 +1765,7 @@ component PersonScreen
         button press=copyAimed popovertarget=`${navKey}-name-menu` popovertargetaction="hide" testId="name-copy"
           image "symbol:copy"
           text "Copy Name"
-      if failed(p) and p.id == 0
+      if failed(base) and base.id == 0
         EmptyState(symbol="symbol:alert", title="Can’t Load Person", message="The server didn’t answer.")
           button press=retry testId="person-retry"
             text "Try Again"
@@ -1809,8 +1816,8 @@ component PersonScreen
                     text "Date"
                   button role="radio" aria-checked=(sort == "rating") press=pickSort("rating") testId="sort-rating" flex=1
                     text "Rating"
-                if not current(p)
-                  progress aria-label="Sorting" testId="sorting"
+                if loadingRatings
+                  progress aria-label=(sort == "rating" ? "Sorting" : "Loading ratings") testId="sorting"
               row gap=8 align-items="center" background-color="surface.card"
                 row role="radiogroup" aria-label="Show credits" flex=1
                   button role="radio" aria-checked=(kind == "all") press=pickKind("all") testId="kind-all" flex=1
@@ -1825,8 +1832,8 @@ component PersonScreen
               if markFailed
                 text "Couldn’t save the mark. Try again." font="-exact-footnote" color="mark.favorite"
                   background-color="surface.card" role="status" testId="credit-mark-error"
-              if failed(p)
-                text "Couldn’t load that order. Showing the last one." font="-exact-footnote" color="text.muted" background-color="surface.card" testId="sort-failed"
+              if failed(rated)
+                text (sort == "date" and rated.id == 0 ? "Ratings couldn’t be loaded right now." : "Couldn’t load that order. Showing the last one.") font="-exact-footnote" color="text.muted" background-color="surface.card" testId="sort-failed"
               else if ratingNote(p) != ""
                 text ratingNote(p) font="-exact-footnote" color="text.muted" background-color="surface.card" testId="rating-note"
             if keptGroups(p, kind).length == 0
